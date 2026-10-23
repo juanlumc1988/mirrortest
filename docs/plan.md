@@ -45,7 +45,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   `has_errors()`, `promote_warnings()` para `--strict`, `sorted()`,
   `format(std::ostream&)` estilo GCC §12). Tests: orden estable, formato exacto,
   `--strict`.
-- [ ] **1.2 Lectura de fuentes** — `core/source.h/.cpp`. `SourceFile{path
+- [x] **1.2 Lectura de fuentes** — `core/source.h/.cpp`. `SourceFile{path
   (tal cual), text}`; lectura binaria; CRLF tolerado (no se normaliza la
   entrada); error `mt-io`. Tests con ficheros temporales.
 - [ ] **1.3 Preprocesado (blanking)** — `syntax/preprocess.h/.cpp`, §5.2
