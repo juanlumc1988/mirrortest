@@ -54,7 +54,9 @@ add_library(mt_core STATIC
     src/core/templates.cpp
     src/core/writer.cpp
     src/frontend/code_frontend.cpp
+    src/frontend/facts.cpp
     src/frontend/literals.cpp
+    src/frontend/test_frontend.cpp
     src/ir/type.cpp
     src/syntax/extract.cpp
     src/syntax/preprocess.cpp
@@ -93,6 +95,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_preprocess.cpp
         tests/unit/test_source.cpp
         tests/unit/test_syntax_tree.cpp
+        tests/unit/test_test_frontend.cpp
         tests/unit/test_templates.cpp
         tests/unit/test_writer.cpp
         tests/unit/test_type.cpp)

@@ -380,53 +380,109 @@ Separar hechos de inferencia permite testear cada mitad por separado:
 
 ### 7.2 Hechos
 
-```cpp
-struct ValueInfo {            // lo que se sabe de una expresión usada como argumento
-    std::optional<ir::Type> type;   // con origin/reason/where
-    std::string text;               // texto fuente, para diagnósticos y nombres
-    bool is_lvalue = false, is_const = false, is_moved = false, is_address_of = false;
-    std::string var_name;           // si es un identificador: nombre del parámetro a generar
-};
-enum class UseKind { Discarded, Compared, Condition, Assigned, AutoBound, Argument, Unknown };
-struct ResultUse { UseKind kind; std::optional<ir::Type> hint; ir::SourceLoc where; };
-struct CallFact   { std::string cls; std::vector<std::string> ns; std::string method;
-                    std::vector<ValueInfo> args; bool on_const = false; bool is_static = false;
-                    ResultUse use; ir::SourceLoc where; std::vector<Annotation> annotations; };
-struct CtorFact   { std::string cls; std::vector<std::string> ns; std::vector<ValueInfo> args;
-                    bool copy_init = false; ir::SourceLoc where; };
-struct FieldFact  { std::string cls; std::string field; ResultUse use; bool on_const; ir::SourceLoc where; };
-struct FreeCallFact { std::vector<std::string> ns; std::string name; std::vector<ValueInfo> args;
-                      ResultUse use; ir::SourceLoc where; };
-struct TypeUseFact  { std::string name; std::vector<std::string> ns; ir::SourceLoc where; };
-```
+Definidos en `frontend/facts.h`. Los hechos se referencian entre sí por
+**índice** en los vectores de `TestFileFacts` (`FactRef{kind, index}`), nunca por
+puntero, de modo que el conjunto se copia y se mueve sin cuidado. Lo que el
+frontend registra y lo que **no** decide:
+
+| Hecho | Contenido | Observaciones |
+|---|---|---|
+| `MethodCall` | receptor (`TypeName`), método, `args`, `on_const`, `via_arrow`, `use`, `where`, `ns` | `x.m()`, `x->m()`, `(*p).m()` |
+| `ScopedCall` | `scope` tal como se escribió, nombre, `args`, `use` | `X::m()`: si `X` es clase o namespace lo decide §7.7 (R13) |
+| `FreeCall` | nombre, `args`, `use` | función, macro, libc o *cast* funcional `Foo(3)`: lo decide §7.7. `this->m()` también cae aquí |
+| `FieldAccess` | receptor, campo, `on_const`, `via_arrow`, `use` | `obj.x` sin llamar; `obj.x = 5;` da `Assigned` con el tipo del lado derecho |
+| `Construction` | tipo, `Form`, `args` | `Default`, `Direct`, `Brace`, `Copy` (`Foo f = 5;`), `Functional` (`Foo g = Foo(3);`), `New`, `MakeUnique` (también `make_shared`) |
+| `TypeUse` | tipo, `from_throw_assertion` | tipos de declaraciones, parámetros, retornos, `new`, *casts*, `catch` y `EXPECT_THROW(…, E)` |
+| `Unresolved` | `ChainedCall`, texto, `where`, `root` | ver §7.3 |
+| `TestCaseInfo` | `TEST`/`TEST_F`/`TEST_P`, suite, nombre, `ns` | |
+
+`ValueInfo` (argumento de una llamada o construcción): `text`, `where`,
+`type` (el de un literal, de una variable declarada, de un *cast*; ausente si
+nada lo dice), `warnings` (de clasificar el literal; se emiten solo si el tipo
+se usa), `is_string_literal` (su tipo lo decide el contexto),
+`is_null_pointer`, `is_lvalue`, `is_moved`, `is_address_of` (y entonces `type`
+es el del puntero: `&n` es `int*`), `var_name`, `from` (la llamada o campo de
+la API de donde viene) y `auto_origin` (§7.3).
+
+`ResultUse{kind, hint}` con `UseKind { Unknown, Discarded, Compared,
+Condition, Assigned, AutoBound, Argument, Receiver }`. **El primer contexto que
+reclama un resultado se lo queda**: `Compared` dentro de `EXPECT_EQ` no pasa a
+`Argument`. `hint` es el tipo que el contexto implica, tal como se escribió
+(`const std::string&`, `unsigned`): quitar `const`/`&` de nivel superior es
+asunto de la inferencia (§7.9), no del frontend.
+
+Diferencias con el esquema inicial de este apartado: `is_const` desaparece de
+`ValueInfo` (la constancia va en `ir::Type`); `is_static` no es un campo (es
+`ScopedCall`); las anotaciones se añaden en 2.6; `CtorFact` pasa a
+`Construction` con formas explícitas; `ResultUse.where` sobra (lo lleva la
+llamada); se añade `Receiver`.
 
 ### 7.3 Tabla de símbolos
 
-Ámbitos anidados por `compound_statement`; se declara en orden. Fuentes:
-declaraciones locales (`T v;`, `T v(…)`, `T v{…}`, `T v = …`), parámetros de
-funciones auxiliares, `QFETCH(T, v)` (texto: se parte en la **última coma de
-nivel superior**; *verificado*: el nodo varía según `T` sea primitivo o no), miembros
-de fixture/clase de test, `for (T x : …)`. Cada símbolo guarda el tipo declarado
-completo (para saber `const`, referencia, puntero, puntero inteligente).
+Ámbitos anidados por `compound_statement`, `if`/`while`/`for`/`switch` (la
+variable declarada en la condición vive en su ámbito), `try`/`catch` y lambdas;
+se declara en orden. Fuentes: declaraciones locales (`T v;`, `T v(…)`,
+`T v{…}`, `T v = …`), parámetros de funciones, lambdas y `catch`,
+`QFETCH(T, v)` (texto: se parte en la **última coma de nivel superior**;
+*verificado*: el nodo varía según `T` sea primitivo o no; fase 5), miembros de
+fixture/clase de test (con los de sus clases base locales), `for (T x : …)`.
+Cada símbolo guarda el tipo declarado completo (para saber `const`,
+referencia, puntero, puntero inteligente).
 
 Receptor de una llamada `x.m()` / `x->m()`:
 - `x` local/miembro de tipo `T`, `T&`, `const T&` → clase `T`, `on_const` si
-  `const`.
+  `const`. `x->m()` sobre un valor, o `x.m()` sobre un puntero, no es una
+  llamada reconocible.
 - `x->m()` con `T*`, `const T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`,
-  `QScopedPointer<T>`, `QSharedPointer<T>`, `QPointer<T>` → `T`.
+  `QScopedPointer<T>`, `QSharedPointer<T>`, `QPointer<T>` → `T`
+  (`shared_ptr<const T>` → `on_const`). `p.reset()` con punto es una llamada al
+  puntero, no a `T`.
 - `(*p).m()` igual que `p->m()`.
-- Receptor desconocido → nota `mt-unknown-receiver`, se ignora.
-- Llamada encadenada `a.b().c()` → el tipo de `a.b()` es una clase desconocida:
-  `mt-chained-call` con la política de tipo desconocido (§7.9).
+- Receptor desconocido (identificador no declarado, `auto` sin tipo
+  deducible, parámetro `auto` de una lambda) → nota `mt-unknown-receiver`, se
+  ignora.
+- Llamada encadenada `a.b().c()` → el tipo de `a.b()` es desconocido: la
+  llamada a `b` queda `Receiver` y se registra **un** `Unresolved` (solo el
+  primer eslabón desconocido; `a.b().c().d()` no genera otro por `d`).
+  `mt-chained-call` y la política de tipo desconocido se aplican en §7.9.
+  `Unresolved.root` guarda la llamada de la que cuelga: en `Foo(3).size()` la raíz
+  es un `FreeCall` llamado `Foo`, y si §7.7 concluye que `Foo` es una clase
+  ya no hay nada sin resolver.
+
+**`auto` y variables**: `auto x = Foo(1)` no sabe si `Foo` es tipo o función (la
+sintaxis no lo dice), así que `x` queda sin tipo y `x.run()` es una llamada
+encadenada con raíz `FreeCall Foo`. Si `auto x = call;`, el símbolo recuerda la
+llamada (`auto_origin`): **lo que luego se hace con `x` es evidencia sobre la
+llamada**. `auto n = foo.count(); EXPECT_EQ(n, 5u);` deja `count()` como
+`AutoBound` con `hint = unsigned int` (razón «through variable 'n'»); el primer
+`hint` gana y los contextos sin pista (argumento, descarte, receptor) no
+añaden nada. Con `auto x = 3u;` o `std::make_unique<Foo>()` el tipo sí se
+deduce (`auto` por valor descarta `const` y `&`; `auto&` conserva la constancia
+de lo que liga). *Motivo del cambio*: sin esto, el patrón más habitual
+(`auto r = calc.add(2, 3); EXPECT_EQ(r, 5);`) obligaba a tipar `add` a mano
+pese a que la línea siguiente lo dice.
+
+**Miembros de clases del propio fichero**: un miembro por valor de tipo clase
+(`Foo foo_;`, `Baz c_{1, 2};`, `Qux d_ = Qux(2);`) es una `Construction` (un
+fixture que lo tiene exige que `Foo` sea construible por defecto), igual que
+los inicializadores del constructor (`F() : a_(3), b_{4} {}`, también fuera de
+la clase). Punteros, referencias y miembros `static` no construyen nada.
 
 ### 7.4 Ámbitos por tipo de cuerpo
 
 | Cuerpo | Símbolos visibles además de los locales |
 |---|---|
 | `TEST(S, N)` | globales del fichero |
-| `TEST_F(F, N)`, `TEST_P(F, N)` | miembros de la clase `F` definida en el fichero (si no está: `mt-unknown-fixture`, aviso); `GetParam()` tipado por `TestWithParam<T>` |
-| métodos de la fixture | miembros de la fixture |
+| `TEST_F(F, N)`, `TEST_P(F, N)` | miembros de la clase `F` definida en el fichero (si no está: `mt-unknown-fixture`, aviso, y el cuerpo se lee igualmente); `GetParam()` tipado por `TestWithParam<T>` o `WithParamInterface<T>` (sin tipo de parámetro, `GetParam()` es una llamada libre más) |
+| métodos de la fixture, dentro o fuera de la clase, constructores y destructores | miembros de la fixture y de sus bases locales; en un constructor, también sus parámetros y los inicializadores |
+| funciones auxiliares | sus parámetros |
 | slots/métodos de la clase QTest | miembros de la clase de test |
+
+`TYPED_TEST`/`TYPED_TEST_P` no se soportan: aviso `mt-unsupported` y se salta el
+cuerpo. Las macros de aserción se reconocen en cualquier posición (también
+anidadas, `ASSERT_NO_THROW(EXPECT_EQ(a, b))`) y nunca son una `FreeCall`;
+`EXPECT_CALL`/`ON_CALL` descartan **toda** la cadena (`.Times(2).WillOnce(Return(x))`):
+`Return`, `_` o `Invoke` no son código bajo prueba.
 
 ### 7.5 Clasificador de literales (`literals.h`)
 
@@ -497,9 +553,9 @@ posición del tipo. Detalles fijados al implementarlo:
 | `QCOMPARE(a, b)`, `QTRY_COMPARE*` | cada lado el del otro; cadena → `QString` |
 | `QVERIFY(c)`, `QVERIFY2(c, m)`, `QTRY_VERIFY*` | `bool` |
 | `QVERIFY_EXCEPTION_THROWN(stmt, E)` · `QVERIFY_THROWS_EXCEPTION(E, stmt…)` · `QVERIFY_THROWS_NO_EXCEPTION(stmt)` | se analiza `stmt` (ojo: orden invertido entre las dos primeras) |
-| `if`/`while`/`for` (condición), `!x`, `x && y`, `x \|\| y`, `c ? … : …` | `bool` |
+| `if`/`while`/`for`/`do` (condición), `!x`, `x && y`, `x \|\| y`, `c ? … : …` | `bool`. La condición de un `switch` es un entero: sin pista |
 | `x == lit`, `!=`, `<`, `<=`, `>`, `>=` | tipo del literal |
-| `T v = call;`, `T v(call);`, `T v{call};` | `T` sin `const`/`&` de nivel superior; si `T` es `U&` no-const → retorno `U&` (un temporal no liga) |
+| `T v = call;`, y `T v(call);` / `T v{call};` cuando `T` **no** es clase | `T` sin `const`/`&` de nivel superior; si `T` es `U&` no-const → retorno `U&` (un temporal no liga). El frontend guarda `T` tal como se declaró; quitar calificadores es de la inferencia. Con `T` clase, `Bar b(call);` es un argumento del constructor (`Argument`, sin pista) |
 | `v = call;` con `v` declarado `T` | `T` |
 | `auto v = call;` (también `auto&`, `const auto&`) | `AutoBound` → política `auto` (D5) |
 | sentencia de expresión `call;` | `Discarded` → `void` + aviso `mt-unused-result` |

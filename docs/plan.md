@@ -108,7 +108,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   Tabla de tests: cada fila de §7.5, incluidos `-1`, `-1u`, `0xFFFFFFFF`,
   `4294967296`, `1'000'000`, `5000000000l` (aviso ARM32), `1e-9`, `0x1p3`,
   `'ab'`, `u8"x"` con `--std` 17 y 20, `"x"s`, `10ms`, `1.5_km`.
-- [ ] **2.4 Recognizer GTest + tabla de símbolos + hechos** —
+- [x] **2.4 Recognizer GTest + tabla de símbolos + hechos** —
   `frontend/test_frontend`, `frontend/facts` (§7.1–7.4, §7.6). Tests
   *C++ → hechos*: cada fila de §7.6; receptores (§7.3) incluido `->` con
   punteros inteligentes y `(*p).m()`; fixtures (`TEST_F` usa miembros, métodos
