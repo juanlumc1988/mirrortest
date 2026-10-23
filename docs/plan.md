@@ -70,7 +70,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
 - [x] **1.6 Diff** — `core/diff.h/.cpp`. Diff unificado determinista, 3 líneas
   de contexto, cabeceras `--- a/` `+++ b/`, fichero nuevo contra `/dev/null`,
   manejo de «sin salto final». Tests con casos conocidos.
-- [ ] **1.7 OutputPlan + Writer** — `core/output.h`, `core/writer.h/.cpp`, §10
+- [x] **1.7 OutputPlan + Writer** — `core/output.h`, `core/writer.h/.cpp`, §10
   (sin merge todavía: `never`, `force`, `.new`, `Unchanged`, `--dry-run`,
   `--check`, atómico, crear directorios, todo-o-nada). Tests sobre un directorio
   temporal, incluido «`.new` previo se sobrescribe» e «idéntico → no se toca

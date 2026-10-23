@@ -753,25 +753,48 @@ Solo afecta a macros de excepción (R6). `QSKIP("…")` de un argumento y
 
 ## 10. Escritura de ficheros
 
-- `OutputPlan` = vector de `{ruta, contenido}`; el `Writer` calcula la acción
-  contra disco: `Create`, `Unchanged`, `Overwrite` (`force`), `WriteNew`
-  (`never`, fichero distinto), `Merge` (`merge`).
-- `.new` existente se sobrescribe (es nuestro).
-- Si hay errores de diagnóstico → no se escribe nada (D8). Escritura atómica:
-  `<ruta>.mt-tmp` en el mismo directorio + `rename`; se crean directorios
-  padre.
-- `--dry-run`: diff unificado (3 líneas de contexto, `--- a/…` / `+++ b/…`)
-  por stdout, sin escribir; salida 0. `--check`: igual pero silencioso; salida 4
-  si algo cambiaría. Diff propio en `core/diff.h`: Myers O(ND) tras recortar la
-  cabeza y la cola comunes, con las convenciones de git (`--- /dev/null` para
-  ficheros nuevos, rangos `-3` / `-2,0`, `\ No newline at end of file`; las
-  líneas se comparan con su terminador, así que añadir o quitar el salto final
-  es un cambio). Pasadas `kMaxEdits` (2000) ediciones el tramo distinto se
-  presenta entero como «todo lo viejo fuera, todo lo nuevo dentro»: sigue
-  siendo un diff correcto, no mínimo. Determinista; verificado con un
-  aplicador de parches de referencia y una LCS sobre 600 pares aleatorios.
-- Resumen por stderr (salvo `--quiet`): `created`, `unchanged`, `wrote X.new
-  (X exists and differs)`, `merged N members into X`.
+Implementado en `core/output.h` (`OutputPlan`: el plan, como datos) y
+`core/writer.h` (`write_plan`: la única capa con E/S).
+
+- `OutputPlan` = vector de `{ruta, contenido}`. La ruta es la que verá el
+  usuario (ya con el directorio de salida; relativa o absoluta); el writer la
+  resuelve contra un directorio base pero **la muestra tal cual**.
+- Acción por fichero, calculada contra disco: `Create` (no existe), `Unchanged`
+  (mismos bytes: **no se toca**, ni el mtime), y si difiere según
+  `--overwrite`: `never` → `WriteNew` (`<fichero>.new` al lado, el original
+  intacto), `force` → `Overwrite`, `merge` → `Merge` mediante la `MergeFn`
+  (fase 3). Sin `MergeFn`, o si esta devuelve «no se puede fusionar», se
+  degrada a `WriteNew` (con aviso `mt-unsupported` en el primer caso). Un
+  `MergeResult` idéntico al fichero es `Unchanged`.
+- `.new` existente se sobrescribe (es nuestro). Un `.new` viejo junto a un
+  fichero ahora `Unchanged` se deja como está.
+- **Todo o nada** (D8): primero se decide y valida *todo* (rutas vacías o
+  duplicadas tras normalizar, destino que existe y no es fichero regular,
+  ilegible…) acumulando todos los errores `mt-io`; con alguno no se escribe nada
+  y el informe queda vacío. Después, **stage-then-commit**: se escriben todos
+  los `<destino>.mt-tmp` (creando directorios padre) y solo si todos están en
+  disco se hace `rename` de cada uno; un fallo antes de los renames borra los
+  temporales. Un fallo *durante* los renames (prácticamente imposible tras
+  haber escrito los temporales) puede dejar ficheros anteriores colocados.
+  Al sobrescribir se conservan los permisos del fichero.
+- `--dry-run`: no escribe y rellena `FileResult::diff` (diff unificado, 3 líneas
+  de contexto, `--- a/…` / `+++ b/…`) de cada fichero cambiado: para un
+  `WriteNew` es el diff contra el propio fichero; para un `Merge`, contra el
+  resultado fusionado. Salida 0. `--check`: igual pero el llamador no imprime y
+  sale con 4 si `WriteReport::has_changes()` (cualquier acción que no sea
+  `Unchanged`). Combinados: se imprime y se sale con 4. Diff propio en
+  `core/diff.h`: Myers O(ND) tras recortar la cabeza y la cola comunes, con las
+  convenciones de git (`--- /dev/null` para ficheros nuevos, rangos `-3` /
+  `-2,0`, `\ No newline at end of file`; las líneas se comparan con su
+  terminador, así que añadir o quitar el salto final es un cambio). Pasadas
+  `kMaxEdits` (2000) ediciones el tramo distinto se presenta entero como «todo
+  lo viejo fuera, todo lo nuevo dentro»: sigue siendo un diff correcto, no
+  mínimo. Determinista; verificado con un aplicador de parches de referencia y
+  una LCS sobre 600 pares aleatorios.
+- Resumen (`format_summary`, por stderr salvo `--quiet`): `created X`,
+  `unchanged X`, `overwrote X`, `wrote X.new (X exists and differs)`,
+  `merged N members into X` (`1 member`); con `--dry-run` los cambios se leen
+  `would create X`, `would overwrite X`, …
 
 ---
 

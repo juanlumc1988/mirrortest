@@ -44,6 +44,7 @@ add_library(mt_core STATIC
     src/core/diff.cpp
     src/core/naming.cpp
     src/core/source.cpp
+    src/core/writer.cpp
     src/ir/type.cpp
     src/syntax/preprocess.cpp
     src/syntax/tree.cpp)
@@ -75,6 +76,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_preprocess.cpp
         tests/unit/test_source.cpp
         tests/unit/test_syntax_tree.cpp
+        tests/unit/test_writer.cpp
         tests/unit/test_type.cpp)
     target_link_libraries(mt_unit_tests PRIVATE
         mt_core mt::inja nlohmann_json::nlohmann_json GTest::gtest_main)
