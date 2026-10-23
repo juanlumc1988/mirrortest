@@ -97,6 +97,28 @@ if(MT_BUILD_TESTS)
         MT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/data")
     gtest_discover_tests(mt_unit_tests DISCOVERY_MODE PRE_TEST)
 
+    # Golden files: every case under tests/golden/ against the real command
+    # line, plus tests of the runner itself (tests/golden/golden.h).
+    #   ctest -R golden                      check
+    #   cmake --build build -t update-golden rewrite the expectations
+    # Review the diff of what that changes before committing it.
+    add_executable(mt_golden_tests
+        tests/golden/golden.cpp
+        tests/golden/test_golden.cpp
+        tests/golden/test_golden_runner.cpp)
+    target_include_directories(mt_golden_tests PRIVATE tests/unit)
+    target_link_libraries(mt_golden_tests PRIVATE mt_core GTest::gtest_main)
+    target_compile_definitions(mt_golden_tests PRIVATE
+        MT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
+    mt_configure(mt_golden_tests)
+    gtest_discover_tests(mt_golden_tests TEST_PREFIX golden. DISCOVERY_MODE PRE_TEST)
+    add_custom_target(update-golden
+        COMMAND "${CMAKE_COMMAND}" -E env MT_UPDATE_GOLDEN=1 $<TARGET_FILE:mt_golden_tests>
+                --gtest_filter=All/GoldenCase.*
+        DEPENDS mt_golden_tests
+        COMMENT "Rewriting the golden expectations from the current output"
+        VERBATIM)
+
     # cmake/MtEmbedFiles.cmake, in isolation: awkward content survives, CRLF is
     # normalised, an unchanged embedding does not rewrite its output, and a
     # template containing the raw-string terminator fails the configure.

@@ -1,0 +1,2 @@
+mirrortest gen-impl: error: no test files given
+Try 'mirrortest gen-impl --help'.

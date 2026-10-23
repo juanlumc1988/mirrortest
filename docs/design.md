@@ -1062,20 +1062,36 @@ Implementado en `core/templates.h` (`TemplateStore`) y
 
 1. **Unitarias** (GoogleTest): cada módulo; fragmentos de C++ como cadenas.
    Frontend de tests en dos mitades (*C++ → hechos*, *hechos → modelo*).
-2. **Golden**: `tests/golden/<gen-impl|gen-tests>/<caso>/`
-   - `input/…` ficheros de entrada; `args.txt` argumentos de la CLI (uno por
-     línea; `${IN}` y `${OUT}` se sustituyen);
-   - `expected/…` árbol esperado + `expected/diagnostics.txt` (stderr
-     normalizado). Casos que fijan el comportamiento `.new` llevan ficheros
-     `*.new` (desbloqueados en `.gitignore`). No usar directorios llamados
-     `out`.
-   - Ejecutable `mt_golden_tests` (test parametrizado sobre los directorios,
-     orden alfabético) llama a `mt::cli::run` en proceso, compara árbol y
-     diagnósticos y **ejecuta cada caso dos veces** (determinismo).
+2. **Golden** (`tests/golden/`, contrato completo en `tests/golden/golden.h`
+   y `tests/golden/README.md`): `tests/golden/<grupo>/<caso>/` con
+   - `args.txt` (un argumento por línea; `${IN}` y `${OUT}` → las rutas
+     **relativas** `in` y `out`), `input/` (→ `<work>/in`), `existing/`
+     (opcional, → `<work>/out` antes de ejecutar) y `notes.md` (ignorado);
+   - lo esperado: `expected/` (**solo** el árbol bajo `<work>/out`),
+     `stdout.txt`, `stderr.txt` y `exit_code.txt` (ausentes = vacío / 0).
+     Se separan del árbol esperado para no mezclar metadatos con ficheros
+     generados (cambio respecto a la primera versión, que usaba
+     `expected/diagnostics.txt`). Los casos que fijan el comportamiento `.new`
+     llevan ficheros `*.new` (desbloqueados en `.gitignore`).
+   - El runner ejecuta la CLI real **en proceso** (`mt::cli::run`) con un
+     directorio temporal nuevo como `cwd`, así que toda ruta impresa es la
+     relativa de `args.txt` y los goldens no dependen de dónde se clone el repo.
+     Cada caso se ejecuta **dos veces** en directorios distintos y los
+     resultados (código, stdout, stderr, árbol) deben ser idénticos.
+   - Convenciones comprobadas sobre la salida real: LF, salto final, sin
+     espacios finales en los ficheros (los flujos quedan exentos: un diff
+     unificado imprime el contexto vacío como `" "`), y ninguna ruta absoluta
+     (ni la del directorio de trabajo ni la del caso).
+   - Un fallo muestra el caso, el flujo o fichero y un diff esperado/real. Un
+     directorio de caso con una entrada desconocida (casi siempre una errata:
+     `expeced/`) es un error de layout.
    - Actualización explícita: `MT_UPDATE_GOLDEN=1 ctest -R golden` o el target
-     `update-golden`. Nunca a mano.
-   - Comprobación global: LF, salto final, sin espacios finales, sin rutas
-     absolutas.
+     `update-golden`; nunca a mano. Se **niega a grabar** una salida no
+     determinista o que rompa una convención, y borra lo que ya no se produce.
+   - El propio runner está probado (`tests/golden/test_golden_runner.cpp`) con
+     una CLI falsa: descubrimiento, layout, cada tipo de diferencia, update,
+     determinismo y convenciones. Los ficheros de `tests/golden/` se marcan
+     `-text` en `.gitattributes` para que git no reescriba sus finales de línea.
 3. **Round-trip** (CTest + `cmake -P tests/roundtrip/run_case.cmake`):
    - gen-impl: generar → configurar un subproyecto que reutiliza las fuentes de
      GoogleTest ya descargadas (sin red) → compilar stubs con `-std=c++11

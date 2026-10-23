@@ -1,0 +1,1 @@
+in/bad.json: error: unknown configuration key 'colour' [mt-config]

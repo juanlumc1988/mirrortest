@@ -87,7 +87,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   (`TemplateStore::overridden()`, prometido en `docs/templates.md`); `apps/cli/main.cpp` solo llama a `run`. Subcomandos aún devuelven
   «not implemented» pero con la config ya resuelta. Tests de parseo y códigos
   de salida.
-- [ ] **1.10 Runner de goldens** — `tests/golden/runner.cpp` (§16.2):
+- [x] **1.10 Runner de goldens** — `tests/golden/runner.cpp` (§16.2):
   descubrimiento de casos, sustitución `${IN}`/`${OUT}`, doble ejecución,
   comparación de árbol + diagnósticos, `MT_UPDATE_GOLDEN=1`, target
   `update-golden`, comprobación global (LF, salto final, sin espacios finales,
