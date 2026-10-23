@@ -62,7 +62,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   §14; carga JSON con validación estricta (clave desconocida o tipo erróneo →
   `mt-config` con la ruta de la clave); fusión defaults < fichero < CLI.
   Tests: defaults, cada clave, errores.
-- [ ] **1.5 Naming** — `core/naming.h/.cpp`. `snake_case`, normalización para
+- [x] **1.5 Naming** — `core/naming.h/.cpp`. `snake_case`, normalización para
   emparejar clase↔cabecera (§8.1), guardas (§8.2), expansión de patrones
   `{stem}`, `{Class}`; saneado de nombres de caso de test (§9.1, tabla de
   operadores). Tests exhaustivos (acrónimos: `HTTPServer` → `http_server`,

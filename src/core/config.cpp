@@ -10,6 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "mirrortest/core/naming.h"
 #include "mirrortest/core/source.h"
 #include "mirrortest/ir/type.h"
 
@@ -77,32 +78,6 @@ std::string choice_list(const Choice<E> (&table)[N]) {
 }
 
 // ---- lexical helpers (ASCII, locale-independent) --------------------------------
-
-bool is_ident_start(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
-}
-bool is_ident_char(char c) { return is_ident_start(c) || (c >= '0' && c <= '9'); }
-
-bool is_identifier(std::string_view s) {
-    return !s.empty() && is_ident_start(s[0]) &&
-           std::all_of(s.begin(), s.end(), is_ident_char);
-}
-
-// "a::b::c" with at least `min_parts` identifiers.
-bool is_qualified_name(std::string_view s, std::size_t min_parts) {
-    std::size_t parts = 0;
-    while (true) {
-        const std::size_t sep = s.find("::");
-        if (!is_identifier(s.substr(0, sep))) {
-            return false;
-        }
-        ++parts;
-        if (sep == std::string_view::npos) {
-            return parts >= min_parts;
-        }
-        s.remove_prefix(sep + 2);
-    }
-}
 
 bool is_blank(std::string_view s) {
     return std::all_of(s.begin(), s.end(), [](char c) {

@@ -538,8 +538,11 @@ MIEMBRO    := [NS "::"] CLASE "::" MÉTODO
 ### 8.1 Asignación de ficheros
 
 - Cabeceras *a generar* = `#include "…"` del test que no existen (§7.10).
-- Clase ↔ cabecera por nombre normalizado (minúsculas, sin `_` ni `-`):
-  `foo_bar.h` ↔ `FooBar`.
+- Clase ↔ cabecera por nombre normalizado (`match_key`: minúsculas, sin `_` ni
+  `-`; la cabecera, sin directorios ni extensión, vía `file_stem`):
+  `foo_bar.h` ↔ `FooBar`. `stem` = `snake_case(Clase)`: `HTTPServer` →
+  `http_server`, `Vec3D` → `vec3_d`, `UTF8String` → `utf8_string` (reglas en
+  `core/naming.h`).
 - Clases/funciones sin pareja → la primera cabecera a generar en orden de
   fuente; si no hay ninguna → `naming.header` (por defecto `{stem}.h` con
   `stem = snake_case(Clase)`) + aviso `mt-no-include`.
@@ -577,7 +580,10 @@ public:
 
 - `config.file_header` (p. ej. cabecera corporativa) se antepone; nunca la
   licencia de mirrortest.
-- Guarda desde la ruta incluida: mayúsculas, no alfanumérico → `_`.
+- Guarda (`include_guard`) desde la ruta incluida: mayúsculas, lo no
+  alfanumérico → `_`, con las rachas colapsadas y los extremos recortados (un
+  `_` inicial o un `__` serían identificadores reservados): `../a/foo.h` →
+  `A_FOO_H`; si empieza por dígito, prefijo `H_`.
 - Includes desde los tipos usados (`ir/classify.h`): `std::string`→`<string>`,
   `std::string_view`→`<string_view>`, `std::vector`→`<vector>`, `std::map`,
   `std::set`, `std::unordered_map`, `std::array`, `std::list`, `std::deque`,
@@ -646,10 +652,15 @@ ejecutando el resto de slots.
 - Un caso por constructor público (`Constructs`, y si hay varios
   `Constructs_<tipos>`), por método público no borrado ni destructor, y por
   señal Qt (QTest: esqueleto `QSignalSpy`).
-- Nombres: el del método; operadores por tabla (`operator==`→`OperatorEq`,
-  `operator[]`→`OperatorIndex`, `operator()`→`OperatorCall`, `operator bool`→
-  `ConversionToBool`, …); colisión por sobrecarga → `_<tipos saneados>`
-  (`set_int`, `set_std_string`); colisión restante → `_2`, `_3`.
+- Nombres (`core/naming.h`): el del método; operadores por tabla
+  (`operator==`→`OperatorEq`, `operator[]`→`OperatorIndex`,
+  `operator()`→`OperatorCall`, `operator bool`→`ConversionToBool`,
+  `operator const char*`→`ConversionToConstCharPtr`, …; la tabla completa está
+  en `test_base_name`). Si varios casos comparten nombre, los distingue el
+  sufijo de tipos (`type_suffix`, sin `const`/`&`, `*`→`ptr`):
+  `set_int`, `set_std_string`; lo que aún colisione (`size()` y `size() const`)
+  recibe `_2`, `_3`… por orden, también frente a nombres ya tomados por otros
+  métodos (`unique_test_names`).
 
 ### 9.2 Cuerpo
 
