@@ -179,12 +179,17 @@ fija las formas de nodo de las que dependen los frontends (resultado del spike).
 `syntax/preprocess.h`:
 
 ```cpp
-struct QtMarker { enum class Kind { QObject, SlotsSection, SignalsSection, Invokable, DisableCopy };
+struct MacroTable { std::vector<std::string> ignore; };          // config.ignore_macros
+struct QtMarker { enum class Kind { QObject, Gadget, SlotsSection, SignalsSection,
+                                    Invokable, DisableCopy };
                   Kind kind; unsigned offset; };
+struct BlankedRange { unsigned begin, end; };                      // [begin, end)
 struct Preprocessed { std::string text; std::vector<QtMarker> markers;
-                      std::vector<std::pair<unsigned, unsigned>> blanked; };
-Preprocessed preprocess(std::string_view source, const MacroTable& table);
+                      std::vector<BlankedRange> blanked; };
+Preprocessed preprocess(std::string_view source, const MacroTable& table = {});
 ```
+
+Implementado en `include/mirrortest/syntax/preprocess.h`.
 
 Reglas (todas con tests unitarios):
 
@@ -202,19 +207,26 @@ Reglas (todas con tests unitarios):
 
    | Macro | Tratamiento |
    |---|---|
-   | `Q_OBJECT`, `Q_GADGET`, `Q_NAMESPACE` | espacios; marcador `QObject` (los dos primeros) |
+   | `Q_OBJECT` | espacios; marcador `QObject` |
+   | `Q_GADGET` | espacios; marcador `Gadget` (un gadget **no** es un `QObject`: sin señales ni slots) |
+   | `Q_NAMESPACE`, `Q_REQUIRED_RESULT`, `Q_DECL_DEPRECATED` | espacios |
    | `Q_INVOKABLE` | espacios; marcador `Invokable` |
-   | `slots`, `Q_SLOTS` **solo** si tras espacios viene `:` | espacios; marcador `SlotsSection` en el offset del especificador de acceso previo |
-   | `signals`, `Q_SIGNALS` seguidos de `:` | `public` + relleno a la misma longitud (`signals`→`public `); marcador `SignalsSection` |
+   | `slots`, `Q_SLOTS` | solo si va seguido de un único `:` (espacios/tabuladores entre medias) **y** el token anterior es `public`/`protected`/`private` → espacios; marcador `SlotsSection` en el offset de ese especificador. En cualquier otro caso (`int slots = 0;`, `c ? slots : x`) no se toca. |
+   | `signals`, `Q_SIGNALS` | solo si va seguido de un único `:` y el token anterior es un especificador de acceso o un límite de miembro (`{` `}` `;` `:`). Tras un especificador (`public signals:`) → espacios, marcador en el especificador. Tras un límite → `public` + relleno (la sección debe seguir viendo un especificador de acceso), marcador en el offset de `signals`. |
    | `Q_DECL_OVERRIDE`, `Q_DECL_FINAL`, `Q_DECL_NOEXCEPT`, `Q_DECL_CONSTEXPR`, `Q_NULLPTR` | `override`, `final`, `noexcept`, `constexpr`, `nullptr` + relleno |
-   | `Q_REQUIRED_RESULT`, `Q_DECL_DEPRECATED` | espacios |
-   | `Q_PROPERTY`, `Q_ENUM`, `Q_ENUMS`, `Q_FLAG`, `Q_FLAGS`, `Q_CLASSINFO`, `Q_INTERFACES`, `Q_DECLARE_METATYPE`, `Q_DECLARE_PRIVATE`, `Q_DECLARE_PUBLIC`, `Q_PRIVATE_SLOT`, `Q_DECL_DEPRECATED_X`, `Q_DISABLE_COPY`, `Q_DISABLE_COPY_MOVE` | tipo función: identificador + `( … )` balanceado (respetando cadenas/comentarios dentro) → espacios. `Q_DISABLE_COPY*` deja marcador `DisableCopy`. Si no sigue `(`, se trata como objeto. |
-   | `config.ignore_macros` | objeto o función según siga `(` |
-   | Macro de export: identificador TODO_MAYÚSCULAS entre `class`/`struct` y el nombre de la clase (`class FOO_EXPORT Widget :`) | espacios |
+   | `Q_PROPERTY`, `Q_ENUM`, `Q_ENUMS`, `Q_FLAG`, `Q_FLAGS`, `Q_CLASSINFO`, `Q_INTERFACES`, `Q_DECLARE_METATYPE`, `Q_DECLARE_PRIVATE`, `Q_DECLARE_PUBLIC`, `Q_PRIVATE_SLOT`, `Q_DECL_DEPRECATED_X`, `Q_DISABLE_COPY`, `Q_DISABLE_COPY_MOVE` | tipo función: identificador + `( … )` balanceado (respetando cadenas, comentarios y *raw strings* dentro) → espacios. Solo se admiten **espacios o tabuladores** antes del `(`, no saltos de línea: tras `MY_ATTR⏎(void)f();` el `(` es una sentencia, no los argumentos. `Q_DISABLE_COPY*` deja marcador `DisableCopy`. Si no sigue `(`, o el paréntesis no se cierra, solo se borra el identificador. |
+   | `config.ignore_macros` | objeto o función según siga `(` (misma regla) |
+   | Macro de export: identificador `[A-Z][A-Z0-9_]*` entre `class`/`struct` y otro identificador que no sea `final` (`class FOO_EXPORT Widget :`) | espacios. `class FOO final` y `class FOO {` conservan `FOO`: es el nombre. |
 
-6. Los marcadores se asocian después por rango: `QObject` → el `class_specifier`
-   que lo contiene; `SlotsSection`/`SignalsSection` → el `access_specifier` en
-   ese offset; `Invokable` → la siguiente declaración de miembro.
+6. Los marcadores se asocian después por rango: `QObject`/`Gadget` → el
+   `class_specifier` que lo contiene; `SlotsSection`/`SignalsSection` → el
+   `access_specifier` en ese offset; `Invokable` → la siguiente declaración de
+   miembro; `DisableCopy` → el `class_specifier` que lo contiene.
+7. Un macro blanqueado es invisible para el escáner: no cambia cuál fue «el
+   token anterior» (así `Q_OBJECT` entre `{` y `signals:` no impide reconocerlo).
+8. Comprobado con ASan/UBSan sobre 21 000 entradas truncadas y corrompidas
+   (invariantes de longitud y saltos de línea; sin accesos fuera de rango). El
+   test unitario `PreprocessRobustness` repite una parte con semilla fija.
 
 ### 5.3 Extracción de tipos desde nodos (`syntax/extract.h`)
 

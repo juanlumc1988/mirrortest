@@ -48,7 +48,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
 - [x] **1.2 Lectura de fuentes** — `core/source.h/.cpp`. `SourceFile{path
   (tal cual), text}`; lectura binaria; CRLF tolerado (no se normaliza la
   entrada); error `mt-io`. Tests con ficheros temporales.
-- [ ] **1.3 Preprocesado (blanking)** — `syntax/preprocess.h/.cpp`, §5.2
+- [x] **1.3 Preprocesado (blanking)** — `syntax/preprocess.h/.cpp`, §5.2
   completo. Tests (cada uno comprobando el invariante de longitud y posiciones
   de `\n`): cada macro de la tabla; `slots` **no** se toca fuera de posición de
   acceso (`int slots = 0;`); macros dentro de comentarios, cadenas, *raw

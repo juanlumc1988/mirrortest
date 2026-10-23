@@ -42,6 +42,7 @@ add_library(mt_core STATIC
     src/core/diagnostics.cpp
     src/core/source.cpp
     src/ir/type.cpp
+    src/syntax/preprocess.cpp
     src/syntax/tree.cpp)
 target_include_directories(mt_core PUBLIC include)
 target_link_libraries(mt_core
@@ -65,12 +66,15 @@ if(MT_BUILD_TESTS)
     add_executable(mt_unit_tests
         tests/unit/test_dependencies.cpp
         tests/unit/test_diagnostics.cpp
+        tests/unit/test_preprocess.cpp
         tests/unit/test_source.cpp
         tests/unit/test_syntax_tree.cpp
         tests/unit/test_type.cpp)
     target_link_libraries(mt_unit_tests PRIVATE
         mt_core mt::inja nlohmann_json::nlohmann_json GTest::gtest_main)
     mt_configure(mt_unit_tests)
+    target_compile_definitions(mt_unit_tests PRIVATE
+        MT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/data")
     gtest_discover_tests(mt_unit_tests DISCOVERY_MODE PRE_TEST)
 
     # The CLI exists and answers. Behavioural CLI coverage lives in the golden
