@@ -230,21 +230,42 @@ Reglas (todas con tests unitarios):
 
 ### 5.3 Extracción de tipos desde nodos (`syntax/extract.h`)
 
-Regla general: **spelling = texto del nodo − nombre − valor por defecto**,
-normalizado.
+Implementado. Un tipo se lee como **texto**, no reconstruyéndolo de la forma del
+árbol de declaradores (que es del revés: en `const char* const names[3]` el
+nombre está en medio de su propio tipo):
 
-- Parámetro: texto de `parameter_declaration`/`optional_parameter_declaration`
-  hasta el inicio de `default_value`, quitando el rango del identificador más
-  interno del declarador → `normalize_spelling`. `const std::vector<int>& xs`
-  → `const std::vector<int>&`.
-- Retorno: desde el inicio del primer `type_qualifier`/tipo hasta el inicio del
-  `function_declarator`, excluyendo especificadores (`static`, `virtual`,
-  `inline`, `constexpr`, `explicit`, `friend`) → `static Widget* create(…)` da
-  `Widget*`. Retorno final (`auto f() -> T`): el `trailing_return_type`.
-- Descomposición desde la estructura: `type_qualifier const` antes del tipo →
-  `is_const`; cuenta de `pointer_declarator`; `reference_declarator` `&`/`&&`.
+    tipo   = calificadores y especificador de tipo, en orden de fuente
+    sufijo = texto del declarador sin el nombre ni la parte de función
 
----
+así `const char* const names[3]` es `const char` + `* const[3]`. Vale para
+cualquier forma —incluidas las que nadie previó— y conserva exactamente lo que
+escribió el usuario. Los campos estructurados de `ir::Type` (`is_const`, `ref`,
+`pointer_depth`) solo se rellenan si el sufijo es del tipo simple (`*`, `&`,
+`const`); para punteros a función, arrays y punteros a miembro el `spelling` es
+exacto y no se afirma nada más.
+
+Formas de nodo de tree-sitter-cpp 0.23.4 de las que depende (verificadas con el
+árbol real, fijadas en `test_extract.cpp`):
+
+- `virtual` es un token **anónimo**: se busca entre *todos* los hijos
+  (`has_token`). `...` en `f(int, ...)` también lo es y se perdía en silencio
+  (`f(int, ...)` se leía como `f(int)`); ahora es un parámetro de tipo `...`.
+- `int (*cb)(int)` es un `function_declarator` cuyo declarador es un
+  `parenthesized_declarator`: **parece un método y es una variable**
+  (`is_function_pointer`, sin `function`).
+- Una clase/enum anidado es un `field_declaration` con `struct_specifier` /
+  `enum_specifier` como tipo y **sin declarador**.
+- `reference_declarator` no etiqueta su declarador interno (`inner_declarator`
+  usa el último hijo nombrado); un parámetro sin nombre lleva
+  `abstract_*_declarator`.
+- `int const x` pone `type_qualifier` *después* del tipo; el orden se conserva.
+- `constexpr` y `mutable` son `type_qualifier` pero no forman parte del tipo;
+  `static`/`inline`/`extern` son `storage_class_specifier`.
+- Un `noexcept(expr)` no constante no se afirma: solo `noexcept` y
+  `noexcept(true)` cuentan.
+- Un `init_declarator` (`int x = 3`) lleva el valor aparte: no es parte del tipo.
+- Packs: `Args&&... args` → `variadic_declarator` anidado; el sufijo conserva
+  los `...` (`Args&&...`).
 
 ## 6. Frontend de código (cabeceras → `ir::Model`)
 

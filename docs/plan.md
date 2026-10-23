@@ -95,7 +95,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
 
 ## Fase 2 — gen-impl con GoogleTest (MVP)
 
-- [ ] **2.1 Utilidades de extracción** — `syntax/extract.h/.cpp` (§5.3): texto
+- [x] **2.1 Utilidades de extracción** — `syntax/extract.h/.cpp` (§5.3): texto
   de tipo de parámetros y retornos, descomposición, búsqueda de nodos.
   Tests sobre las formas del spike.
 - [ ] **2.2 Frontend de código, subconjunto MVP** — `frontend/code_frontend`
