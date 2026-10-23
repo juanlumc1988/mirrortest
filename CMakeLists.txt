@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+# Part of mirrortest -- bidirectional C++ test/code generator.
+
+cmake_minimum_required(VERSION 3.20)
+project(mirrortest VERSION 0.1.0 LANGUAGES C CXX)
+
+option(MT_BUILD_TESTS "Build the unit, golden and round-trip tests" ON)
+option(MT_WERROR      "Treat warnings as errors" OFF)
+
+# The generator itself is C++17 throughout. It runs on the development host,
+# never on the target, so there is nothing to gain from a lower standard.
+# What it *emits* is a different matter -- that is governed by --std and
+# defaults to code that is valid C++11 (see docs/design.md).
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(MtDependencies)
+
+set(MT_WARNINGS "")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(MT_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast)
+    if(MT_WERROR)
+        list(APPEND MT_WARNINGS -Werror)
+    endif()
+elseif(MSVC)
+    set(MT_WARNINGS /W4 /permissive-)
+    if(MT_WERROR)
+        list(APPEND MT_WARNINGS /WX)
+    endif()
+endif()
+
+function(mt_configure tgt)
+    set_target_properties(${tgt} PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF)
+    target_compile_options(${tgt} PRIVATE ${MT_WARNINGS})
+endfunction()
+
+# ---- core library: IR, parsing, inference, emission -----------------------
+
+add_library(mt_core STATIC
+    src/ir/type.cpp
+    src/syntax/tree.cpp)
+target_include_directories(mt_core PUBLIC include)
+target_link_libraries(mt_core
+    PUBLIC  mt::tree_sitter
+    PRIVATE mt::inja nlohmann_json::nlohmann_json)
+mt_configure(mt_core)
+
+# ---- command-line tool -----------------------------------------------------
+
+add_executable(mirrortest apps/cli/main.cpp)
+target_link_libraries(mirrortest PRIVATE mt_core CLI11::CLI11)
+target_compile_definitions(mirrortest PRIVATE MT_VERSION="${PROJECT_VERSION}")
+mt_configure(mirrortest)
+
+# ---- tests -----------------------------------------------------------------
+
+if(MT_BUILD_TESTS)
+    enable_testing()
+    include(GoogleTest)
+
+    add_executable(mt_unit_tests
+        tests/unit/test_dependencies.cpp
+        tests/unit/test_syntax_tree.cpp
+        tests/unit/test_type.cpp)
+    target_link_libraries(mt_unit_tests PRIVATE
+        mt_core mt::inja nlohmann_json::nlohmann_json GTest::gtest_main)
+    mt_configure(mt_unit_tests)
+    gtest_discover_tests(mt_unit_tests DISCOVERY_MODE PRE_TEST)
+
+    # The CLI exists and answers. Behavioural CLI coverage lives in the golden
+    # and round-trip suites, which drive the real binary.
+    add_test(NAME cli.version COMMAND mirrortest --version)
+    set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "mirrortest ${PROJECT_VERSION}")
+endif()
