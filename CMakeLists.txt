@@ -39,6 +39,7 @@ endfunction()
 # ---- core library: IR, parsing, inference, emission -----------------------
 
 add_library(mt_core STATIC
+    src/core/config.cpp
     src/core/diagnostics.cpp
     src/core/source.cpp
     src/ir/type.cpp
@@ -64,6 +65,7 @@ if(MT_BUILD_TESTS)
     include(GoogleTest)
 
     add_executable(mt_unit_tests
+        tests/unit/test_config.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_diagnostics.cpp
         tests/unit/test_preprocess.cpp

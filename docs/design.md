@@ -883,10 +883,13 @@ incorrecto · `3` E/S · `4` `--check` con diferencias.
   "guard": "ifndef",
   "file_header": "",
   "stub_policy": "throw",
+  "no_exceptions": false,
+  "no_rtti": false,
   "placeholder": "fail",
   "auto_policy": "error",
   "placeholder_type": "int",
   "string_literal_param": "const char*",
+  "qt": 6,
   "type_map": { "unsigned int": "std::uint32_t" },
   "by_value_types": [],
   "default_constructible_types": [],
@@ -894,14 +897,40 @@ incorrecto · `3` E/S · `4` `--check` con diferencias.
   "external_functions": [],
   "ignore_macros": [],
   "overrides": { "acme::Foo::items": { "returns": "std::vector<int>" } },
-  "template_instantiations": { "acme::Box": ["int", "std::string"] },
-  "qt": 6
+  "template_instantiations": { "acme::Box": ["int", "std::string"] }
 }
 ```
 
+Implementado en `include/mirrortest/core/config.h` (`Config`, `apply_config_json`,
+`load_config_file`). Reglas:
+
+- **Capas** (D9): `Config{}` (defaults) → `apply_config_json` (fichero) → la CLI
+  fija los campos de las opciones que recibió. Cada capa solo cambia lo que
+  dice; las **listas se reemplazan**, no se fusionan.
+- **Validación estricta, todo en una pasada**: clave desconocida (con su ruta:
+  `naming.colour`, `overrides.A::f.retuns`), tipo erróneo o valor fuera de su
+  conjunto son errores `mt-config`; se reportan todos y, si hay alguno, el
+  `Config` queda **intacto** (se trabaja sobre una copia).
+- El JSON admite comentarios `//` y `/* */`. Un JSON inválido es un error con la
+  posición que da nlohmann/json.
+- `naming.*`: cada patrón admite un único marcador y debe contenerlo
+  (`{stem}` en los de fichero, `{Class}` en los de nombre); si no, todas las
+  clases irían al mismo fichero o suite.
+- `no_exceptions` hace que `stub_policy: throw` se comporte como `abort`
+  (`effective_stub_policy`); un `default` explícito se respeta.
+- `file_header` debe ser un comentario C++ (`//` o `/*`), porque se emite tal
+  cual al principio de cada fichero; se normalizan los saltos de línea y se
+  recortan los finales.
+- Los tipos (`type_map`, `by_value_types`, `overrides.*.returns`/`params`,
+  `template_instantiations`, …) se guardan **normalizados** con
+  `normalize_spelling`; dos claves de `type_map` que normalizan igual son un
+  error.
+- `overrides`: clave `Clase::miembro` o `ns::Clase::miembro`; valor con
+  `returns`, `params` (objeto `{"1": "int", "3": "double"}`, posiciones desde 1
+  sin ceros a la izquierda), `const`, `static`, `virtual`, `noexcept`. Mismo
+  significado que la forma larga de la anotación (§7.11).
 - `type_map` se aplica al final a tipos `Inferred`/`Defaulted` (nunca a
   `Declared`/`Annotated`), comparando `base` normalizado.
-- Toda clave se valida; desconocida → `mt-config`.
 
 ---
 

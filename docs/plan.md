@@ -58,7 +58,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   offsets correctos. Test de integración: `tests/unit/data/spike_header.h` parsea tras el
   blanking con `has_error() == false`; `spike_qtest.cpp` deja como único `ERROR`
   el `QFETCH(int, value)` (forma conocida, §7.3: se trata por texto).
-- [ ] **1.4 Configuración** — `core/config.h/.cpp`. `Config` con defaults de
+- [x] **1.4 Configuración** — `core/config.h/.cpp`. `Config` con defaults de
   §14; carga JSON con validación estricta (clave desconocida o tipo erróneo →
   `mt-config` con la ruta de la clave); fusión defaults < fichero < CLI.
   Tests: defaults, cada clave, errores.
