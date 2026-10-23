@@ -67,7 +67,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   `{stem}`, `{Class}`; saneado de nombres de caso de test (§9.1, tabla de
   operadores). Tests exhaustivos (acrónimos: `HTTPServer` → `http_server`,
   dígitos, `_` iniciales).
-- [ ] **1.6 Diff** — `core/diff.h/.cpp`. Diff unificado determinista, 3 líneas
+- [x] **1.6 Diff** — `core/diff.h/.cpp`. Diff unificado determinista, 3 líneas
   de contexto, cabeceras `--- a/` `+++ b/`, fichero nuevo contra `/dev/null`,
   manejo de «sin salto final». Tests con casos conocidos.
 - [ ] **1.7 OutputPlan + Writer** — `core/output.h`, `core/writer.h/.cpp`, §10

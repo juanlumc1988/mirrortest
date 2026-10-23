@@ -41,6 +41,7 @@ endfunction()
 add_library(mt_core STATIC
     src/core/config.cpp
     src/core/diagnostics.cpp
+    src/core/diff.cpp
     src/core/naming.cpp
     src/core/source.cpp
     src/ir/type.cpp
@@ -69,6 +70,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_config.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_diagnostics.cpp
+        tests/unit/test_diff.cpp
         tests/unit/test_naming.cpp
         tests/unit/test_preprocess.cpp
         tests/unit/test_source.cpp

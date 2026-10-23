@@ -762,7 +762,14 @@ Solo afecta a macros de excepción (R6). `QSKIP("…")` de un argumento y
   padre.
 - `--dry-run`: diff unificado (3 líneas de contexto, `--- a/…` / `+++ b/…`)
   por stdout, sin escribir; salida 0. `--check`: igual pero silencioso; salida 4
-  si algo cambiaría. Diff propio (Myers o LCS) en `core/diff.h`, determinista.
+  si algo cambiaría. Diff propio en `core/diff.h`: Myers O(ND) tras recortar la
+  cabeza y la cola comunes, con las convenciones de git (`--- /dev/null` para
+  ficheros nuevos, rangos `-3` / `-2,0`, `\ No newline at end of file`; las
+  líneas se comparan con su terminador, así que añadir o quitar el salto final
+  es un cambio). Pasadas `kMaxEdits` (2000) ediciones el tramo distinto se
+  presenta entero como «todo lo viejo fuera, todo lo nuevo dentro»: sigue
+  siendo un diff correcto, no mínimo. Determinista; verificado con un
+  aplicador de parches de referencia y una LCS sobre 600 pares aleatorios.
 - Resumen por stderr (salvo `--quiet`): `created`, `unchanged`, `wrote X.new
   (X exists and differs)`, `merged N members into X`.
 
