@@ -14,6 +14,7 @@ option(MT_WERROR      "Treat warnings as errors" OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(MtDependencies)
+include(MtEmbedFiles)
 
 set(MT_WARNINGS "")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -38,20 +39,26 @@ endfunction()
 
 # ---- core library: IR, parsing, inference, emission -----------------------
 
+# The default templates, compiled in (cmake/MtEmbedFiles.cmake).
+set(MT_EMBEDDED_TEMPLATES "${CMAKE_CURRENT_BINARY_DIR}/mt_embedded_templates.cpp")
+mt_embed_templates("${MT_EMBEDDED_TEMPLATES}" "${CMAKE_CURRENT_SOURCE_DIR}/templates")
+
 add_library(mt_core STATIC
     src/core/config.cpp
     src/core/diagnostics.cpp
     src/core/diff.cpp
     src/core/naming.cpp
     src/core/source.cpp
+    src/core/templates.cpp
     src/core/writer.cpp
     src/ir/type.cpp
     src/syntax/preprocess.cpp
-    src/syntax/tree.cpp)
+    src/syntax/tree.cpp
+    "${MT_EMBEDDED_TEMPLATES}")
 target_include_directories(mt_core PUBLIC include)
 target_link_libraries(mt_core
-    PUBLIC  mt::tree_sitter
-    PRIVATE mt::inja nlohmann_json::nlohmann_json)
+    PUBLIC  mt::tree_sitter nlohmann_json::nlohmann_json
+    PRIVATE mt::inja)
 mt_configure(mt_core)
 
 # ---- command-line tool -----------------------------------------------------
@@ -76,6 +83,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_preprocess.cpp
         tests/unit/test_source.cpp
         tests/unit/test_syntax_tree.cpp
+        tests/unit/test_templates.cpp
         tests/unit/test_writer.cpp
         tests/unit/test_type.cpp)
     target_link_libraries(mt_unit_tests PRIVATE
@@ -84,6 +92,20 @@ if(MT_BUILD_TESTS)
     target_compile_definitions(mt_unit_tests PRIVATE
         MT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/data")
     gtest_discover_tests(mt_unit_tests DISCOVERY_MODE PRE_TEST)
+
+    # cmake/MtEmbedFiles.cmake, in isolation: awkward content survives, CRLF is
+    # normalised, an unchanged embedding does not rewrite its output, and a
+    # template containing the raw-string terminator fails the configure.
+    foreach(case ok clash)
+        add_test(NAME cmake.embed_${case}
+            COMMAND "${CMAKE_COMMAND}"
+                -S "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/embed"
+                -B "${CMAKE_CURRENT_BINARY_DIR}/cmake-embed-${case}"
+                -DMT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -DCASE=${case})
+    endforeach()
+    set_tests_properties(cmake.embed_ok PROPERTIES PASS_REGULAR_EXPRESSION "embedding checks passed")
+    set_tests_properties(cmake.embed_clash PROPERTIES PASS_REGULAR_EXPRESSION "raw-string terminator")
 
     # The CLI exists and answers. Behavioural CLI coverage lives in the golden
     # and round-trip suites, which drive the real binary.

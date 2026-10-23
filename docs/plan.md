@@ -75,7 +75,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   `--check`, atómico, crear directorios, todo-o-nada). Tests sobre un directorio
   temporal, incluido «`.new` previo se sobrescribe» e «idéntico → no se toca
   (mtime intacto)».
-- [ ] **1.8 Plantillas** — `cmake/MtEmbedFiles.cmake` (§15; el build falla si
+- [x] **1.8 Plantillas** — `cmake/MtEmbedFiles.cmake` (§15; el build falla si
   una plantilla contiene `)mt_tpl"`), `core/templates.h/.cpp` (embebidas +
   `--templates DIR`, inja con `trim_blocks`/`lstrip_blocks`, error claro con
   nombre de plantilla). `docs/templates.md` con las variables. Tests: override
@@ -83,7 +83,8 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
 - [ ] **1.9 CLI en librería** — `cli/run.h/.cpp`: `int run(const
   std::vector<std::string>& args, const Env& env)` con `Env{cwd, out, err}`;
   todas las opciones de §13 parseadas y validadas (CLI11), códigos de salida
-  §13.2; `apps/cli/main.cpp` solo llama a `run`. Subcomandos aún devuelven
+  §13.2; `--verbose` lista las plantillas sustituidas
+  (`TemplateStore::overridden()`, prometido en `docs/templates.md`); `apps/cli/main.cpp` solo llama a `run`. Subcomandos aún devuelven
   «not implemented» pero con la config ya resuelta. Tests de parseo y códigos
   de salida.
 - [ ] **1.10 Runner de goldens** — `tests/golden/runner.cpp` (§16.2):

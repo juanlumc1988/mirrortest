@@ -1,0 +1,3 @@
+
+# The CRLF template exists to prove line endings are normalised; git must not do it first.
+tests/cmake/embed/ok/sub/crlf.inja -text
