@@ -39,6 +39,7 @@ endfunction()
 # ---- core library: IR, parsing, inference, emission -----------------------
 
 add_library(mt_core STATIC
+    src/core/diagnostics.cpp
     src/ir/type.cpp
     src/syntax/tree.cpp)
 target_include_directories(mt_core PUBLIC include)
@@ -62,6 +63,7 @@ if(MT_BUILD_TESTS)
 
     add_executable(mt_unit_tests
         tests/unit/test_dependencies.cpp
+        tests/unit/test_diagnostics.cpp
         tests/unit/test_syntax_tree.cpp
         tests/unit/test_type.cpp)
     target_link_libraries(mt_unit_tests PRIVATE

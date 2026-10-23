@@ -40,7 +40,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
 
 ## Fase 1 — Núcleo común
 
-- [ ] **1.1 Diagnostics** — `core/diagnostics.h/.cpp`. `Severity`,
+- [x] **1.1 Diagnostics** — `core/diagnostics.h/.cpp`. `Severity`,
   `Diagnostic{severity, code, message, loc, notes}`, `Diagnostics` (acumula,
   `has_errors()`, `promote_warnings()` para `--strict`, `sorted()`,
   `format(std::ostream&)` estilo GCC §12). Tests: orden estable, formato exacto,
