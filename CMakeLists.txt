@@ -54,6 +54,7 @@ add_library(mt_core STATIC
     src/core/templates.cpp
     src/core/writer.cpp
     src/frontend/code_frontend.cpp
+    src/frontend/literals.cpp
     src/ir/type.cpp
     src/syntax/extract.cpp
     src/syntax/preprocess.cpp
@@ -85,6 +86,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_config.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_extract.cpp
+        tests/unit/test_literals.cpp
         tests/unit/test_diagnostics.cpp
         tests/unit/test_diff.cpp
         tests/unit/test_naming.cpp

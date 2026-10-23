@@ -104,7 +104,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   enums, funciones libres. (Se necesita ya para fixtures y cabeceras
   existentes; Qt y `#if` en 4.1.) Tests: `tests/unit/data/spike_header.h`
   (tras blanking) → modelo esperado campo a campo.
-- [ ] **2.3 Clasificador de literales** — `frontend/literals` (§7.5) completo.
+- [x] **2.3 Clasificador de literales** — `frontend/literals` (§7.5) completo.
   Tabla de tests: cada fila de §7.5, incluidos `-1`, `-1u`, `0xFFFFFFFF`,
   `4294967296`, `1'000'000`, `5000000000l` (aviso ARM32), `1e-9`, `0x1p3`,
   `'ab'`, `u8"x"` con `--std` 17 y 20, `"x"s`, `10ms`, `1.5_km`.

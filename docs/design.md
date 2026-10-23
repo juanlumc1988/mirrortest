@@ -453,6 +453,36 @@ Receptor de una llamada `x.m()` / `x->m()`:
 | `sizeof(…)` | `std::size_t` |
 | enumerador de enum conocido `E::X` | `E` |
 
+Implementado en `frontend/literals.h` (`classify_number`, `classify_character`,
+`classify_string`, `classify_literal`). Trabaja sobre el **texto** del literal, de
+modo que se prueba sin parser; `classify_literal` despacha por tipo de nodo
+(`number_literal`, `user_defined_literal`, `char_literal`, `string_literal`,
+`raw_string_literal`, `concatenated_string`, `true`/`false`, `null`) y fija la
+posición del tipo. Detalles fijados al implementarlo:
+
+- Cada tipo inferido lleva `Origin::Inferred` y `reason = "literal <texto>"`, que
+  es lo que acaba en `// TODO(mt): … inferred from literal 3u`.
+- tree-sitter lexea `-1`, `+2` y `-1u` como **un** `number_literal`, pero `- 3` es
+  un `unary_expression`: ese caso lo resuelve el tipado de expresiones (2.4). Un
+  `-1u` sigue siendo `unsigned int`; `-2147483648` es `long long`, porque
+  `2147483648` no cabe en `int` pase lo que pase delante.
+- Entero `u` por encima de `UINT_MAX` → `unsigned long long` + `mt-literal-range`
+  (el estándar daría `unsigned long` en LP64). `l` solo da `long`; si el valor no
+  cabe en 32 bits, aviso de ARM32. Overflow de `unsigned long long` → ese tipo +
+  `mt-literal` «demasiado grande». Un sufijo inválido o definido por el usuario
+  (`3f`, `3_km`, `1.5s`, `1.5f16`) es `Unsupported` + `mt-literal`, sin tipo.
+- `0x1e5` es el entero 485, no un flotante: en hexadecimal el exponente es `p`.
+- Cadena ordinaria (`"x"`, `R"(x)"`, `"a" "b"`): `Kind::String` **sin tipo**; lo
+  decide el contexto (§7.6). Con prefijo (`L u U u8`) es un puntero tipado; con
+  sufijo `s`/`sv`, el `std::basic_string[_view]` del carácter correspondiente.
+- Las características de un estándar mayor que `--std` (separadores `'` y `0b`:
+  C++14; `"x"s` y chrono: C++14; `"x"sv` y `u8'a'`: C++17; sufijo `z`: C++23)
+  dan `mt-std`, no un tipo distinto.
+- `character_count` cuenta cada escape (`\x41`, `\101`, `\u00e9`) y cada punto de
+  código UTF-8 como un carácter: `'\x41'` es `char`, `'\x41\x42'` es `int`.
+- No es de este módulo: `static_cast<T>(e)`, `(T)e`, `T(e)`, `T{e}`, `sizeof(…)`,
+  `E::X`. Son expresiones con tipo propio; las tipa el frontend de tests (2.4).
+
 ### 7.6 Contexto de uso → pista de tipo
 
 | Contexto | Pista para el resultado / argumento |
