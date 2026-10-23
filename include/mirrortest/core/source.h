@@ -14,6 +14,7 @@
 #ifndef MT_CORE_SOURCE_H
 #define MT_CORE_SOURCE_H
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -26,10 +27,16 @@ struct SourceFile {
     std::string text;   // raw bytes
 };
 
-// Reads `path`. On failure records an `mt-io` error, located at the file, and
-// returns nullopt. The message deliberately avoids strerror(): its wording
-// differs between platforms and diagnostics are compared byte for byte.
-std::optional<SourceFile> read_source(const std::string& path, Diagnostics& diagnostics);
+// Reads `path`. A relative path is resolved against `base_dir` when one is
+// given (the CLI passes its working directory instead of changing the
+// process's), but `SourceFile::path` and every diagnostic keep the path as the
+// user wrote it.
+//
+// On failure records an `mt-io` error, located at the file, and returns
+// nullopt. The message deliberately avoids strerror(): its wording differs
+// between platforms and diagnostics are compared byte for byte.
+std::optional<SourceFile> read_source(const std::string& path, Diagnostics& diagnostics,
+                                      const std::filesystem::path& base_dir = {});
 
 }  // namespace mt::core
 

@@ -19,6 +19,7 @@
 #ifndef MT_CORE_CONFIG_H
 #define MT_CORE_CONFIG_H
 
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -47,6 +48,15 @@ std::optional<GuardStyle> parse_guard_style(std::string_view text);
 std::optional<StubPolicy> parse_stub_policy(std::string_view text);
 std::optional<Placeholder> parse_placeholder(std::string_view text);
 std::optional<AutoPolicy> parse_auto_policy(std::string_view text);
+
+// The valid spellings of each enumeration, in declaration order. The CLI
+// validates its options against these and prints them in --help, so the
+// command line and the configuration file can never disagree.
+std::vector<std::string> std_names();
+std::vector<std::string> guard_names();
+std::vector<std::string> stub_policy_names();
+std::vector<std::string> placeholder_names();
+std::vector<std::string> auto_policy_names();
 
 // 11, 14, 17, 20, 23.
 int to_number(CxxStd value);
@@ -117,8 +127,11 @@ StubPolicy effective_stub_policy(const Config& config);
 bool apply_config_json(Config& config, std::string_view json, const std::string& origin,
                        Diagnostics& diagnostics);
 
-// Reads `path` (an `mt-io` error if it cannot be read) and applies it.
-bool load_config_file(Config& config, const std::string& path, Diagnostics& diagnostics);
+// Reads `path` (an `mt-io` error if it cannot be read) and applies it. A
+// relative path is resolved against `base_dir` if given; diagnostics show it
+// as written.
+bool load_config_file(Config& config, const std::string& path, Diagnostics& diagnostics,
+                      const std::filesystem::path& base_dir = {});
 
 }  // namespace mt::core
 

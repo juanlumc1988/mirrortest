@@ -20,11 +20,13 @@ void fail(const std::string& path, const char* why, Diagnostics& diagnostics) {
 
 }  // namespace
 
-std::optional<SourceFile> read_source(const std::string& path, Diagnostics& diagnostics) {
+std::optional<SourceFile> read_source(const std::string& path, Diagnostics& diagnostics,
+                                      const std::filesystem::path& base_dir) {
     namespace fs = std::filesystem;
+    const fs::path actual = base_dir.empty() ? fs::path(path) : base_dir / path;
 
     std::error_code ec;
-    const fs::file_status status = fs::status(fs::path(path), ec);
+    const fs::file_status status = fs::status(actual, ec);
     if (ec || !fs::exists(status)) {
         fail(path, "no such file", diagnostics);
         return std::nullopt;
@@ -34,7 +36,7 @@ std::optional<SourceFile> read_source(const std::string& path, Diagnostics& diag
         return std::nullopt;
     }
 
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(actual, std::ios::binary);
     if (!in) {
         fail(path, "permission denied or unreadable", diagnostics);
         return std::nullopt;

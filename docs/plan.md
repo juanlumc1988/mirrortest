@@ -80,7 +80,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   `--templates DIR`, inja con `trim_blocks`/`lstrip_blocks`, error claro con
   nombre de plantilla). `docs/templates.md` con las variables. Tests: override
   parcial, plantilla inexistente, variable indefinida.
-- [ ] **1.9 CLI en librería** — `cli/run.h/.cpp`: `int run(const
+- [x] **1.9 CLI en librería** — `cli/run.h/.cpp`: `int run(const
   std::vector<std::string>& args, const Env& env)` con `Env{cwd, out, err}`;
   todas las opciones de §13 parseadas y validadas (CLI11), códigos de salida
   §13.2; `--verbose` lista las plantillas sustituidas

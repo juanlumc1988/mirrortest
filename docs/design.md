@@ -893,13 +893,50 @@ COMUNES: -I DIR ... | --std c++11|c++14|c++17|c++20|c++23 (defecto c++17)
          --compile-commands FICHERO (fase 8: solo para extraer -I)
 ```
 
-Ficheros como posicionales o con `--tests`/`--header` (compatibilidad con
-AT §10). `--out` obligatorio.
+Implementado en `cli/run.h` (`parse_options`, `finish_run`, `run`); `main.cpp`
+solo construye el `Env` y llama a `run`. `--compile-commands` **no está
+registrado** hasta la tarea 8.1: pasarlo es hoy un error de uso, no una opción
+aceptada e ignorada.
+
+- **Entradas**: posicionales o con `--tests`/`--header` (AT §10); primero los
+  posicionales y luego los de la opción, cada grupo en el orden escrito. Sin
+  entradas → error de uso.
+- **Salida**: `gen-impl` necesita `--out`, o `--out-include` y `--out-src`;
+  `--out-include`/`--out-src` caen cada uno por separado en `--out`
+  (`Options::header_dir()` / `source_dir()`). `gen-tests` necesita `--out`.
+- **Opciones repetibles** (`-I`, `--tests`, `--header`): un valor por aparición,
+  todas las apariciones acumuladas. CLI11 las hace voraces por defecto
+  (`-I inc test.cpp` se tragaría `test.cpp` como segundo directorio y dejaría la
+  orden sin entradas); hacen falta a la vez `expected(1)`,
+  `allow_extra_args(false)` y `multi_option_policy(TakeAll)` (ninguna basta
+  sola, comprobado contra esta versión). `-Idir` pegado también funciona.
+- **Validación**: valores fuera de su conjunto (`--std c++98`, `--qt 4`,
+  `--framework auto` en `gen-tests`, …) son error de uso que dice qué es válido;
+  los conjuntos salen de `core/config.h` (`std_names()`, …), una sola fuente de
+  verdad para CLI y fichero. `--quiet` y `--verbose` se excluyen;
+  `--include-as` exige exactamente una cabecera. Las opciones de un comando que
+  no son del otro (`--stub-policy` en `gen-tests`) son error de uso.
+- **Precedencia** (D9): defaults → `--config` → línea de comandos, y **solo una
+  opción realmente pasada** pisa al fichero (su valor por defecto nunca lo
+  hace: `--std` por defecto es c++17 y un fichero con c++11 debe ganar si falta
+  `--std`). `--no-exceptions`/`--no-rtti` solo pueden activar. Las rutas
+  relativas (config, entradas, plantillas, salida) se resuelven contra
+  `Env::cwd`, nunca con `chdir`, y se **muestran como las escribió el usuario**.
+- **`--quiet`**: quita las notas y el resumen; los avisos y errores se imprimen
+  siempre. **`--verbose`**: más información (p. ej. las plantillas sustituidas).
 
 ### 13.2 Códigos de salida
 
-`0` éxito (incluido «nada que hacer») · `1` errores de diagnóstico · `2` uso
-incorrecto · `3` E/S · `4` `--check` con diferencias.
+`0` éxito (incluido «nada que hacer», `--help` y `--version`) · `1` hay errores
+de diagnóstico que no son de E/S · `2` uso incorrecto · `3` E/S (**todos** los
+errores registrados son `mt-io`; si hay mezcla, `1`) · `4` `--check` con
+diferencias (solo si no hay errores).
+
+`finish_run` es el final común de cada comando: aplica `--strict` (avisos →
+errores), imprime los diagnósticos ordenados por stderr, y con un informe de
+escritura: `--dry-run` imprime el diff de cada fichero por stdout; el resumen va
+a stderr salvo `--quiet` o `--check` (que queda en silencio, salvo
+diagnósticos); un error suprime diffs y resumen.
 
 ### 13.3 Lo único que cambia con `--std`
 

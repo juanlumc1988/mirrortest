@@ -44,6 +44,8 @@ set(MT_EMBEDDED_TEMPLATES "${CMAKE_CURRENT_BINARY_DIR}/mt_embedded_templates.cpp
 mt_embed_templates("${MT_EMBEDDED_TEMPLATES}" "${CMAKE_CURRENT_SOURCE_DIR}/templates")
 
 add_library(mt_core STATIC
+    src/cli/commands.cpp
+    src/cli/run.cpp
     src/core/config.cpp
     src/core/diagnostics.cpp
     src/core/diff.cpp
@@ -58,14 +60,15 @@ add_library(mt_core STATIC
 target_include_directories(mt_core PUBLIC include)
 target_link_libraries(mt_core
     PUBLIC  mt::tree_sitter nlohmann_json::nlohmann_json
-    PRIVATE mt::inja)
+    PRIVATE mt::inja CLI11::CLI11)
+set_source_files_properties(src/cli/run.cpp PROPERTIES
+    COMPILE_DEFINITIONS MT_VERSION="${PROJECT_VERSION}")
 mt_configure(mt_core)
 
 # ---- command-line tool -----------------------------------------------------
 
 add_executable(mirrortest apps/cli/main.cpp)
-target_link_libraries(mirrortest PRIVATE mt_core CLI11::CLI11)
-target_compile_definitions(mirrortest PRIVATE MT_VERSION="${PROJECT_VERSION}")
+target_link_libraries(mirrortest PRIVATE mt_core)
 mt_configure(mirrortest)
 
 # ---- tests -----------------------------------------------------------------
@@ -75,6 +78,7 @@ if(MT_BUILD_TESTS)
     include(GoogleTest)
 
     add_executable(mt_unit_tests
+        tests/unit/test_cli.cpp
         tests/unit/test_config.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_diagnostics.cpp

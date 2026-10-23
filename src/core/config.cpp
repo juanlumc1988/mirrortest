@@ -500,6 +500,21 @@ std::optional<StubPolicy> parse_stub_policy(std::string_view text) { return find
 std::optional<Placeholder> parse_placeholder(std::string_view text) { return find_choice(kPlaceholders, text); }
 std::optional<AutoPolicy> parse_auto_policy(std::string_view text) { return find_choice(kAutoPolicies, text); }
 
+template <class E, std::size_t N>
+std::vector<std::string> names_of(const Choice<E> (&table)[N]) {
+    std::vector<std::string> out;
+    for (const Choice<E>& c : table) {
+        out.emplace_back(c.name);
+    }
+    return out;
+}
+
+std::vector<std::string> std_names() { return names_of(kStds); }
+std::vector<std::string> guard_names() { return names_of(kGuards); }
+std::vector<std::string> stub_policy_names() { return names_of(kStubPolicies); }
+std::vector<std::string> placeholder_names() { return names_of(kPlaceholders); }
+std::vector<std::string> auto_policy_names() { return names_of(kAutoPolicies); }
+
 int to_number(CxxStd value) {
     switch (value) {
         case CxxStd::Cxx11: return 11;
@@ -541,8 +556,9 @@ bool apply_config_json(Config& config, std::string_view text, const std::string&
     return true;
 }
 
-bool load_config_file(Config& config, const std::string& path, Diagnostics& diagnostics) {
-    const std::optional<SourceFile> file = read_source(path, diagnostics);
+bool load_config_file(Config& config, const std::string& path, Diagnostics& diagnostics,
+                      const std::filesystem::path& base_dir) {
+    const std::optional<SourceFile> file = read_source(path, diagnostics, base_dir);
     if (!file) {
         return false;
     }
