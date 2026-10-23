@@ -169,7 +169,7 @@ Declarator parse_declarator(const Node& declarator) {
         }
 
         Node next = inner_declarator(current);
-        if (type == "function_declarator") {
+        if (type == "function_declarator" || type == "abstract_function_declarator") {
             if (!next.is_null() && next.type() == "parenthesized_declarator") {
                 out.is_function_pointer = true;      // int (*cb)(int): a variable
             } else if (out.function.is_null()) {

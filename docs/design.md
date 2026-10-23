@@ -269,44 +269,62 @@ Formas de nodo de tree-sitter-cpp 0.23.4 de las que depende (verificadas con el
 
 ## 6. Frontend de código (cabeceras → `ir::Model`)
 
+Implementado en `frontend/code_frontend.h` (`read_declarations`, `read_header`).
 Se usa en tres sitios: entrada de gen-tests; cabeceras existentes en gen-impl
-(API ya conocida + merge); fixtures y clases de test dentro de los tests.
+(API ya conocida + merge); fixtures y clases de test dentro de los tests. Por eso
+lee **declaraciones**, no cabeceras: sirve cualquier unidad de traducción.
 
 ### 6.1 Recorrido
 
-- `translation_unit` → `namespace_definition` (incluido
-  `nested_namespace_specifier` `a::b`), `linkage_specification` (`extern "C"`),
-  `preproc_if`/`preproc_ifdef`/`preproc_elif`/`preproc_else` (§6.5).
-  Namespaces anónimos: se omiten con nota (enlace interno, no testeables
-  desde fuera).
+- `translation_unit` → `namespace_definition` (incluido `nested_namespace_specifier`
+  `a::b`), `linkage_specification` (`extern "C"`, con o sin llaves),
+  `preproc_if`/`preproc_ifdef`/`preproc_elif`/`preproc_else` (todas las ramas, §6.5),
+  `preproc_include` (ruta sin delimitadores + `is_system`).
+  Namespaces anónimos: se omiten (enlace interno, no testeables desde fuera).
 - `class_specifier`/`struct_specifier` **con cuerpo** → `Class`. Sin cuerpo
-  (declaración adelantada) → ignorar. Dentro de `template_declaration` →
-  `template_params` (gen-tests la omite salvo instanciaciones configuradas,
-  `mt-unsupported`).
-- `enum_specifier` → `Enum`. `declaration` con `function_declarator` en ámbito
-  de namespace → `Function`. Definiciones fuera de clase (`int Foo::bar() {}`)
-  → no son declaraciones nuevas; el merge las usa (§11.3).
+  (declaración adelantada, `class Foo* f();`) → ignorar. `union` → ignorar.
+  `struct S { … } s;` define `S` además de declarar `s`. Dentro de
+  `template_declaration` → `template_params` (texto entre `<>`, p. ej.
+  `typename T, int N = 4`).
+- `enum_specifier` **con nombre y cuerpo** → `Enum` (`is_scoped` por el token
+  anónimo `class`/`struct`; `underlying` por el campo `base`; enumeradores por
+  su campo `name`). Anónimos y adelantados, ignorados.
+- `declaration`/`function_definition` en ámbito de namespace con
+  `function_declarator` (no puntero a función) → `Function` (incluye `static`,
+  `inline`, operadores y retorno final). **No** son funciones: variables,
+  punteros a función, `int Foo::bar() {}` (define un miembro), plantillas de
+  función (aviso `mt-unsupported` y se omiten).
+- Una clase leída dos veces (ramas `#if`, o dos llamadas) es **una** clase: se
+  funden los miembros y no se repite una firma ya presente (nombre + tipos de
+  parámetros + `const` + ref-qualifier); tampoco bases, campos ni tipos anidados.
 
-### 6.2 Miembros (formas verificadas en el spike)
+### 6.2 Miembros (formas verificadas con el árbol real)
 
 | Forma tree-sitter | Resultado |
 |---|---|
-| `field_declaration` con `function_declarator` (posiblemente dentro de `pointer_declarator`/`reference_declarator`, que pertenecen al tipo de retorno) | método |
-| `declaration` cuyo declarador es el nombre de la clase | constructor; `explicit_function_specifier` → `is_explicit` |
-| `declaration` con `destructor_name` | destructor |
-| `declaration` con `operator_cast` | conversión (`operator bool`) |
-| `operator_name` como declarador | `MethodKind::Operator` |
-| `function_definition` dentro de la clase | igual que su declaración; `delete_method_clause` / `default_method_clause` → `is_deleted` / `is_defaulted` |
-| `field_declaration` sin `function_declarator` | `Field` (uno por declarador: `int a, b;`) |
-| `storage_class_specifier static`, nodo `virtual`, `virtual_specifier` `override`/`final`, `type_qualifier const` dentro del `function_declarator`, `noexcept`, `ref_qualifier`, `default_value` = `0` | flags correspondientes |
+| `field_declaration` / `declaration` / `function_definition` con `function_declarator` que no es puntero a función | método (uno por declarador) |
+| `declaration` cuyo declarador es el nombre de la clase y sin tipo | `Constructor`; `explicit_function_specifier` → `is_explicit` |
+| `destructor_name` (`~A`) | `Destructor` |
+| `operator_cast` (`explicit operator bool() const`, `operator const char*() const`) | `Conversion`, nombre `operator <tipo destino>`, sin `ret` |
+| nombre que empieza por `operator` seguido de algo que no continúa un identificador | `Operator`; el nombre se normaliza (`operator ==` → `operator==`, `operator  new [ ]` → `operator new[]`); `operatorX` es un método normal |
+| `delete_method_clause` / `default_method_clause` | `is_deleted` / `is_defaulted` |
+| `default_value` = `0` | `is_pure` |
+| `virtual` (token anónimo), `static`, `virtual_specifier` `override`/`final`, `const`, `noexcept`, ref-qualifier | flags |
 | `template_declaration` dentro de la clase | método con `is_template` |
-| clase/struct/enum anidados, `type_definition`, `alias_declaration` | nombre a `nested_types` (clases anidadas completas: fase 7) |
-| `friend_declaration`, `using_declaration` | ignorar (nota) |
+| `field_declaration` con declarador no-función (incluye `int (*cb)(int)`, arrays, bitfields, `static constexpr`) | `Field` (uno por declarador: `int a, *b;`) |
+| `field_declaration` sin declarador cuyo tipo es clase/enum, `type_definition`, `alias_declaration` | nombre a `nested_types` (el cuerpo de una clase anidada no se lee: fase 7) |
+| `friend_declaration`, `using_declaration`, `static_assert_declaration` | no son miembros |
+
+Un método ya presente (misma firma) no se añade dos veces. El tipo de retorno es el
+declarado o el de `-> T`; `auto` sin retorno final queda como `auto`.
 
 Acceso: `private` por defecto en `class`, `public` en `struct`; cada
-`access_specifier` lo cambia. Rol Qt: sección marcada `SlotsSection` →
-`QtRole::Slot`; `SignalsSection` → `QtRole::Signal` (hasta el siguiente
-especificador); marcador `Invokable` → `QtRole::Invokable`.
+`access_specifier` lo cambia. **Qt** (con los marcadores del preprocesado, §5.2):
+`SlotsSection`/`SignalsSection` en el offset de un `access_specifier` →
+`QtRole::Slot`/`Signal` hasta el siguiente especificador; un `Invokable` entre el
+final del miembro anterior y el inicio de este → `QtRole::Invokable`; `QObject` →
+`is_qobject`, `Gadget` → `is_gadget`, `DisableCopy` → `disable_copy`, siempre que el
+marcador esté en la clase y no dentro de una clase anidada.
 
 ### 6.3 Clases «construibles»
 
@@ -317,17 +335,24 @@ planner (§9.2).
 
 ### 6.4 No soportado (diagnóstico explícito, nunca silencio)
 
-Plantillas de clase sin instanciaciones configuradas, especializaciones,
-miembros generados por macros no reconocidas, herencia de constructores
-(`using Base::Base;`), `concept`/`requires`. Código `mt-unsupported`, aviso.
+Plantillas de función (`mt-unsupported`, aviso), especializaciones, miembros
+generados por macros no reconocidas, herencia de constructores
+(`using Base::Base;`), `concept`/`requires`. Las plantillas de clase se leen y
+llevan `template_params`; el planner decide qué hacer con ellas.
 
 ### 6.5 Compilación condicional
 
-Se recorren todas las ramas. Declaraciones con la misma **firma completa**
-(§11.2) se fusionan (gana la primera en orden de fuente). Si dos ramas declaran
-el mismo (nombre, aridad) con firmas distintas, se conservan ambas y se emite
-`mt-conditional` (nota) con las dos líneas: es el usuario quien sabe qué
+Se recorren todas las ramas. Declaraciones con la misma firma se fusionan (gana
+la primera en orden de fuente). Pendiente (tarea 4.1): si dos ramas declaran el
+mismo (nombre, aridad) con firmas distintas, se conservan ambas y se emite la
+nota `mt-conditional` con las dos líneas: es el usuario quien sabe qué
 configuración aplica.
+
+### 6.6 Errores de parseo
+
+El parser siempre da un árbol. Cada nodo `ERROR` (el más externo; hasta 10, luego
+una nota «and N more parse errors») es un aviso `mt-parse` con su posición, y se
+lee lo que lo rodea: una cabecera que casi parsea es mucho más útil que ninguna.
 
 ---
 

@@ -98,7 +98,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
 - [x] **2.1 Utilidades de extracción** — `syntax/extract.h/.cpp` (§5.3): texto
   de tipo de parámetros y retornos, descomposición, búsqueda de nodos.
   Tests sobre las formas del spike.
-- [ ] **2.2 Frontend de código, subconjunto MVP** — `frontend/code_frontend`
+- [x] **2.2 Frontend de código, subconjunto MVP** — `frontend/code_frontend`
   (§6): namespaces, clases con cuerpo, métodos, ctores/dtor, campos, acceso,
   `static/const/virtual/=0/override/noexcept/=delete/=default/explicit`,
   enums, funciones libres. (Se necesita ya para fixtures y cabeceras
@@ -185,8 +185,11 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
 
 ## Fase 4 — gen-tests con GoogleTest
 
-- [ ] **4.1 Frontend de código completo** — Qt (roles, `is_qobject`),
-  `#if` (§6.5), plantillas (marcar), tipos anidados, `mt-unsupported`. Tests.
+- [ ] **4.1 Frontend de código, lo que resta** — los roles Qt, `is_qobject` y la
+  fusión de ramas `#if` ya están desde 2.2. Falta: `mt-conditional` cuando dos
+  ramas declaran el mismo (nombre, aridad) con firmas distintas (§6.5), clases
+  anidadas completas, y los `mt-unsupported` de §6.4 (especializaciones,
+  `using Base::Base`, `concept`). Tests.
 - [ ] **4.2 Planner** — `backend/test_planner` (§9.1–9.3): casos, nombres,
   `sut`, locales, `const_sut`, `noexcept`, resultado, comentados, includes.
   Tests *modelo → plan*.

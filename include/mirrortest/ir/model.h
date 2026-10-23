@@ -152,6 +152,8 @@ struct Class {
     // for instantiations listed in the configuration.
     std::optional<std::string> template_params;
     bool                     is_qobject = false;   // declared Q_OBJECT
+    bool                     is_gadget = false;    // declared Q_GADGET: a Qt value type, no signals or slots
+    bool                     disable_copy = false; // Q_DISABLE_COPY / Q_DISABLE_COPY_MOVE
 
     // The header that declares it (gen-tests) or must declare it (gen-impl),
     // spelled as an #include would spell it: "foo.h", "acme/foo.h".

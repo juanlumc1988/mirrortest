@@ -1,0 +1,601 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of mirrortest -- bidirectional C++ test/code generator.
+
+#include "mirrortest/frontend/code_frontend.h"
+
+#include <algorithm>
+#include <optional>
+#include <utility>
+
+#include "mirrortest/core/naming.h"
+#include "mirrortest/ir/type.h"
+#include "mirrortest/syntax/extract.h"
+
+namespace mt::frontend {
+
+namespace {
+
+using syntax::Declarator;
+using syntax::Node;
+using syntax::QtMarker;
+using syntax::Specifiers;
+
+constexpr unsigned kMaxParseWarnings = 10;
+
+bool is_class_like(std::string_view type) {
+    return type == "class_specifier" || type == "struct_specifier" || type == "union_specifier";
+}
+
+bool is_conditional(std::string_view type) {
+    return type == "preproc_if" || type == "preproc_ifdef" || type == "preproc_else" ||
+           type == "preproc_elif" || type == "preproc_elifdef";
+}
+
+ir::Access to_access(std::string_view text) {
+    if (text == "public") return ir::Access::Public;
+    if (text == "protected") return ir::Access::Protected;
+    return ir::Access::Private;
+}
+
+std::string collapse_spaces(std::string_view text) {
+    std::string out;
+    bool pending = false;
+    for (char c : text) {
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            pending = !out.empty();
+        } else {
+            if (pending) out += ' ';
+            pending = false;
+            out += c;
+        }
+    }
+    return out;
+}
+
+// `operator==`, `operator new`, `operator bool`: the keyword followed by
+// something that is not part of an identifier. `operatorX` is just a name.
+bool is_operator_name(const std::string& name) {
+    constexpr std::string_view keyword = "operator";
+    if (name.size() <= keyword.size() || name.compare(0, keyword.size(), keyword) != 0) {
+        return false;
+    }
+    const char next = name[keyword.size()];
+    const bool continues_identifier = (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+                                      (next >= '0' && next <= '9') || next == '_';
+    return !continues_identifier;
+}
+
+// "operator ==" and "operator==" are one name; "operator  new [ ]" is
+// "operator new[]". Anything that is not an operator is returned untouched.
+std::string normalise_operator_name(const std::string& name) {
+    if (!is_operator_name(name)) {
+        return name;
+    }
+    const std::string rest = collapse_spaces(std::string_view(name).substr(8));
+    if (rest.empty()) {
+        return name;
+    }
+    const char first = rest[0];
+    const bool word = (first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_';
+    if (word) {
+        std::string tidy;
+        for (std::size_t i = 0; i < rest.size(); ++i) {
+            if (rest[i] == ' ' && i + 1 < rest.size() && rest[i + 1] == '[') continue;
+            tidy += rest[i];
+        }
+        return "operator " + tidy;
+    }
+    std::string symbol;
+    for (char c : rest) {
+        if (c != ' ') symbol += c;
+    }
+    return "operator" + symbol;
+}
+
+// Two methods are the same declaration if nothing but the parameter names and
+// the return type differs. Used to merge a class read twice (both branches of
+// an #if) without listing a member twice.
+std::string signature(const ir::Method& m) {
+    std::string sig = m.name + "(";
+    for (const ir::Param& p : m.params) {
+        sig += p.type.spelling + ",";
+    }
+    sig += m.is_const ? ")const" : ")";
+    if (m.ref_qualifier == ir::RefKind::LValue) sig += "&";
+    if (m.ref_qualifier == ir::RefKind::RValue) sig += "&&";
+    return sig;
+}
+
+class Reader {
+public:
+    Reader(const syntax::Tree& tree, const std::vector<QtMarker>& markers, const std::string& file,
+           const std::string& header, ir::Model& model, core::Diagnostics& diagnostics)
+        : tree_(tree), markers_(markers), file_(file), header_(header), model_(model),
+          diagnostics_(diagnostics) {}
+
+    void run() {
+        report_parse_errors();
+        declarations(tree_.root());
+    }
+
+private:
+    // State while walking one class body.
+    struct ClassState {
+        ir::Class&  cls;
+        ir::Access  access;
+        ir::QtRole  section = ir::QtRole::None;
+        unsigned    previous_end = 0;
+    };
+
+    // ---- diagnostics ----------------------------------------------------------------
+
+    void report_parse_errors() {
+        unsigned reported = 0;
+        unsigned more = 0;
+        syntax::walk(tree_.root(), [&](const Node& n) {
+            if (!n.is_error()) {
+                return true;
+            }
+            if (reported < kMaxParseWarnings) {
+                ++reported;
+                diagnostics_.warning(core::code::parse,
+                                     "the parser could not make sense of this text; declarations "
+                                     "around it may be missing",
+                                     syntax::location(n, file_));
+            } else {
+                ++more;
+            }
+            return false;
+        });
+        if (more > 0) {
+            diagnostics_.note(core::code::parse, "and " + std::to_string(more) + " more parse errors");
+        }
+    }
+
+    // ---- scopes ---------------------------------------------------------------------
+
+    void declarations(const Node& scope) {
+        for (const Node& child : scope.named_children()) {
+            declaration(child);
+        }
+    }
+
+    void declaration(const Node& node) {
+        const std::string_view type = node.type();
+        if (type == "namespace_definition") {
+            namespace_definition(node);
+        } else if (type == "linkage_specification") {
+            const Node body = node.child_by_field("body");
+            if (body.type() == "declaration_list") {
+                declarations(body);
+            } else if (!body.is_null()) {
+                declaration(body);
+            }
+        } else if (is_conditional(type)) {
+            declarations(node);   // every branch: the frontend cannot know which one builds
+        } else if (type == "preproc_include") {
+            include(node);
+        } else if (is_class_like(type)) {
+            if (type != "union_specifier") {
+                class_definition(node, std::nullopt);
+            }
+        } else if (type == "enum_specifier") {
+            enum_definition(node);
+        } else if (type == "template_declaration") {
+            template_declaration(node);
+        } else if (type == "declaration" || type == "function_definition") {
+            // `struct S { ... } s;` defines S as well as declaring s.
+            const Node specifier = node.child_by_field("type");
+            if (!specifier.is_null() && (is_class_like(specifier.type()) || specifier.type() == "enum_specifier")) {
+                declaration(specifier);
+            }
+            free_functions(node);
+        }
+    }
+
+    void namespace_definition(const Node& node) {
+        const Node name = node.child_by_field("name");
+        if (name.is_null()) {
+            return;   // anonymous: internal linkage, unreachable from a test
+        }
+        std::vector<std::string> parts;
+        std::string_view rest = name.text();
+        for (std::size_t sep; (sep = rest.find("::")) != std::string_view::npos;) {
+            parts.emplace_back(rest.substr(0, sep));
+            rest.remove_prefix(sep + 2);
+        }
+        parts.emplace_back(rest);
+
+        for (const std::string& p : parts) ns_.push_back(p);
+        declarations(node.child_by_field("body"));
+        ns_.resize(ns_.size() - parts.size());
+    }
+
+    void include(const Node& node) {
+        const Node path = node.child_by_field("path");
+        std::string text(path.text());
+        if (text.size() < 2) {
+            return;
+        }
+        ir::Include inc;
+        inc.is_system = text.front() == '<';
+        inc.path = text.substr(1, text.size() - 2);
+        inc.where = syntax::location(node, file_);
+        model_.includes.push_back(std::move(inc));
+    }
+
+    void template_declaration(const Node& node) {
+        std::string params(node.named_child(0).text());
+        if (params.size() >= 2 && params.front() == '<' && params.back() == '>') {
+            params = collapse_spaces(std::string_view(params).substr(1, params.size() - 2));
+        }
+        for (const Node& child : node.named_children()) {
+            const std::string_view type = child.type();
+            if (type == "class_specifier" || type == "struct_specifier") {
+                class_definition(child, params);
+            } else if (type == "declaration" || type == "function_definition") {
+                const Declarator d = syntax::parse_declarator(child.child_by_field("declarator"));
+                if (!d.function.is_null() && !d.is_function_pointer) {
+                    diagnostics_.warning(core::code::unsupported,
+                                         "function template '" + d.name + "' is not supported and is skipped",
+                                         syntax::location(d.name_node, file_));
+                }
+            }
+        }
+    }
+
+    // ---- enums ----------------------------------------------------------------------
+
+    void enum_definition(const Node& spec) {
+        const Node name = spec.child_by_field("name");
+        const Node body = spec.child_by_field("body");
+        if (name.is_null() || body.is_null()) {
+            return;   // anonymous, or a forward declaration
+        }
+        ir::Enum e;
+        e.name = std::string(name.text());
+        e.ns = ns_;
+        e.is_scoped = syntax::has_token(spec, "class") || syntax::has_token(spec, "struct");
+        const Node base = spec.child_by_field("base");
+        if (!base.is_null()) {
+            e.underlying = ir::normalize_spelling(base.text());
+        }
+        for (const Node& item : body.named_children()) {
+            if (item.type() == "enumerator") {
+                e.enumerators.emplace_back(item.child_by_field("name").text());
+            }
+        }
+        e.header = header_;
+        e.where = syntax::location(name, file_);
+        model_.enums.push_back(std::move(e));
+    }
+
+    // ---- free functions -----------------------------------------------------------------
+
+    void free_functions(const Node& node) {
+        const Specifiers spec = syntax::read_specifiers(node);
+        for (const Node& declarator : syntax::children_by_field(node, "declarator")) {
+            const Declarator d = syntax::parse_declarator(declarator);
+            if (d.function.is_null() || d.is_function_pointer || d.name_node.is_null() ||
+                d.name.find("::") != std::string::npos) {
+                continue;   // a variable, or `int Foo::bar() {}`, which defines a member
+            }
+            const syntax::FunctionTraits traits = syntax::read_function_traits(d.function, file_);
+            ir::Function f;
+            f.name = normalise_operator_name(d.name);
+            f.ns = ns_;
+            f.ret = traits.has_trailing_return ? traits.trailing_return
+                                               : syntax::make_declared_type(spec, d, file_);
+            f.params = syntax::read_parameters(d.function.child_by_field("parameters"), file_);
+            f.is_noexcept = traits.is_noexcept;
+            f.header = header_;
+            f.where = syntax::location(d.name_node, file_);
+            model_.functions.push_back(std::move(f));
+        }
+    }
+
+    // ---- classes ----------------------------------------------------------------------------
+
+    ir::Class& find_or_add_class(const std::string& name) {
+        for (ir::Class& c : model_.classes) {
+            if (c.name == name && c.ns == ns_) {
+                return c;
+            }
+        }
+        model_.classes.emplace_back();
+        model_.classes.back().name = name;
+        model_.classes.back().ns = ns_;
+        return model_.classes.back();
+    }
+
+    void class_definition(const Node& spec, const std::optional<std::string>& template_params) {
+        const Node name = spec.child_by_field("name");
+        const Node body = spec.child_by_field("body");
+        if (name.is_null() || body.is_null()) {
+            return;   // anonymous, or a forward declaration
+        }
+
+        ir::Class& cls = find_or_add_class(std::string(name.text()));
+        const bool first_time = !cls.where.known();   // not yet read: no position recorded
+        if (first_time) {
+            cls.is_struct = spec.type() == "struct_specifier";
+            cls.header = header_;
+            cls.origin = ir::Origin::Declared;
+            cls.where = syntax::location(name, file_);
+            cls.template_params = template_params;
+            read_bases(spec, cls);
+        }
+
+        ClassState state{cls, cls.is_struct ? ir::Access::Public : ir::Access::Private};
+        state.previous_end = body.start_byte();
+        members(body, state);
+        read_qt_class_markers(spec, body, cls);
+    }
+
+    void read_bases(const Node& spec, ir::Class& cls) {
+        Node clause;
+        for (const Node& child : spec.named_children()) {
+            if (child.type() == "base_class_clause") clause = child;
+        }
+        if (clause.is_null()) {
+            return;
+        }
+        std::optional<ir::Access> access;
+        bool is_virtual = false;
+        for (unsigned i = 0; i < clause.child_count(); ++i) {
+            const Node child = clause.child(i);
+            const std::string_view type = child.type();
+            if (type == "access_specifier") {
+                access = to_access(child.text());
+            } else if (!child.is_named() && type == "virtual") {
+                is_virtual = true;
+            } else if (child.is_named() && type != "comment" && type != "attribute_declaration") {
+                ir::BaseSpec base;
+                base.name = ir::normalize_spelling(child.text());
+                base.access = access.value_or(cls.is_struct ? ir::Access::Public : ir::Access::Private);
+                base.is_virtual = is_virtual;
+                cls.bases.push_back(std::move(base));
+                access.reset();
+                is_virtual = false;
+            }
+        }
+    }
+
+    // ---- Qt ------------------------------------------------------------------------------------
+
+    bool marker_between(QtMarker::Kind kind, unsigned from, unsigned to) const {
+        for (const QtMarker& m : markers_) {
+            if (m.kind == kind && m.offset >= from && m.offset < to) return true;
+        }
+        return false;
+    }
+
+    ir::QtRole section_role(unsigned access_specifier_offset) const {
+        for (const QtMarker& m : markers_) {
+            if (m.offset != access_specifier_offset) continue;
+            if (m.kind == QtMarker::Kind::SlotsSection) return ir::QtRole::Slot;
+            if (m.kind == QtMarker::Kind::SignalsSection) return ir::QtRole::Signal;
+        }
+        return ir::QtRole::None;
+    }
+
+    // The class-level macros that sit directly in this class, not in a class
+    // nested inside it.
+    void read_qt_class_markers(const Node& spec, const Node& body, ir::Class& cls) {
+        std::vector<std::pair<unsigned, unsigned>> nested;
+        for (const char* type : {"class_specifier", "struct_specifier", "union_specifier"}) {
+            for (const Node& n : syntax::find_all(body, type)) {
+                nested.emplace_back(n.start_byte(), n.end_byte());
+            }
+        }
+        const auto direct = [&](unsigned offset) {
+            return std::none_of(nested.begin(), nested.end(), [offset](const std::pair<unsigned, unsigned>& r) {
+                return offset >= r.first && offset < r.second;
+            });
+        };
+        for (const QtMarker& m : markers_) {
+            if (m.offset < spec.start_byte() || m.offset >= spec.end_byte() || !direct(m.offset)) continue;
+            if (m.kind == QtMarker::Kind::QObject) cls.is_qobject = true;
+            if (m.kind == QtMarker::Kind::Gadget) cls.is_gadget = true;
+            if (m.kind == QtMarker::Kind::DisableCopy) cls.disable_copy = true;
+        }
+    }
+
+    // ---- members --------------------------------------------------------------------------------
+
+    void members(const Node& body, ClassState& state) {
+        for (const Node& child : body.named_children()) {
+            const std::string_view type = child.type();
+            if (type == "comment") {
+                continue;
+            }
+            if (type == "access_specifier") {
+                state.access = to_access(child.text());
+                state.section = section_role(child.start_byte());
+            } else if (is_conditional(type)) {
+                members(child, state);
+                continue;
+            } else if (type == "field_declaration" || type == "declaration" || type == "function_definition") {
+                member(child, state, false);
+            } else if (type == "template_declaration") {
+                for (const Node& inner : child.named_children()) {
+                    const std::string_view t = inner.type();
+                    if (t == "field_declaration" || t == "declaration" || t == "function_definition") {
+                        member(inner, state, true);
+                    }
+                }
+            } else if (type == "type_definition") {
+                add_nested(state.cls, std::string(syntax::parse_declarator(child.child_by_field("declarator")).name));
+            } else if (type == "alias_declaration") {
+                add_nested(state.cls, std::string(child.child_by_field("name").text()));
+            }
+            // friend, using, static_assert and the rest are not members.
+            state.previous_end = child.end_byte();
+        }
+    }
+
+    static void add_nested(ir::Class& cls, const std::string& name) {
+        if (!name.empty() && std::find(cls.nested_types.begin(), cls.nested_types.end(), name) == cls.nested_types.end()) {
+            cls.nested_types.push_back(name);
+        }
+    }
+
+    static bool has_child_of_type(const Node& node, std::string_view type) {
+        for (unsigned i = 0; i < node.child_count(); ++i) {
+            if (node.child(i).type() == type) return true;
+        }
+        return false;
+    }
+
+    void member(const Node& node, ClassState& state, bool is_template) {
+        const Specifiers spec = syntax::read_specifiers(node);
+        const std::vector<Node> declarators = syntax::children_by_field(node, "declarator");
+
+        if (declarators.empty()) {
+            // `struct N { ... };` and `enum class E { ... };` inside a class.
+            const Node type = node.child_by_field("type");
+            if (!type.is_null() && (is_class_like(type.type()) || type.type() == "enum_specifier")) {
+                add_nested(state.cls, std::string(type.child_by_field("name").text()));
+            }
+            return;
+        }
+
+        const bool invokable =
+            marker_between(QtMarker::Kind::Invokable, state.previous_end, node.start_byte());
+        for (const Node& declarator : declarators) {
+            if (declarator.type() == "operator_cast") {
+                conversion(node, declarator, spec, state, is_template, invokable);
+                continue;
+            }
+            const Declarator d = syntax::parse_declarator(declarator);
+            if (d.name_node.is_null()) {
+                continue;
+            }
+            if (!d.function.is_null() && !d.is_function_pointer) {
+                method(node, spec, d, state, is_template, invokable);
+            } else {
+                field(spec, d, state);
+            }
+        }
+    }
+
+    ir::QtRole role_for(const ClassState& state, bool invokable) const {
+        if (state.section != ir::QtRole::None) return state.section;
+        return invokable ? ir::QtRole::Invokable : ir::QtRole::None;
+    }
+
+    void add_method(ClassState& state, ir::Method m) {
+        const std::string sig = signature(m);
+        for (const ir::Method& existing : state.cls.methods) {
+            if (signature(existing) == sig) return;
+        }
+        state.cls.methods.push_back(std::move(m));
+    }
+
+    void apply_declaration_flags(const Node& node, const Specifiers& spec, const syntax::FunctionTraits& traits,
+                                 ir::Method& m) const {
+        m.is_static = spec.is_static;
+        m.is_virtual = spec.is_virtual;
+        m.is_explicit = spec.is_explicit;
+        m.is_const = traits.is_const;
+        m.is_noexcept = traits.is_noexcept;
+        m.is_override = traits.is_override;
+        m.is_final = traits.is_final;
+        m.ref_qualifier = traits.ref_qualifier;
+        const Node value = node.child_by_field("default_value");
+        m.is_pure = !value.is_null() && value.text() == "0";
+        m.is_deleted = has_child_of_type(node, "delete_method_clause");
+        m.is_defaulted = has_child_of_type(node, "default_method_clause");
+    }
+
+    void method(const Node& node, const Specifiers& spec, const Declarator& d, ClassState& state,
+                bool is_template, bool invokable) {
+        const syntax::FunctionTraits traits = syntax::read_function_traits(d.function, file_);
+
+        ir::Method m;
+        m.name = normalise_operator_name(d.name);
+        if (!m.name.empty() && m.name[0] == '~') {
+            m.kind = ir::MethodKind::Destructor;
+        } else if (m.name == state.cls.name && spec.type.is_null()) {
+            m.kind = ir::MethodKind::Constructor;
+        } else if (is_operator_name(m.name)) {
+            m.kind = ir::MethodKind::Operator;
+        }
+        if (m.kind == ir::MethodKind::Normal || m.kind == ir::MethodKind::Operator) {
+            m.ret = traits.has_trailing_return ? traits.trailing_return
+                                               : syntax::make_declared_type(spec, d, file_);
+        }
+        m.params = syntax::read_parameters(d.function.child_by_field("parameters"), file_);
+        m.access = state.access;
+        m.qt_role = role_for(state, invokable);
+        m.is_template = is_template;
+        apply_declaration_flags(node, spec, traits, m);
+        m.origin = ir::Origin::Declared;
+        m.where = syntax::location(d.name_node, file_);
+        add_method(state, std::move(m));
+    }
+
+    void conversion(const Node& node, const Node& cast, const Specifiers& outer, ClassState& state,
+                    bool is_template, bool invokable) {
+        const Specifiers target_spec = syntax::read_specifiers(cast);
+        const Declarator target_declarator = syntax::parse_declarator(cast.child_by_field("declarator"));
+        if (target_declarator.function.is_null()) {
+            return;
+        }
+        const ir::Type target = syntax::make_declared_type(target_spec, target_declarator, file_);
+        const syntax::FunctionTraits traits = syntax::read_function_traits(target_declarator.function, file_);
+
+        ir::Method m;
+        m.kind = ir::MethodKind::Conversion;
+        m.name = "operator " + target.spelling;
+        m.params = syntax::read_parameters(target_declarator.function.child_by_field("parameters"), file_);
+        m.access = state.access;
+        m.qt_role = role_for(state, invokable);
+        m.is_template = is_template;
+        apply_declaration_flags(node, outer, traits, m);
+        m.origin = ir::Origin::Declared;
+        m.where = syntax::location(cast, file_);
+        add_method(state, std::move(m));
+    }
+
+    void field(const Specifiers& spec, const Declarator& d, ClassState& state) {
+        for (const ir::Field& existing : state.cls.fields) {
+            if (existing.name == d.name) return;
+        }
+        ir::Field f;
+        f.type = syntax::make_declared_type(spec, d, file_);
+        f.name = d.name;
+        f.access = state.access;
+        f.is_static = spec.is_static;
+        f.origin = ir::Origin::Declared;
+        f.where = syntax::location(d.name_node, file_);
+        state.cls.fields.push_back(std::move(f));
+    }
+
+    const syntax::Tree&              tree_;
+    const std::vector<QtMarker>&     markers_;
+    const std::string&               file_;
+    const std::string&               header_;
+    ir::Model&                       model_;
+    core::Diagnostics&               diagnostics_;
+    std::vector<std::string>         ns_;
+};
+
+}  // namespace
+
+void read_declarations(const syntax::Tree& tree, const std::vector<syntax::QtMarker>& markers,
+                       const std::string& file, const std::string& include_path, ir::Model& model,
+                       core::Diagnostics& diagnostics) {
+    Reader(tree, markers, file, include_path, model, diagnostics).run();
+}
+
+ir::Model read_header(const core::SourceFile& source, const std::string& include_path,
+                      const syntax::MacroTable& macros, core::Diagnostics& diagnostics) {
+    const syntax::Preprocessed pre = syntax::preprocess(source.text, macros);
+    const syntax::Tree tree = syntax::parse_cpp(pre.text);
+    ir::Model model;
+    read_declarations(tree, pre.markers, source.path, include_path, model, diagnostics);
+    return model;
+}
+
+}  // namespace mt::frontend
