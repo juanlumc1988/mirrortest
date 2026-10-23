@@ -53,8 +53,10 @@ add_library(mt_core STATIC
     src/core/source.cpp
     src/core/templates.cpp
     src/core/writer.cpp
+    src/frontend/classify.cpp
     src/frontend/code_frontend.cpp
     src/frontend/facts.cpp
+    src/frontend/known_names.cpp
     src/frontend/literals.cpp
     src/frontend/test_frontend.cpp
     src/ir/type.cpp
@@ -83,11 +85,13 @@ if(MT_BUILD_TESTS)
     include(GoogleTest)
 
     add_executable(mt_unit_tests
+        tests/unit/test_classify.cpp
         tests/unit/test_cli.cpp
         tests/unit/test_code_frontend.cpp
         tests/unit/test_config.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_extract.cpp
+        tests/unit/test_known_names.cpp
         tests/unit/test_literals.cpp
         tests/unit/test_diagnostics.cpp
         tests/unit/test_diff.cpp

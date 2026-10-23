@@ -229,11 +229,15 @@ public:
 
     void run() {
         syntax::walk(tree_.root(), [&](const Node& n) {
-            if (n.type() == "using_declaration" && n.text().rfind("using namespace", 0) == 0) {
-                std::string name(n.text().substr(15));
-                name.erase(std::remove_if(name.begin(), name.end(), [](char c) { return c == ';' || c == ' ' || c == '\n'; }),
-                           name.end());
-                facts_.using_namespaces.push_back(name);
+            if (n.type() != "using_declaration") return true;
+            std::string text(n.text().substr(5));   // after "using"
+            text.erase(std::remove_if(text.begin(), text.end(), [](char c) { return c == ';' || c == ' ' || c == '\n' || c == '\t'; }),
+                       text.end());
+            if (text.rfind("namespace", 0) == 0) {
+                facts_.using_namespaces.push_back(text.substr(9));
+                if (facts_.using_namespaces.back() == "std") using_std_ = true;
+            } else if (!text.empty()) {
+                facts_.using_declarations.push_back(parse_type_name(text));
             }
             return true;
         });
@@ -275,6 +279,15 @@ private:
                 ns_.resize(ns_.size() - parts.size());
             } else if (is_conditional(type)) {
                 top_level(child);
+            } else if (type == "template_declaration") {
+                // The template parameters are names the file declares, not types of
+                // the code under test, for as long as the declaration lasts.
+                const std::size_t mark = template_params_.size();
+                collect_template_params(child.child_by_field("parameters"));
+                top_level(child);
+                template_params_.resize(mark);
+            } else if (type == "alias_declaration" || type == "type_definition") {
+                alias(child);
             } else if (type == "linkage_specification") {
                 const Node body = child.child_by_field("body");
                 if (body.type() == "declaration_list") top_level(body);
@@ -289,6 +302,34 @@ private:
                 }
             }
         }
+    }
+
+    void collect_template_params(const Node& list) {
+        for (const Node& p : list.named_children()) {
+            const std::string_view type = p.type();
+            if (type.find("type_parameter_declaration") == std::string_view::npos) continue;
+            for (const Node& c : p.named_children()) {
+                if (c.type() == "type_identifier") {
+                    template_params_.emplace_back(c.text());
+                    break;
+                }
+            }
+        }
+    }
+
+    // `using Vec = std::vector<Foo>;`, `typedef unsigned long Word;`: the name is
+    // the file's own, the type it stands for is a use.
+    void alias(const Node& n) {
+        if (n.type() == "alias_declaration") {
+            const Node name = n.child_by_field("name");
+            if (!name.is_null()) facts_.local_type_names.emplace_back(name.text());
+        } else {
+            const syntax::Declarator d = syntax::parse_declarator(n.child_by_field("declarator"));
+            const Node declarator = n.child_by_field("declarator");
+            if (!d.name.empty()) facts_.local_type_names.push_back(d.name);
+            else if (declarator.type() == "type_identifier") facts_.local_type_names.emplace_back(declarator.text());
+        }
+        add_type_uses(n.child_by_field("type"));
     }
 
     // The inline methods of a class the test file defines (a fixture).
@@ -357,7 +398,9 @@ private:
                 if (f.name == name) field = &f;
             }
             if (field != nullptr) {
-                (void)initialise_with(field->type, args);
+                (void)initialise_with(field->type, arguments(args),
+                                      args.type() == "argument_list" ? Construction::Form::Direct : Construction::Form::Brace,
+                                      args);
             } else {
                 (void)arguments(args);   // a base class: its arguments are still code to read
             }
@@ -489,6 +532,7 @@ private:
             case FactRef::Kind::ScopedCall:  return &facts_.scoped_calls[ref.index].use;
             case FactRef::Kind::FreeCall:    return &facts_.free_calls[ref.index].use;
             case FactRef::Kind::FieldAccess: return &facts_.field_accesses[ref.index].use;
+            case FactRef::Kind::Unresolved:  return &facts_.unresolved[ref.index].call.use;
             case FactRef::Kind::None:        return nullptr;
         }
         return nullptr;
@@ -544,6 +588,9 @@ private:
 
     void add_type_use(const TypeName& name, const Node& where, bool from_throw = false) {
         if (name.empty() || is_fundamental(name.name)) return;
+        if (name.scope.empty() && std::find(template_params_.begin(), template_params_.end(), name.name) != template_params_.end()) {
+            return;
+        }
         TypeUse use;
         use.type = name;
         use.type.template_args.clear();
@@ -557,7 +604,9 @@ private:
     void add_type_uses(const Node& n, bool from_throw = false) {
         if (n.is_null()) return;
         const std::string_view type = n.type();
-        if (type == "type_identifier") {
+        // In EXPECT_THROW(stmt, MyError) the type is an argument of a macro call, so
+        // the parser calls a bare name an `identifier` rather than a type.
+        if (type == "type_identifier" || (from_throw && type == "identifier")) {
             add_type_use(parse_type_name(n.text()), n, from_throw);
         } else if (type == "qualified_identifier" || type == "template_type") {
             std::string_view text = n.text();
@@ -599,6 +648,8 @@ private:
             declaration(n);
         } else if (type == "expression_statement") {
             expression_statement(n);
+        } else if (type == "alias_declaration" || type == "type_definition") {
+            alias(n);
         } else if (type == "for_range_loop") {
             range_for(n);
         } else if (type == "if_statement" || type == "while_statement" || type == "switch_statement") {
@@ -807,16 +858,27 @@ private:
             const syntax::Declarator d = syntax::parse_declarator(declarator);
             if (d.name_node.is_null()) continue;
 
+            // tree-sitter reads `Foo f(x);` and `Foo f(move(p));` as function
+            // declarations -- `x` could be a type with an unnamed parameter -- and
+            // `Foo f();` really is one. Inside a function body the first two are
+            // the initialisations they were meant to be; the third is the most
+            // vexing parse.
+            std::optional<std::vector<ValueInfo>> reread;
+            Node reread_list;
             if (!d.function.is_null() && !d.is_function_pointer) {
-                // `Foo f();` declares a function, not an object.
                 const Node params = d.function.child_by_field("parameters");
-                if (params.named_child_count() == 0 && !spec.type.is_null() && spec.type.type() != "primitive_type") {
-                    diagnostics_.warning(core::code::vexing_parse,
-                                         "'" + std::string(n.text()) + "' declares a function, not an object "
-                                         "(the most vexing parse); the constructor call is not seen",
-                                         loc(n));
+                if (params.named_child_count() == 0) {
+                    if (!spec.type.is_null() && spec.type.type() != "primitive_type") {
+                        diagnostics_.warning(core::code::vexing_parse,
+                                             "'" + std::string(n.text()) + "' declares a function, not an object "
+                                             "(the most vexing parse); the constructor call is not seen",
+                                             loc(n));
+                    }
+                    continue;
                 }
-                continue;
+                if (!is_expression_list(params)) continue;   // a genuine function declaration
+                reread = values_of_parameters(params);
+                reread_list = params;
             }
 
             const ir::Type type = syntax::make_declared_type(spec, d, file_);
@@ -829,10 +891,14 @@ private:
             const std::optional<TypeName> object = by_value_class(type);
 
             Deduced deduced;
-            if (init.is_null()) {
+            if (reread) {
+                deduced = initialise_with(type, std::move(*reread), Construction::Form::Direct, reread_list);
+            } else if (init.is_null()) {
                 if (object) add_construction(*object, Construction::Form::Default, {}, n);
             } else if (init.type() == "argument_list" || init.type() == "initializer_list") {
-                deduced = initialise_with(type, init);
+                deduced = initialise_with(type, arguments(init),
+                                          init.type() == "argument_list" ? Construction::Form::Direct : Construction::Form::Brace,
+                                          init);
             } else {
                 deduced = bind(type, initializer(init, object));
             }
@@ -869,15 +935,65 @@ private:
 
     // `T v(args)`, `T v{args}`, a member initialiser `v_(args)`: a class is
     // constructed with the arguments; anything else is initialised by the one value.
-    Deduced initialise_with(const ir::Type& type, const Node& list) {
-        const std::vector<ValueInfo> args = arguments(list);
+    Deduced initialise_with(const ir::Type& type, std::vector<ValueInfo> args, Construction::Form form,
+                            const Node& where) {
         if (const std::optional<TypeName> object = by_value_class(type)) {
-            add_construction(*object, list.type() == "argument_list" ? Construction::Form::Direct : Construction::Form::Brace,
-                             args, list);
+            add_construction(*object, form, std::move(args), where);
             return {};
         }
         if (args.size() == 1) return bind(type, args[0]);
         return {};
+    }
+
+    // ---- `Foo f(x);` read as an initialisation ---------------------------------------------------------
+
+    // True if every parameter could just as well be an expression: a bare name
+    // (`x`, `Color::Red`) or a call of one (`move(p)`, `make()`, `ns::f(a, b)`).
+    // Anything only a declaration can contain -- const, a primitive type, `*`/`&`,
+    // a parameter with both a type and a name, a default -- keeps it a declaration.
+    static bool is_expression_list(const Node& list) {
+        if (list.named_child_count() == 0) return false;
+        for (const Node& p : list.named_children()) {
+            if (p.type() == "comment") continue;
+            if (!is_expression_parameter(p)) return false;
+        }
+        return true;
+    }
+
+    static bool is_expression_parameter(const Node& p) {
+        if (p.type() != "parameter_declaration") return false;
+        for (const Node& c : p.named_children()) {
+            if (c.type() == "type_qualifier") return false;
+        }
+        const Node type = p.child_by_field("type");
+        const std::string_view type_kind = type.type();
+        if (type_kind != "type_identifier" && type_kind != "qualified_identifier") return false;
+        if (type.text().find('<') != std::string_view::npos) return false;
+        const Node declarator = p.child_by_field("declarator");
+        if (declarator.is_null()) return true;
+        if (declarator.type() != "abstract_function_declarator" && declarator.type() != "function_declarator") return false;
+        const Node inner = declarator.child_by_field("parameters");
+        return inner.named_child_count() == 0 || is_expression_list(inner);
+    }
+
+    std::vector<ValueInfo> values_of_parameters(const Node& list) {
+        std::vector<ValueInfo> out;
+        for (const Node& p : list.named_children()) {
+            if (p.type() == "parameter_declaration") out.push_back(value_of_parameter(p));
+        }
+        return out;
+    }
+
+    // `move(p)` that tree-sitter took for a parameter of type `move` named `(p)`.
+    ValueInfo value_of_parameter(const Node& p) {
+        const Node type = p.child_by_field("type");
+        const Node declarator = p.child_by_field("declarator");
+        if (declarator.is_null()) {
+            return type.type() == "type_identifier" ? identifier_value(type) : value_of(type);
+        }
+        std::vector<ValueInfo> args = values_of_parameters(declarator.child_by_field("parameters"));
+        return type.type() == "type_identifier" ? free_call_with(p, type, std::move(args))
+                                                : scoped_call_with(p, type, std::move(args));
     }
 
     // `T v = init;`
@@ -1221,13 +1337,43 @@ private:
     }
 
     ValueInfo free_call(const Node& n, const Node& fn, const Node& arg_list) {
-        const std::string name(fn.text());
-        std::vector<ValueInfo> args = arguments(arg_list);
+        return free_call_with(n, fn, arguments(arg_list));
+    }
+
+    ValueInfo free_call_with(const Node& n, const Node& fn, std::vector<ValueInfo> args) {
+        std::string name(fn.text());
+        if (name.compare(0, 2, "::") == 0) name.erase(0, 2);   // ::helper(1) is helper(1) for our purposes
         ValueInfo v = value_of(n);
 
         if (name == "GetParam" && args.empty() && param_type_) {
             v.type = param_type_;
             return v;
+        }
+        if (const Symbol* s = symbols_.lookup(name)) {
+            // `check(3)` where check is a lambda, a function pointer or a functor
+            // the test declared: not a function of the code under test. If it is an
+            // object of a class, it is a call to that class's operator().
+            for (const ValueInfo& a : args) apply_use(a, use_of(Use::Argument));
+            ValueInfo callee = value_of(fn);
+            callee.type = s->type;
+            if (const std::optional<Receiver> r = receiver_of(callee, false)) {
+                MethodCall call;
+                call.receiver = r->cls;
+                call.method = "operator()";
+                call.args = std::move(args);
+                call.on_const = r->on_const;
+                call.where = loc(fn);
+                call.ns = ns_;
+                facts_.method_calls.push_back(std::move(call));
+                v.from = {FactRef::Kind::MethodCall, facts_.method_calls.size() - 1};
+            }
+            return v;
+        }
+        if (using_std_ && name == "move" && args.size() == 1) {
+            ValueInfo moved = args[0];
+            moved.is_moved = true;
+            moved.text = std::string(n.text());
+            return moved;
         }
         if (!expected_constructor_.empty() && name == expected_constructor_) {
             // `Foo g = Foo(3);`
@@ -1245,30 +1391,23 @@ private:
         call.args = std::move(args);
         call.where = loc(fn);
         call.ns = ns_;
+        call.owner = owner_ != nullptr ? owner_->name : std::string();
         facts_.free_calls.push_back(std::move(call));
         v.from = {FactRef::Kind::FreeCall, facts_.free_calls.size() - 1};
         return v;
     }
 
     ValueInfo scoped_call(const Node& n, const Node& fn, const Node& arg_list) {
+        return scoped_call_with(n, fn, arguments(arg_list));
+    }
+
+    ValueInfo scoped_call_with(const Node& n, const Node& fn, std::vector<ValueInfo> args) {
         const TypeName name = parse_type_name(fn.text());
-        std::vector<ValueInfo> args = arguments(arg_list);
         ValueInfo v = value_of(n);
+        if (name.scope.empty()) return free_call_with(n, fn, std::move(args));   // only a leading ::
 
         const bool std_scope = name.scope.size() == 1 && name.scope[0] == "std";
-        if (std_scope && (name.name == "make_unique" || name.name == "make_shared") && !name.template_args.empty()) {
-            // std::make_unique<Foo>(2): Foo is constructed with (2).
-            const TypeName constructed = parse_type_name(first_template_argument(name.template_args));
-            add_type_use(constructed, fn);
-            if (!is_fundamental(constructed.name)) {
-                add_construction(constructed, Construction::Form::MakeUnique, std::move(args), n);
-            }
-            ir::Type t = ir::make_type("std::" + name.name.substr(5) + "_ptr<" + first_template_argument(name.template_args) + ">");
-            t.origin = ir::Origin::Inferred;
-            t.reason = "std::" + name.name;
-            v.type = t;
-            return v;
-        }
+        if (std_scope && smart_pointer_factory(n, fn, name, args, v)) return v;
         if (std_scope && name.name == "move" && args.size() == 1) {
             ValueInfo moved = args[0];
             moved.is_moved = true;
@@ -1288,11 +1427,31 @@ private:
         return v;
     }
 
-    // static_cast<T>(e): a value of type T.
+    // std::make_unique<Foo>(2), also make_shared and the unqualified spelling:
+    // Foo is constructed with (2), and the value is a smart pointer to it.
+    bool smart_pointer_factory(const Node& n, const Node& fn, const TypeName& name, std::vector<ValueInfo>& args,
+                               ValueInfo& v) {
+        if ((name.name != "make_unique" && name.name != "make_shared") || name.template_args.empty()) return false;
+        const std::string pointee = first_template_argument(name.template_args);
+        const TypeName constructed = parse_type_name(pointee);
+        add_type_use(constructed, fn);
+        if (!is_fundamental(constructed.name)) {
+            add_construction(constructed, Construction::Form::MakeUnique, std::move(args), n);
+        }
+        ir::Type t = ir::make_type("std::" + name.name.substr(5) + "_ptr<" + pointee + ">");
+        t.origin = ir::Origin::Inferred;
+        t.reason = "std::" + name.name;
+        v.type = t;
+        return true;
+    }
+
+    // static_cast<T>(e): a value of type T. make_unique<T>(...) without `std::`.
+    // Any other function template is not followed.
     ValueInfo named_cast_or_template(const Node& n, const Node& fn, const Node& arg_list) {
         const std::string name(fn.child_by_field("name").text());
-        const std::vector<ValueInfo> args = arguments(arg_list);
+        std::vector<ValueInfo> args = arguments(arg_list);
         ValueInfo v = value_of(n);
+        if (smart_pointer_factory(n, fn, parse_type_name(fn.text()), args, v)) return v;
         if (is_named_cast(name)) {
             const Node targs = fn.child_by_field("arguments");
             for (const Node& a : targs.named_children()) {
@@ -1302,6 +1461,11 @@ private:
                                                         syntax::parse_declarator(a.child_by_field("declarator")), file_);
                 if (!t.empty()) v.type = t;
             }
+        } else {
+            diagnostics_.warning(core::code::unsupported,
+                                 "the call to the function template '" + std::string(fn.text()) + "' is not followed; "
+                                 "template arguments of a function under test are not inferred",
+                                 loc(fn));
         }
         return v;
     }
@@ -1322,6 +1486,7 @@ private:
             call.args = std::move(args);
             call.where = loc(field);
             call.ns = ns_;
+            call.owner = owner_ != nullptr ? owner_->name : std::string();
             facts_.free_calls.push_back(std::move(call));
             v.from = {FactRef::Kind::FreeCall, facts_.free_calls.size() - 1};
             return v;
@@ -1341,12 +1506,22 @@ private:
                 ValueInfo held = receiver;
                 held.from = root;
                 apply_use(held, use_of(Use::Receiver));
-                Unresolved u;
-                u.kind = Unresolved::Kind::ChainedCall;
-                u.text = std::string(n.text());
-                u.where = loc(n);
-                u.root = root;
-                facts_.unresolved.push_back(std::move(u));
+                // Only the first unknown link is a gap; what hangs from an
+                // unresolved call is the same gap again.
+                if (root.kind != FactRef::Kind::Unresolved) {
+                    Unresolved u;
+                    u.kind = Unresolved::Kind::ChainedCall;
+                    u.text = std::string(n.text());
+                    u.where = loc(n);
+                    u.root = root;
+                    u.call.method = std::string(field.text());
+                    u.call.args = std::move(args);
+                    u.call.via_arrow = arrow;
+                    u.call.where = loc(field);
+                    u.call.ns = ns_;
+                    facts_.unresolved.push_back(std::move(u));
+                    v.from = {FactRef::Kind::Unresolved, facts_.unresolved.size() - 1};
+                }
             } else if (object.type() == "identifier" && !receiver.is_lvalue) {
                 diagnostics_.note(core::code::unknown_receiver,
                                   "cannot tell what '" + receiver.text + "' is, so the call to " +
@@ -1385,6 +1560,8 @@ private:
     const ir::Class*             owner_ = nullptr;
     std::optional<ir::Type>      param_type_;
     std::string                  expected_constructor_;
+    std::vector<std::string>     template_params_;   // names of the template parameters in scope
+    bool                         using_std_ = false; // `using namespace std;` somewhere
 };
 
 }  // namespace

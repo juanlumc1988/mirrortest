@@ -389,11 +389,11 @@ frontend registra y lo que **no** decide:
 |---|---|---|
 | `MethodCall` | receptor (`TypeName`), método, `args`, `on_const`, `via_arrow`, `use`, `where`, `ns` | `x.m()`, `x->m()`, `(*p).m()` |
 | `ScopedCall` | `scope` tal como se escribió, nombre, `args`, `use` | `X::m()`: si `X` es clase o namespace lo decide §7.7 (R13) |
-| `FreeCall` | nombre, `args`, `use` | función, macro, libc o *cast* funcional `Foo(3)`: lo decide §7.7. `this->m()` también cae aquí |
+| `FreeCall` | nombre, `args`, `use`, `owner` | función, macro, libc o *cast* funcional `Foo(3)`: lo decide §7.8. `this->m()` también cae aquí. `owner` es la clase del fichero cuyo método contiene la llamada (los cuerpos de `TEST_F` cuentan como métodos de la fixture) |
 | `FieldAccess` | receptor, campo, `on_const`, `via_arrow`, `use` | `obj.x` sin llamar; `obj.x = 5;` da `Assigned` con el tipo del lado derecho |
 | `Construction` | tipo, `Form`, `args` | `Default`, `Direct`, `Brace`, `Copy` (`Foo f = 5;`), `Functional` (`Foo g = Foo(3);`), `New`, `MakeUnique` (también `make_shared`) |
 | `TypeUse` | tipo, `from_throw_assertion` | tipos de declaraciones, parámetros, retornos, `new`, *casts*, `catch` y `EXPECT_THROW(…, E)` |
-| `Unresolved` | `ChainedCall`, texto, `where`, `root` | ver §7.3 |
+| `Unresolved` | `ChainedCall`, texto, `where`, `root`, `call`, `resolved` | ver §7.3: `call` es la llamada hecha sobre el resultado desconocido (todo menos el receptor) y `root` la llamada de la que cuelga |
 | `TestCaseInfo` | `TEST`/`TEST_F`/`TEST_P`, suite, nombre, `ns` | |
 
 `ValueInfo` (argumento de una llamada o construcción): `text`, `where`,
@@ -403,6 +403,11 @@ se usa), `is_string_literal` (su tipo lo decide el contexto),
 `is_null_pointer`, `is_lvalue`, `is_moved`, `is_address_of` (y entonces `type`
 es el del puntero: `&n` es `int*`), `var_name`, `from` (la llamada o campo de
 la API de donde viene) y `auto_origin` (§7.3).
+
+`TestFileFacts` guarda además lo que el propio fichero declara: `local`
+(clases, enums y funciones; las fixtures nunca se generan), `includes`,
+`using_namespaces`, `using_declarations` (`using acme::Foo;`) y
+`local_type_names` (alias y `typedef`).
 
 `ResultUse{kind, hint}` con `UseKind { Unknown, Discarded, Compared,
 Condition, Assigned, AutoBound, Argument, Receiver }`. **El primer contexto que
@@ -563,37 +568,114 @@ posición del tipo. Detalles fijados al implementarlo:
 
 ### 7.7 Clasificación de nombres
 
-**Candidato a clase**: aparece como tipo de una declaración/miembro/`QFETCH`, en
-`new N(…)`, como argumento de plantilla de `make_unique`/`make_shared`/puntero
-inteligente, como `N(…)`/`N{…}` siendo además usado como tipo en otro sitio, o
-como ámbito de una llamada `N::m()` (§ abajo).
+Implementada en `frontend/classify.h` (listas de nombres ajenos en
+`frontend/known_names.h`). Entra un `TestFileFacts`, sale un `Classified`: los
+hechos más lo que la clasificación añadió, las **clases** y las **funciones**
+que hay que generar —cada una con los índices de los hechos que la mencionan— en
+orden de primer uso en el fuente, y diagnósticos. Pasos, en este orden:
 
-**Externo** (nunca se genera): declarado en una cabecera existente analizada
-(§7.10); en `std::`, `testing::`, `QTest::`; patrón Qt `^Q[A-Z]`; tipos
-fundamentales y de `<cstdint>`/`<cstddef>`; declarado en el propio fichero de
-test (fixtures, structs auxiliares); parámetro de plantilla;
-`config.external_types`.
+1. clases a partir de tipos, construcciones y receptores;
+2. llamadas `X::m()` (R13);
+3. llamadas sin calificar (§7.8);
+4. llamadas pendientes sobre un *cast* funcional (§7.3);
+5. tipos de excepción.
 
-**A generar** = candidatos − externos.
+**Candidato a clase**: aparece como tipo de una declaración, miembro, parámetro,
+retorno, `catch` o alias (`TypeUse`), en `new N(…)`, como argumento de plantilla de
+`make_unique`/`make_shared`/puntero inteligente, como receptor de una llamada
+o de un campo, en una construcción, como `N(…)` siendo además clase por alguna de
+esas vías (un *cast* funcional), o como ámbito de una llamada `N::m()` (R13,
+abajo). Un tipo que solo aparece en `EXPECT_THROW(…, E)` **no** es candidato
+(ver el final de este apartado).
 
-Ámbito de `X::m(args)` (R13):
-1. `X` es una clase conocida o a generar → método `static` de `X`.
-2. `X` aparece en `namespace X {…}` o `using namespace X;` del fichero, o como
-   calificador de una clase (`X::Foo`) → función libre en el namespace `X`.
-3. Si no: `X` empieza por mayúscula → `static` con aviso `mt-ambiguous-scope`;
-   si no, función de namespace con el mismo aviso.
+**Externo** (nunca se genera):
+- en `std::`, `testing::`, `QTest::`, `Qt::` o `__gnu_cxx::`; o con
+  `using std::x;`/`using testing::x;` (el nombre pasa a ser de ellos);
+- patrón Qt `^Q[A-Z]`; tipos fundamentales y los de `<cstddef>`/`<cstdint>`/
+  `<cstdio>` y los *typedefs* de Qt (`qint64`, `uint`, …);
+- con `using namespace std;`, los nombres de tipos de la biblioteca estándar
+  (`string`, `vector`, `unique_ptr`, …); sin él, `string` es un nombre más;
+- declarado en el propio fichero (fixtures, structs auxiliares, enums, alias y
+  `typedef`) o parámetro de plantilla;
+- declarado en una cabecera existente analizada (§7.10): por nombre simple si
+  se usa sin calificar; si se califica (`other::Known`), el espacio de nombres de
+  la cabecera tiene que terminar en el calificador escrito;
+- `Outer::Inner` con `Outer` ajeno: tipo anidado de otro;
+- `config.external_types`: una entrada simple (`Legacy`) cubre cualquier
+  calificador; una calificada (`vendor::Driver`) cubre también la forma corta.
 
-Namespaces de las clases a generar: `ns::Foo` → `ns`; tests dentro de
-`namespace ns { … }` → `ns`; exactamente un `using namespace ns;` (no `std`)
-→ `ns` con nota; varios → global + aviso; `config.default_namespace`;
-anotación `class Foo namespace ns`.
+**A generar** = candidatos − externos. Un tipo anidado en una clase *a generar*
+(`Outer::Inner`) se avisa una vez (`mt-unsupported`) y no se genera.
+
+**Namespace de una clase** (se decide por clase, no por mención), en este
+orden, y la primera regla que aplique manda:
+1. un nombre calificado (`ns::Foo`) es esa clase; `using acme::Foo;` o cualquier
+   mención calificada en el fichero dice dónde vive `Foo` para el resto de
+   menciones sin calificar. Si el mismo nombre aparece con dos calificadores
+   distintos son **dos clases**, y las menciones sin calificar van a la primera
+   (`mt-ambiguous-scope`, aviso);
+2. anotación `// @mt: class Foo namespace ns` (solo para lo que no va calificado);
+3. el `namespace ns { … }` donde está el test;
+4. exactamente un `using namespace ns;` (sin contar `std`/`testing`/`QTest`) → `ns`,
+   con nota `mt-ambiguous-scope`;
+5. varios `using namespace` → `config.default_namespace` si existe; si no, global y
+   aviso `mt-ambiguous-scope`;
+6. `config.default_namespace`;
+7. global.
+
+**`X::m(args)` (R13)**, con `X` el último calificador y el resto su namespace:
+0. `std::`/`testing::`/`QTest::`, `X` externo (`QString::number`, `Fixture::Helper`,
+   clase de una cabecera) o función ya declarada en el fichero o en una cabecera
+   (`helpers::twice`) → nada que generar;
+1. `X` es una clase a generar → método `static` de `X`;
+2. el fichero muestra `X` como namespace —`namespace X {…}` (también donde se
+   sitúan los tests), `using namespace X;`, calificador de un tipo (`X::Foo`),
+   o namespace de algo declarado en el fichero o en una cabecera— → función
+   libre de ese namespace, sin aviso;
+3. si no hay manera de saberlo: `X` en mayúscula → clase (se crea) con aviso
+   `mt-ambiguous-scope`; en minúscula → función de namespace, con el mismo aviso.
+   La segunda llamada `X::otra()` ya encuentra la clase y no vuelve a avisar.
 
 ### 7.8 Funciones libres
 
-Llamada no calificada a un identificador que no es: macro (TODO_MAYÚSCULAS,
-R21), definida/declarada en el fichero, conocida de cabeceras, de la lista de
-funciones C/estándar (`strlen`, `memcpy`, `abs`, `printf`, …) o de
-`config.external_functions` → función libre a generar, con nota.
+Una llamada no calificada `f(args)` (también `::f(args)`) es, por este orden:
+1. nombre de `config.ignore_macros` → nada;
+2. el nombre de una clase a generar → **construcción funcional** (`Foo(3)`): se
+   añade un `Construction::Functional` y la clase la recoge;
+3. TODO_MAYÚSCULAS (R21) → macro, nada. (Una clase llamada `ADC` gana a la regla
+   de macros por el paso 2);
+4. nombre de un tipo ajeno (`QString("x")`, `size_t(3)`, la fixture) → *cast* a un
+   tipo ajeno, nada;
+5. función de la biblioteca C (`strlen`, `memcpy`, `abs`, `printf`, `assert`,
+   `offsetof`, …), función Qt `^q[A-Z]` (`qDebug`), miembro heredado de la fixture de
+   GoogleTest (`SetUp`, `GetParam`, `RecordProperty`, …) o nombre traído con
+   `using std::x;` → nada;
+6. con `using namespace std;`, función estándar (`move`, `swap`, `max`, …) → nada;
+7. `config.external_functions` (una entrada calificada `vendor::init` cubre también
+   `init()`), función definida o declarada en el fichero o en una cabecera →
+   nada;
+8. llamada dentro de una fixture a un método (o campo) de la propia fixture o de
+   sus bases, locales o de cabeceras → nada (`FreeCall.owner`);
+9. en otro caso → **función libre a generar**. Su namespace es el que el fichero
+   escriba en otra llamada `ns::f(…)` si la hay; si no, las mismas reglas 3–7 de
+   arriba que para las clases.
+
+Una llamada a una variable local (lambda, puntero a función, `std::function`)
+nunca llega aquí: el frontend (§7.3) la trata como llamada al objeto, y solo
+produce un hecho (`operator()`) si el objeto es de una clase.
+
+**Llamadas pendientes** (§7.3): `Unresolved` con raíz un `FreeCall` cuyo nombre
+resulta ser una clase (`Foo(3).size()`, `auto f = Foo(1); f.run();`) pasan a ser
+un `MethodCall` normal de esa clase (`Unresolved::resolved`, `method_call`), con el
+uso que ya tuvieran; si la raíz es un *cast* a un tipo ajeno no queda nada que
+resolver; con cualquier otra raíz (`foo.make().run()`) siguen sin resolver y la
+inferencia les aplica la política de §7.9.
+
+**Tipos de excepción** (`EXPECT_THROW(stmt, E)`): `E` no es candidato por sí solo,
+porque generar una clase de excepción exige una base que el test no dice. Debe
+ser externo (`std::runtime_error`), venir de una cabecera, o ser clase por otra
+vía; si no, `mt-unknown-type` (aviso). *Motivo*: inventar `class BadInput {}` sin
+`std::exception` haría que `EXPECT_THROW` no compilase.
 
 ### 7.9 Inferencia (hechos → modelo)
 
@@ -994,7 +1076,7 @@ mensaje [mt-código]`. Ordenados por (fichero, línea, columna, código).
 | `mt-conflict` | warning | inferencias incompatibles |
 | `mt-literal`, `mt-literal-range` | warning | literal no soportado / fuera de rango |
 | `mt-vexing-parse` | warning | `Foo f();` |
-| `mt-ambiguous-scope` | warning | `X::m()` sin saber si `X` es clase o namespace |
+| `mt-ambiguous-scope` | warning / note | `X::m()` sin saber si `X` es clase o namespace; un nombre escrito con dos namespaces; varios `using namespace` sin `default_namespace` (aviso); un único `using namespace` que decide el namespace (nota) |
 | `mt-unknown-receiver`, `mt-unknown-fixture` | note / warning | receptor o fixture no localizados |
 | `mt-unknown-type` | warning | tipo usado (p. ej. en `EXPECT_THROW`) que no se genera ni se conoce |
 | `mt-no-include` | warning | clase sin `#include` que la reclame |

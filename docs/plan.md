@@ -114,7 +114,7 @@ Marca cada tarea al terminarla (`- [x]`) en el mismo commit que la implementa.
   punteros inteligentes y `(*p).m()`; fixtures (`TEST_F` usa miembros, métodos
   de la fixture se analizan); `TEST_P` + `GetParam()`; `QFETCH` no aplica aún;
   `ASSERT_NO_THROW({ … })`; `<< "msg"`; *most vexing parse*; `auto`.
-- [ ] **2.5 Clasificación de nombres y namespaces** — (§7.7, §7.8). Tests:
+- [x] **2.5 Clasificación de nombres y namespaces** — (§7.7, §7.8). Tests:
   externos (std, Q*, fixtures, cabeceras existentes), `X::m()` en sus tres
   ramas, `using namespace`, funciones libres vs. macros vs. libc.
 - [ ] **2.6 Anotaciones** — `frontend/annotations` (§7.11). Tests: cada

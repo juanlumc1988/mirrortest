@@ -72,6 +72,15 @@ std::vector<std::string> methods_called(const Read& r) {
     return out;
 }
 
+// Safe indexing: a missing argument is a failed expectation, not a crash.
+const frontend::ValueInfo& arg(const std::vector<frontend::ValueInfo>& args, std::size_t i) {
+    static const frontend::ValueInfo none;
+    EXPECT_LT(i, args.size()) << "argument #" << i;
+    return i < args.size() ? args[i] : none;
+}
+
+std::string type_of(const frontend::ValueInfo& v) { return v.type ? v.type->spelling : std::string("<none>"); }
+
 std::vector<std::string> arg_types(const std::vector<frontend::ValueInfo>& args) {
     std::vector<std::string> out;
     for (const frontend::ValueInfo& a : args) out.push_back(a.type ? a.type->spelling : "?");
@@ -163,10 +172,10 @@ TEST(TestFrontendConstruction, DefaultDirectAndBraceForms) {
 
     EXPECT_EQ(construction(r, 1).form, Construction::Form::Direct);
     ASSERT_EQ(construction(r, 1).args.size(), 2u);
-    EXPECT_EQ(construction(r, 1).args[0].text, "3");
-    EXPECT_EQ(construction(r, 1).args[0].type->spelling, "int");
-    EXPECT_TRUE(construction(r, 1).args[1].is_string_literal);
-    EXPECT_FALSE(construction(r, 1).args[1].type.has_value());   // the context decides
+    EXPECT_EQ(arg(construction(r, 1).args, 0).text, "3");
+    EXPECT_EQ(type_of(arg(construction(r, 1).args, 0)), "int");
+    EXPECT_TRUE(arg(construction(r, 1).args, 1).is_string_literal);
+    EXPECT_FALSE(arg(construction(r, 1).args, 1).type.has_value());   // the context decides
 
     EXPECT_EQ(construction(r, 2).form, Construction::Form::Brace);
     EXPECT_EQ(arg_types(construction(r, 2).args), (std::vector<std::string>{"int", "double"}));
@@ -186,9 +195,9 @@ TEST(TestFrontendConstruction, CopyInitialisationFromALiteralIsAConvertingConstr
     ASSERT_EQ(r.facts.constructions.size(), 2u);
     EXPECT_EQ(construction(r, 0).form, Construction::Form::Copy);
     ASSERT_EQ(construction(r, 0).args.size(), 1u);
-    EXPECT_EQ(construction(r, 0).args[0].text, "5");
+    EXPECT_EQ(arg(construction(r, 0).args, 0).text, "5");
     EXPECT_EQ(construction(r, 1).form, Construction::Form::Copy);
-    EXPECT_TRUE(construction(r, 1).args[0].is_string_literal);
+    EXPECT_TRUE(arg(construction(r, 1).args, 0).is_string_literal);
 }
 
 TEST(TestFrontendConstruction, FunctionalFormInTheInitialiserIsOneConstruction) {
@@ -233,15 +242,62 @@ TEST(TestFrontendConstruction, ArgumentsKnowTheirVariables) {
         return std::size_t(0);
     }());
     ASSERT_EQ(c.args.size(), 4u);
-    EXPECT_EQ(c.args[0].var_name, "n");
-    EXPECT_TRUE(c.args[0].is_lvalue);
-    EXPECT_EQ(c.args[0].type->spelling, "int");
-    EXPECT_EQ(c.args[1].type->spelling, "const std::string");
-    EXPECT_TRUE(c.args[1].type->is_const);
-    EXPECT_TRUE(c.args[2].is_address_of);
-    EXPECT_EQ(c.args[2].var_name, "n");
-    EXPECT_EQ(c.args[2].type->spelling, "int*") << "&n is an int*, not an int";
-    EXPECT_TRUE(c.args[3].is_moved);
+    EXPECT_EQ(arg(c.args, 0).var_name, "n");
+    EXPECT_TRUE(arg(c.args, 0).is_lvalue);
+    EXPECT_EQ(type_of(arg(c.args, 0)), "int");
+    EXPECT_EQ(type_of(arg(c.args, 1)), "const std::string");
+    EXPECT_TRUE(arg(c.args, 1).type.has_value() && arg(c.args, 1).type->is_const);
+    EXPECT_TRUE(arg(c.args, 2).is_address_of);
+    EXPECT_EQ(arg(c.args, 2).var_name, "n");
+    EXPECT_EQ(type_of(arg(c.args, 2)), "int*") << "&n is an int*, not an int";
+    EXPECT_TRUE(arg(c.args, 3).is_moved);
+}
+
+// tree-sitter reads `Foo f(x);` as the declaration of a function f with an unnamed
+// parameter of type x. Inside a test that is never what is meant.
+TEST(TestFrontendConstruction, DirectInitialisationFromVariablesIsNotAFunctionDeclaration) {
+    const Read r = body("int n = 3;\nFoo f(n, 4);\nf.run();\nBar b(n);\nb.go();\nBaz z(n, n);\nz.stop();\n");
+    std::vector<std::string> made;
+    for (const Construction& c : r.facts.constructions) made.push_back(c.type.name + "/" + std::to_string(c.args.size()));
+    EXPECT_EQ(made, (std::vector<std::string>{"Foo/2", "Bar/1", "Baz/2"}));
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Foo::run", "Bar::go", "Baz::stop"}));
+    EXPECT_TRUE(warnings(r).empty());
+    EXPECT_EQ(arg(construction(r, 1).args, 0).var_name, "n");
+    EXPECT_EQ(type_of(arg(construction(r, 1).args, 0)), "int");
+    EXPECT_EQ(construction(r, 2).form, Construction::Form::Direct);
+}
+
+TEST(TestFrontendConstruction, ACallInsideDirectInitialisationIsStillACall) {
+    const Read r = body(
+        "std::unique_ptr<Foo> p;\n"
+        "Bar a(move(p));\n"
+        "Bar b(make());\n"
+        "Bar c(std::move(p));\n"
+        "Bar d(ns::build(1), other);\n"
+        "Bar e(Foo());\n");
+    std::vector<std::string> made;
+    for (const Construction& c : r.facts.constructions) made.push_back(c.type.name + "/" + std::to_string(c.args.size()));
+    EXPECT_EQ(made, (std::vector<std::string>{"unique_ptr/0", "Bar/1", "Bar/1", "Bar/1", "Bar/2", "Bar/1"}));
+
+    std::vector<std::string> frees;
+    for (const frontend::FreeCall& c : r.facts.free_calls) frees.push_back(c.name);
+    EXPECT_EQ(frees, (std::vector<std::string>{"move", "make", "Foo"}));
+    ASSERT_EQ(r.facts.scoped_calls.size(), 1u);
+    EXPECT_EQ(r.facts.scoped_calls[0].name, "build");
+    EXPECT_EQ(arg_types(r.facts.scoped_calls[0].args), std::vector<std::string>{"int"});
+    EXPECT_TRUE(arg(construction(r, 3).args, 0).is_moved) << "std::move(p) is a move, not a call to a function named move";
+    EXPECT_EQ(r.facts.free_calls[0].use.kind, UseKind::Argument);
+}
+
+TEST(TestFrontendConstruction, WhatCanOnlyBeADeclarationStaysOne) {
+    const Read r = body("Foo a(int);\nFoo b(const Bar&);\nFoo c(Bar x);\nFoo d(Bar*);\nFoo e(unsigned n, double);\nFoo g(Bar x = 1);\n");
+    EXPECT_TRUE(r.facts.constructions.empty());
+    EXPECT_TRUE(warnings(r).empty());
+}
+
+TEST(TestFrontendConstruction, DirectInitialisationOfANonClassFromAVariable) {
+    const Read r = body("Foo foo;\nint n(foo.count());\nlong m(n);\nm = 2;\nEXPECT_EQ(foo.size(), m);\n");
+    EXPECT_EQ(hint(method(r, 1).use), "long") << "m was declared long even though tree-sitter first read a function";
 }
 
 TEST(TestFrontendConstruction, MostVexingParseIsReportedAndNothingIsConstructed) {
@@ -678,6 +734,17 @@ TEST(TestFrontendAssert, ThrowAssertionsAnalyseTheStatementAndRecordTheType) {
     EXPECT_TRUE(found);
 }
 
+TEST(TestFrontendAssert, ABareExceptionNameIsATypeToo) {
+    // In a macro argument the parser calls MyError an identifier, not a type.
+    const Read r = body("Foo foo;\nEXPECT_THROW(foo.run(), MyError);\nEXPECT_THROW(foo.run(), ns::Other);\n"
+                        "EXPECT_ANY_THROW(foo.run());\n");
+    std::vector<std::string> thrown;
+    for (const frontend::TypeUse& t : r.facts.type_uses) {
+        if (t.from_throw_assertion) thrown.push_back(t.type.qualified());
+    }
+    EXPECT_EQ(thrown, (std::vector<std::string>{"MyError", "ns::Other"}));
+}
+
 TEST(TestFrontendAssert, ABlockAsTheStatementArgument) {
     const Read r = body("Foo foo;\nASSERT_NO_THROW({\n    foo.a();\n    int n = foo.b();\n});\n");
     ASSERT_EQ(r.facts.method_calls.size(), 2u);
@@ -814,21 +881,21 @@ TEST(TestFrontendCalls, SizeofIsASizeT) {
 TEST(TestFrontendCalls, NullptrAndBooleanLiterals) {
     const Read r = body("Foo foo;\nfoo.set(nullptr, true);\n");
     ASSERT_EQ(method(r).args.size(), 2u);
-    EXPECT_TRUE(method(r).args[0].is_null_pointer);
-    EXPECT_EQ(method(r).args[1].type->spelling, "bool");
+    EXPECT_TRUE(arg(method(r).args, 0).is_null_pointer);
+    EXPECT_EQ(type_of(arg(method(r).args, 1)), "bool");
 }
 
 TEST(TestFrontendCalls, NegativeLiteralArgumentKeepsItsSignAndWarnings) {
     const Read r = body("Foo foo;\nfoo.set(-7, -2.5f);\n");
     EXPECT_EQ(arg_types(method(r).args), (std::vector<std::string>{"int", "float"}));
-    EXPECT_EQ(method(r).args[0].text, "-7");
+    EXPECT_EQ(arg(method(r).args, 0).text, "-7");
 }
 
 TEST(TestFrontendCalls, LiteralWarningsTravelWithTheValue) {
     const Read r = body("Foo foo;\nfoo.set(5000000000);\n");
     ASSERT_EQ(method(r).args.size(), 1u);
-    EXPECT_EQ(method(r).args[0].type->spelling, "long long");
-    EXPECT_FALSE(method(r).args[0].warnings.empty());
+    EXPECT_EQ(type_of(arg(method(r).args, 0)), "long long");
+    EXPECT_FALSE(arg(method(r).args, 0).warnings.empty());
     EXPECT_TRUE(warnings(r).empty()) << "reported only if the type is used";
 }
 
@@ -946,6 +1013,7 @@ TEST(TestFrontendAuto, WhatAnAutoVariableIsComparedWithIsEvidenceAboutTheCall) {
     EXPECT_EQ(hint(method(r, 1).use), "bool");
     EXPECT_EQ(hint(method(r, 2).use), "std::string");
     EXPECT_EQ(hint(method(r, 3).use), "float");
+    ASSERT_TRUE(method(r, 0).use.hint.has_value());
     EXPECT_NE(method(r, 0).use.hint->reason.find("through variable 'n'"), std::string::npos)
         << method(r, 0).use.hint->reason;
 }
@@ -1007,7 +1075,7 @@ TEST(TestFrontendConstruction, CopyingAnObjectOfTheSameClassIsNotAConvertingCons
     std::vector<std::string> forms;
     for (const Construction& c : r.facts.constructions) {
         forms.push_back(std::string(c.form == Construction::Form::Default ? "default" : "copy") + ":" +
-                        (c.args.empty() ? "" : c.args[0].text));
+                        (c.args.empty() ? "" : arg(c.args, 0).text));
     }
     EXPECT_EQ(forms, (std::vector<std::string>{"default:", "copy:n", "copy:true", "copy:\"abc\""}));
 }
@@ -1272,6 +1340,145 @@ TEST(TestFrontendDeterminism, LocationsPointAtTheMethodName) {
     EXPECT_EQ(method(r).where.column, 7u);
 }
 
+// ---- names the file itself brings ------------------------------------------------------------------------------------------
+
+TEST(TestFrontendNames, TemplateParametersAreNotTypesOfTheCodeUnderTest) {
+    const Read r = read(
+        "template <typename T, int N>\n"
+        "void check(const T& x) { T copy = x; Foo f; }\n"
+        "template <typename U, typename... Rest>\n"
+        "struct Holder { U u; Bar b; };\n"
+        "TEST(S, N) { Qux q; }\n");
+    std::vector<std::string> names;
+    for (const frontend::TypeUse& t : r.facts.type_uses) names.push_back(t.type.qualified());
+    EXPECT_EQ(names, (std::vector<std::string>{"Foo", "Bar", "Qux"}));
+    ASSERT_EQ(r.facts.tests.size(), 1u);
+}
+
+TEST(TestFrontendNames, ATemplateFunctionBodyIsAnalysedAndItsTemplateScopeEnds) {
+    const Read r = read(
+        "template <typename T>\n"
+        "void check(Foo& foo, const T& x) { foo.set(x); }\n"
+        "TEST(S, N) { T t; }\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Foo::set"}));
+    std::vector<std::string> names;
+    for (const frontend::TypeUse& t : r.facts.type_uses) names.push_back(t.type.qualified());
+    EXPECT_EQ(names, (std::vector<std::string>{"Foo", "T"})) << "T is only a template parameter inside the template";
+}
+
+TEST(TestFrontendNames, UsingDeclarationsAndAliasesAreRecorded) {
+    const Read r = read(
+        "using std::string;\n"
+        "using acme::Foo;\n"
+        "using namespace acme::detail;\n"
+        "using Vec = std::vector<Bar>;\n"
+        "typedef unsigned long Word;\n"
+        "void g() { using Local = Baz; typedef int I; Local l; }\n");
+    ASSERT_EQ(r.facts.using_declarations.size(), 2u);
+    EXPECT_EQ(r.facts.using_declarations[0].qualified(), "std::string");
+    EXPECT_EQ(r.facts.using_declarations[1].qualified(), "acme::Foo");
+    EXPECT_EQ(r.facts.using_namespaces, std::vector<std::string>{"acme::detail"});
+    EXPECT_EQ(r.facts.local_type_names, (std::vector<std::string>{"Vec", "Word", "Local", "I"}));
+
+    std::vector<std::string> names;
+    for (const frontend::TypeUse& t : r.facts.type_uses) names.push_back(t.type.qualified());
+    EXPECT_NE(std::find(names.begin(), names.end(), "Bar"), names.end()) << "the aliased type is a use";
+    EXPECT_NE(std::find(names.begin(), names.end(), "Baz"), names.end());
+}
+
+TEST(TestFrontendNames, CallsThroughLocalVariablesAreNotFreeCalls) {
+    const Read r = body(
+        "auto lam = [](int x) { return x; };\n"
+        "int (*fp)(int) = nullptr;\n"
+        "std::function<int(int)> fn;\n"
+        "lam(1);\nfp(2);\nfn(3);\n");
+    EXPECT_TRUE(r.facts.free_calls.empty());
+    EXPECT_TRUE(r.facts.method_calls.empty());
+}
+
+TEST(TestFrontendNames, CallingAnObjectOfAClassIsItsCallOperator) {
+    const Read r = body("Adder add;\nconst Adder cadd;\nEXPECT_EQ(add(1, 2), 3);\ncadd(4);\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(method(r, 0).receiver.name, "Adder");
+    EXPECT_EQ(method(r, 0).method, "operator()");
+    EXPECT_EQ(method(r, 0).use.kind, UseKind::Compared);
+    EXPECT_EQ(arg_types(method(r, 0).args), (std::vector<std::string>{"int", "int"}));
+    EXPECT_TRUE(method(r, 1).on_const);
+    EXPECT_TRUE(r.facts.free_calls.empty());
+}
+
+TEST(TestFrontendNames, AFunctionOfTheFileWithTheSameNameAsALocalIsTheLocal) {
+    const Read r = body("int twice = 3;\ntwice(2);\n");
+    EXPECT_TRUE(r.facts.free_calls.empty());
+}
+
+TEST(TestFrontendNames, FreeCallsRememberTheFixtureTheyAreIn) {
+    const Read r = read(
+        "class F : public ::testing::Test {\n"
+        "protected:\n"
+        "    void check() { helper(1); this->other(); }\n"
+        "};\n"
+        "TEST_F(F, T) { helper(2); }\n"
+        "TEST(S, N) { helper(3); }\n"
+        "void util() { helper(4); }\n");
+    ASSERT_EQ(r.facts.free_calls.size(), 5u);
+    EXPECT_EQ(r.facts.free_calls[0].owner, "F");
+    EXPECT_EQ(r.facts.free_calls[1].owner, "F");
+    EXPECT_EQ(r.facts.free_calls[2].owner, "F") << "TEST_F bodies are methods of the fixture";
+    EXPECT_EQ(r.facts.free_calls[3].owner, "");
+    EXPECT_EQ(r.facts.free_calls[4].owner, "");
+}
+
+TEST(TestFrontendNames, UnqualifiedMakeUniqueAndMoveUnderUsingNamespaceStd) {
+    const Read r = read(
+        "using namespace std;\n"
+        "TEST(S, N) {\n"
+        "    auto p = make_unique<Foo>(1);\n"
+        "    auto s = make_shared<Bar>();\n"
+        "    Baz baz(move(p));\n"
+        "    p->go();\n"
+        "}\n");
+    ASSERT_EQ(r.facts.constructions.size(), 3u);
+    EXPECT_EQ(construction(r, 0).form, Construction::Form::MakeUnique);
+    EXPECT_EQ(construction(r, 0).type.name, "Foo");
+    EXPECT_EQ(construction(r, 1).type.name, "Bar");
+    EXPECT_EQ(construction(r, 2).type.name, "Baz");
+    EXPECT_TRUE(arg(construction(r, 2).args, 0).is_moved);
+    EXPECT_TRUE(r.facts.free_calls.empty());
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Foo::go"}));
+}
+
+TEST(TestFrontendNames, MoveWithoutUsingNamespaceStdIsAnOrdinaryCall) {
+    const Read r = body("Baz baz(move(p));\n");
+    ASSERT_EQ(r.facts.free_calls.size(), 1u);
+    EXPECT_EQ(r.facts.free_calls[0].name, "move");
+}
+
+TEST(TestFrontendNames, AFunctionTemplateCallIsReportedNotGuessed) {
+    const Read r = body("int n = compute<int>(3);\n");
+    EXPECT_EQ(warnings(r), (std::vector<std::string>{"mt-unsupported"}));
+    EXPECT_TRUE(r.facts.free_calls.empty());
+}
+
+TEST(TestFrontendChain, TheCallOnTheUnknownResultWaitsForAReceiver) {
+    const Read r = body("Foo foo;\nEXPECT_EQ(foo.make()->run(1, 'c'), 3u);\n");
+    ASSERT_EQ(r.facts.unresolved.size(), 1u);
+    const frontend::MethodCall& pending = r.facts.unresolved[0].call;
+    EXPECT_TRUE(pending.receiver.empty());
+    EXPECT_EQ(pending.method, "run");
+    EXPECT_TRUE(pending.via_arrow);
+    EXPECT_EQ(arg_types(pending.args), (std::vector<std::string>{"int", "char"}));
+    EXPECT_EQ(pending.use.kind, UseKind::Compared) << "the comparison reaches the pending call, as for any call";
+    EXPECT_EQ(hint(pending.use), "unsigned int");
+}
+
+TEST(TestFrontendChain, AnAutoVariableOfAnUnresolvedCallAlsoLandsOnIt) {
+    const Read r = body("Foo foo;\nauto n = foo.make().count();\nEXPECT_EQ(n, 5);\n");
+    ASSERT_EQ(r.facts.unresolved.size(), 1u);
+    EXPECT_EQ(r.facts.unresolved[0].call.use.kind, UseKind::AutoBound);
+    EXPECT_EQ(hint(r.facts.unresolved[0].call.use), "int");
+}
+
 // ---- a realistic file, and files cut off anywhere ---------------------------------------------------------------------------
 
 Read read_data(const char* name) {
@@ -1361,6 +1568,22 @@ TEST(TypeName, ParsesScopesAndTemplateArguments) {
     EXPECT_EQ(t.name, "map");
     EXPECT_EQ(t.template_args, "int, std::vector<ns::X>");
     EXPECT_EQ(t.qualified(), "std::map");
+}
+
+TEST(TypeName, TemplateArgumentsBelongToTheLastSegmentAndTheirScopesAreNobodys) {
+    const frontend::TypeName a = frontend::parse_type_name("Box<std::string>::create");
+    EXPECT_EQ(a.scope, std::vector<std::string>{"Box"});
+    EXPECT_EQ(a.name, "create");
+    EXPECT_TRUE(a.template_args.empty());
+
+    const frontend::TypeName b = frontend::parse_type_name("ns::Box<a::B, c::D<e::F>>");
+    EXPECT_EQ(b.scope, std::vector<std::string>{"ns"});
+    EXPECT_EQ(b.name, "Box");
+    EXPECT_EQ(b.template_args, "a::B, c::D<e::F>");
+
+    const frontend::TypeName c = frontend::parse_type_name("std::vector<int>::iterator");
+    EXPECT_EQ(c.scope, (std::vector<std::string>{"std", "vector"}));
+    EXPECT_EQ(c.name, "iterator");
 }
 
 TEST(TypeName, EmptyAndOddInputsDoNotCrash) {

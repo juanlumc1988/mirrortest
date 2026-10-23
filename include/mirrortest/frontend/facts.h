@@ -51,7 +51,7 @@ TypeName parse_type_name(std::string_view spelling);
 // Which fact an expression's value came from, so that whoever uses the value
 // can tell the fact how.
 struct FactRef {
-    enum class Kind { None, MethodCall, ScopedCall, FreeCall, FieldAccess };
+    enum class Kind { None, MethodCall, ScopedCall, FreeCall, FieldAccess, Unresolved };
     Kind        kind = Kind::None;
     std::size_t index = 0;
 
@@ -136,6 +136,10 @@ struct FreeCall {
     ResultUse   use;
     ir::SourceLoc where;
     std::vector<std::string> ns;
+
+    // The class of the file whose method contains the call (a fixture's helper
+    // calling another of its own methods); empty in TEST bodies and free functions.
+    std::string owner;
 };
 
 struct FieldAccess {
@@ -187,6 +191,17 @@ struct Unresolved {
     // it was a functional cast after all -- in `Foo(3).size()` the root is a
     // FreeCall named Foo -- and then there is nothing unresolved left.
     FactRef     root;
+
+    // The call made on that result, waiting for a receiver (`.size()` above):
+    // everything but `receiver`, which stays empty. Its `use` is where contexts
+    // that consume the call's value record themselves, as for any other call.
+    MethodCall  call;
+
+    // Set by classification when the root turned out to be a class: the pending
+    // call then exists as an ordinary MethodCall (`method_call` is its index)
+    // and there is nothing left to resolve.
+    bool        resolved = false;
+    std::size_t method_call = 0;
 };
 
 struct TestCaseInfo {
@@ -201,6 +216,8 @@ struct TestFileFacts {
     std::string file;
     std::vector<ir::Include> includes;
     std::vector<std::string> using_namespaces;   // `using namespace ns;` anywhere in the file
+    std::vector<TypeName>    using_declarations; // `using acme::Foo;` anywhere in the file
+    std::vector<std::string> local_type_names;   // aliases and typedefs the file declares: never generated
 
     // Classes, enums and functions the test file itself defines: fixtures and
     // helpers. They are never generated, and their members give the symbol

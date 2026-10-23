@@ -18,22 +18,41 @@ TypeName parse_type_name(std::string_view spelling) {
         rest.remove_prefix(2);
     }
 
-    TypeName out;
-    std::string_view head = rest;
-    const std::size_t open = rest.find('<');
-    if (open != std::string_view::npos) {
-        head = rest.substr(0, open);
-        const std::size_t close = rest.rfind('>');
-        if (close != std::string_view::npos && close > open) {
-            out.template_args = std::string(rest.substr(open + 1, close - open - 1));
+    // Split at the "::" that sit outside any <...>: `Box<std::string>::create`
+    // is the scope Box and the name create, and the "std" inside the arguments
+    // is nobody's scope.
+    std::vector<std::string_view> segments;
+    int depth = 0;
+    std::size_t begin = 0;
+    for (std::size_t i = 0; i < rest.size(); ++i) {
+        if (rest[i] == '<') {
+            ++depth;
+        } else if (rest[i] == '>') {
+            if (depth > 0) --depth;
+        } else if (depth == 0 && rest.compare(i, 2, "::") == 0) {
+            segments.push_back(rest.substr(begin, i - begin));
+            begin = i + 2;
+            ++i;
         }
     }
+    segments.push_back(rest.substr(begin));
 
-    for (std::size_t sep; (sep = head.find("::")) != std::string_view::npos;) {
-        out.scope.emplace_back(head.substr(0, sep));
-        head.remove_prefix(sep + 2);
+    TypeName out;
+    for (std::size_t i = 0; i + 1 < segments.size(); ++i) {
+        const std::size_t open = segments[i].find('<');
+        out.scope.emplace_back(open == std::string_view::npos ? segments[i] : segments[i].substr(0, open));
     }
-    out.name = std::string(head);
+
+    std::string_view last = segments.back();
+    const std::size_t open = last.find('<');
+    if (open != std::string_view::npos) {
+        const std::size_t close = last.rfind('>');
+        if (close != std::string_view::npos && close > open) {
+            out.template_args = std::string(last.substr(open + 1, close - open - 1));
+        }
+        last = last.substr(0, open);
+    }
+    out.name = std::string(last);
     return out;
 }
 
