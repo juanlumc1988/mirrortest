@@ -1,77 +1,77 @@
-# mirrortest — diseño técnico
+# mirrortest — technical design
 
-Documento de referencia para la implementación. Parte de
-[`analisis-tecnico.md`](analisis-tecnico.md) (citado como «AT §n»), lo revisa,
-corrige lo que no se sostiene y cierra las decisiones que el análisis dejaba
-abiertas. Si este documento y el análisis discrepan, **manda este**. El orden de
-trabajo está en [`plan.md`](plan.md).
+Reference document for the implementation. It starts from
+[`technical-analysis.md`](technical-analysis.md) (cited as "AT §n"), reviews it,
+corrects what does not hold up and closes the decisions the analysis left open.
+If this document and the analysis disagree, **this one wins**. The order of work
+is in [`plan.md`](plan.md).
 
-Las decisiones marcadas **[confirmado]** (R8, R15, R18, D1, D2, D6) fueron
-validadas por el propietario del proyecto al cierre del diseño.
+The decisions marked **[confirmed]** (R8, R15, R18, D1, D2, D6) were validated
+by the project owner when the design was closed.
 
 ---
 
-## 1. Revisión del análisis (double-check)
+## 1. Review of the analysis (double-check)
 
-Hallazgos de la revisión. Los marcados *verificado* se han comprobado con código
-real en este repositorio (spike de parser, cabeceras de Qt 5.15.13 y 6.4.2,
-README de GoogleTest por versión).
+Findings of the review. Those marked *verified* were checked against real code
+in this repository (parser spike, Qt 5.15.13 and 6.4.2 headers, GoogleTest
+README per version).
 
-| # | AT | Lo que dice | Problema | Resolución |
+| # | AT | What it says | Problem | Resolution |
 |---|---|---|---|---|
-| R1 | §4 | Fixtures: `TEST_F(Fixture, …)` → generar `class Fixture : ::testing::Test` | En gen-impl la fixture es **entrada**: `TEST_F` exige que esté definida antes en el propio test. No se genera; se lee para tipar sus miembros. | El frontend de tests parsea las fixtures del fichero (§7.4). Solo gen-tests genera fixtures. |
-| R2 | §4 | Stub = «valor de retorno por defecto, o `throw`» | Un valor por defecto puede hacer **pasar** el test (`EXPECT_EQ(v.size(), 0u)`, `EXPECT_FALSE(v.empty())`): rompe la fase *red* y contradice AT §5. | Política por defecto `throw`; sin excepciones `abort`; `default` solo opt-in y con aviso `mt-stub-may-pass` (§8.3). |
-| R3 | §4 | — | Un destructor que lanza llama a `std::terminate` (implícitamente `noexcept`); un constructor que lanza oculta qué métodos fallan. | Constructores y destructores con cuerpo vacío; solo los métodos fallan. |
-| R4 | §4 | `"a"` → `const char*` | En `EXPECT_EQ(foo.name(), "x")` un retorno `const char*` compara **punteros** (GoogleTest lo documenta). Compila y da un resultado sin sentido. | El contexto manda: en `EXPECT_EQ/NE` el literal de cadena da `std::string`; en `EXPECT_STR*` da `const char*`; en `QCOMPARE` da `QString` (§7.6). |
-| R5 | §6 | `QCOMPARE` exige tipos idénticos | *Verificado*: Qt 5.15 y Qt 6.4 tienen `template<T1,T2> qCompare(const T1&, const T2&)` vía `==`. La exigencia era de versiones antiguas. | Se sigue infiriendo el tipo exacto del literal (evita `-Wsign-compare` y mantiene paridad con GTest), pero ya no es un requisito de compilación. |
-| R6 | §6 | Excepciones: usar `QVERIFY_EXCEPTION_THROWN` | *Verificado*: deprecada desde Qt 6.3 en favor de `QVERIFY_THROWS_EXCEPTION(Tipo, expr)` — **orden de argumentos invertido** — que no existe en Qt 5. | El frontend reconoce ambas; el backend elige según `--qt 5|6` (§9.6). |
-| R7 | §7 | Salida compatible con `--std=c++11` | *Verificado*: GoogleTest 1.12.x es la última con C++11; 1.13–1.16 exigen C++14; 1.17 exige C++17. Los tests generados para C++11 solo compilan con GTest ≤ 1.12. | Documentado. Se fija GTest 1.16.0 para poder probar salida C++14. El código de stubs (sin GTest) se prueba en C++11. |
-| R8 | §3 | Decidir parser con un spike | *Verificado* (spike): tree-sitter-cpp 0.23.4 parsea GTest sin errores. QTest y cabeceras Qt **no**: `Q_OBJECT`, `slots`, `signals`, `Q_PROPERTY(…)` y macros de export generan nodos `ERROR` y se pierden declaraciones (11 errores en una cabecera típica). Con esas macros sustituidas por espacios: 0 errores. | tree-sitter en ambas direcciones + preprocesado de *blanking* que preserva offsets (§5.2). libclang queda como frontend opcional futuro. **[confirmado]** |
-| R9 | §11 | — | tree-sitter no preprocesa: ve **todas** las ramas de `#if/#else`. Código embebido con `#ifdef TARGET_ARM` puede producir declaraciones duplicadas o contradictorias. | Se recorren todas las ramas; duplicados exactos se fusionan; variantes distintas se conservan con nota `mt-conditional` (§6.5). |
-| R10 | §4 | Tipos de literales enteros | El tipo de un entero grande depende del modelo de datos: `long` es 32 bits en ARM32 (ILP32) y 64 en x86-64 (LP64). El generador corre en host pero el código es para ARM. | Nunca se deduce `long` por magnitud, solo por sufijo. Sin sufijo y fuera de `int` → `long long` + aviso. Sufijo `l` con valor > 32 bits → aviso de ARM32 (§7.5). |
-| R11 | §4 | — | *Verificado*: tree-sitter lexea `-1` como un único `number_literal`, no como menos unario. | El clasificador de literales acepta signo. |
-| R12 | §4 | `Foo foo(args);` | `Foo f();` es la *most vexing parse*: declara una función. *Verificado*: tree-sitter lo da como `function_declarator`. | Aviso `mt-vexing-parse`; no se infiere constructor. |
-| R13 | §4 | `Foo::bar()` | *Verificado*: `Foo::create()` y `ns::create()` son sintácticamente idénticos (`namespace_identifier`). | Regla explícita de resolución de ámbito (§7.7). |
-| R14 | §2 | IR con `Fixture*` y `Type{isConst,isRef,isPtr}` | Puntero crudo en un modelo de valores; los booleanos no representan `const char* const&`, puntero-a-const vs puntero-const, `&&`. Faltan `noexcept`, `= 0`, `override`, `= delete/default`, `explicit`, ref-qualifiers, roles Qt y procedencia. | IR en `include/mirrortest/ir/model.h` (§4): `spelling` autoritativo + campos derivados, `Origin`, `reason`, `SourceLoc`. Nombres en `snake_case` como el resto de tus repos. |
-| R15 | §4, §12 | Merge «inteligente» en la fase 6, pero «es el requisito más importante» | Contradicción: sin merge, el bucle TDD (test nuevo → regenerar) acaba siempre en `.new` manual. | Merge por regiones marcadas en la fase 3, justo tras el MVP de gen-impl (§11). **[confirmado]** |
-| R16 | §11 (merge) | — | Comparar por firma completa añadiría sobrecargas espurias cuando el usuario cambia `int` → `std::uint32_t`; y el tipo de retorno no distingue sobrecargas. | Clave de merge = (nombre, aridad); por tipos solo con anotación `overload`; diferencias de tipos o `const` → aviso, nunca un miembro nuevo (§11.2). |
-| R17 | §2 | Plantillas inja editables «sin recompilar» | Si se cargan de disco, el binario depende de una ruta de instalación; y meter lógica en plantillas la deja sin tests. | Plantillas por defecto **embebidas** en el binario + `--templates DIR` para sobrescribir. La lógica (firmas, TODOs, valores por defecto) vive en C++ y llega a la plantilla ya formateada (§15). |
-| R18 | §10 | `tool.yaml` | YAML añade yaml-cpp; nlohmann/json ya es obligatoria por inja. | Configuración en JSON en el MVP; el cargador está aislado para añadir YAML después. **[confirmado]** |
-| R19 | §5 | Argumentos placeholder en los tests generados | `{}` es ambiguo entre `f(int)` y `f(double)` y no liga a `T&`. Además, **ejecutar** métodos de código legado con valores cero puede colgar o tocar hardware y tumbar todo el binario de tests. | Locales con nombre y tipo exacto; el placeholder (`FAIL()`/`QFAIL`) va **primero**: lo de después compila (comprueba la API) pero no se ejecuta (§9.2). |
-| R20 | §5 | Tests sobre objeto `const` | — | `const Foo& const_sut = sut;` para métodos `const`; `static_assert(noexcept(…))` para `noexcept` (§9.2). |
-| R21 | §4 | Funciones libres | Llamadas a macros propias (`MY_EXPECT_OK(x)`) o a la libc (`strlen`) se tomarían por funciones bajo test. | Identificadores TODO_MAYÚSCULAS = macros; lista de funciones C/estándar conocidas + `external_functions` en config (§7.8). |
-| R22 | §8 | Stubs | Con `-Werror -Wunused-parameter` (habitual en embebido) los stubs no compilan. | Nombres de parámetro comentados en las definiciones: `int Foo::f(int /*value*/)`. |
-| R23 | §2, §8 | Determinista | No se concretaba. | Sin timestamps ni rutas absolutas; orden estable (vectores, nunca `unordered_*` en emisión); LF; salto final; sin espacios finales. Los goldens lo verifican (§16). |
-| R24 | §7 | Dependencias por `FetchContent` con tags | Los tags pueden moverse. *Verificado* en este entorno: los tarballs `/archive/` de GitHub están bloqueados por el proxy; `git clone` funciona. | Git superficial por tag **y** verificación del SHA del commit tras la descarga (falla el configure si no coincide). Modo offline con `FETCHCONTENT_SOURCE_DIR_*` (§17). *Implementado y probado.* |
-| R25 | §6 | `GTEST_SKIP()`, `INSTANTIATE_TEST_SUITE_P` | Existen desde GTest 1.10; antes `INSTANTIATE_TEST_CASE_P`. | El frontend reconoce ambos nombres; el backend asume GTest ≥ 1.10. |
-| R26 | §4 | Stubs con `throw` dan fase *red* | *Verificado* (GTest 1.16, Qt 6.4.2): GTest captura la excepción **por test** y sigue (todos rojos). QTest marca `FAIL! Caught unhandled exception` y **relanza** → `std::terminate`: los slots siguientes no se ejecutan. Sigue siendo rojo, pero solo se ve el primer fallo. | Se mantiene `throw` (rojo garantizado en ambos). Documentado para QTest (se puede ejecutar un slot concreto: `tst_foo nombreSlot`). Mejora futura: política `hook` (§8.3). El round-trip QTest verifica lo que de verdad ocurre (§16). |
-| R27 | §8 | — | *Verificado*: con Clang, `-std=c++14 -Wpedantic -Werror`, el propio macro `TEST` de GTest 1.16 falla (`[[maybe_unused]]` es extensión C++17). Sin `-Wpedantic`, o en C++17, compila. | En el round-trip, los TU de test en C++14 se compilan con `-Wall -Wextra -Werror` (sin `-Wpedantic`); los stubs (sin GTest) sí con `-Wpedantic`. |
+| R1 | §4 | Fixtures: `TEST_F(Fixture, …)` → generate `class Fixture : ::testing::Test` | In gen-impl the fixture is **input**: `TEST_F` requires it to be defined earlier in the test itself. It is not generated; it is read in order to type its members. | The tests frontend parses the fixtures of the file (§7.4). Only gen-tests generates fixtures. |
+| R2 | §4 | Stub = "default return value, or `throw`" | A default value can make the test **pass** (`EXPECT_EQ(v.size(), 0u)`, `EXPECT_FALSE(v.empty())`): it breaks the *red* phase and contradicts AT §5. | Default policy `throw`; without exceptions `abort`; `default` only as an opt-in and with the `mt-stub-may-pass` warning (§8.3). |
+| R3 | §4 | — | A destructor that throws calls `std::terminate` (implicitly `noexcept`); a constructor that throws hides which methods fail. | Constructors and destructors with an empty body; only the methods fail. |
+| R4 | §4 | `"a"` → `const char*` | In `EXPECT_EQ(foo.name(), "x")` a `const char*` return compares **pointers** (GoogleTest documents this). It compiles and gives a meaningless result. | Context rules: in `EXPECT_EQ/NE` a string literal gives `std::string`; in `EXPECT_STR*` it gives `const char*`; in `QCOMPARE` it gives `QString` (§7.6). |
+| R5 | §6 | `QCOMPARE` requires identical types | *Verified*: Qt 5.15 and Qt 6.4 have `template<T1,T2> qCompare(const T1&, const T2&)` via `==`. The requirement belonged to old versions. | The exact type of the literal is still inferred (avoids `-Wsign-compare` and keeps parity with GTest), but it is no longer a compilation requirement. |
+| R6 | §6 | Exceptions: use `QVERIFY_EXCEPTION_THROWN` | *Verified*: deprecated since Qt 6.3 in favour of `QVERIFY_THROWS_EXCEPTION(Type, expr)` — **reversed argument order** — which does not exist in Qt 5. | The frontend recognises both; the backend chooses according to `--qt 5\|6` (§9.6). |
+| R7 | §7 | Output compatible with `--std=c++11` | *Verified*: GoogleTest 1.12.x is the last one supporting C++11; 1.13–1.16 require C++14; 1.17 requires C++17. Tests generated for C++11 only compile with GTest ≤ 1.12. | Documented. GTest 1.16.0 is pinned so that C++14 output can be tested. The stub code (no GTest) is tested in C++11. |
+| R8 | §3 | Decide the parser with a spike | *Verified* (spike): tree-sitter-cpp 0.23.4 parses GTest without errors. QTest and Qt headers do **not**: `Q_OBJECT`, `slots`, `signals`, `Q_PROPERTY(…)` and export macros generate `ERROR` nodes and declarations get lost (11 errors in a typical header). With those macros replaced by spaces: 0 errors. | tree-sitter in both directions + a *blanking* preprocessing step that preserves offsets (§5.2). libclang stays as a possible future optional frontend. **[confirmed]** |
+| R9 | §11 | — | tree-sitter does not preprocess: it sees **all** branches of `#if/#else`. Embedded code with `#ifdef TARGET_ARM` can produce duplicate or contradictory declarations. | All branches are visited; exact duplicates are merged; different variants are kept with an `mt-conditional` note (§6.5). |
+| R10 | §4 | Types of integer literals | The type of a large integer depends on the data model: `long` is 32 bits on ARM32 (ILP32) and 64 on x86-64 (LP64). The generator runs on the host but the code is meant for ARM. | `long` is never deduced from magnitude, only from a suffix. Without a suffix and outside `int` → `long long` + warning. Suffix `l` with a value above 32 bits → ARM32 warning (§7.5). |
+| R11 | §4 | — | *Verified*: tree-sitter lexes `-1` as a single `number_literal`, not as a unary minus. | The literal classifier accepts a sign. |
+| R12 | §4 | `Foo foo(args);` | `Foo f();` is the *most vexing parse*: it declares a function. *Verified*: tree-sitter gives it as a `function_declarator`. | `mt-vexing-parse` warning; no constructor is inferred. |
+| R13 | §4 | `Foo::bar()` | *Verified*: `Foo::create()` and `ns::create()` are syntactically identical (`namespace_identifier`). | Explicit scope-resolution rule (§7.7). |
+| R14 | §2 | IR with `Fixture*` and `Type{isConst,isRef,isPtr}` | A raw pointer in a value model; the booleans cannot represent `const char* const&`, pointer-to-const vs const pointer, `&&`. `noexcept`, `= 0`, `override`, `= delete/default`, `explicit`, ref-qualifiers, Qt roles and provenance are missing. | IR in `include/mirrortest/ir/model.h` (§4): authoritative `spelling` + derived fields, `Origin`, `reason`, `SourceLoc`. Names in `snake_case`, like the owner's other repositories. |
+| R15 | §4, §12 | "Smart" merge in phase 6, yet "it is the most important requirement" | Contradiction: without merge, the TDD loop (new test → regenerate) always ends in a manual `.new`. | Merge by marked regions in phase 3, right after the gen-impl MVP (§11). **[confirmed]** |
+| R16 | §11 (merge) | — | Comparing by full signature would add spurious overloads when the user changes `int` → `std::uint32_t`; and the return type does not distinguish overloads. | Merge key = (name, arity); by types only with the `overload` annotation; differences in types or `const` → warning, never a new member (§11.2). |
+| R17 | §2 | inja templates editable "without recompiling" | If they are loaded from disk, the binary depends on an installation path; and putting logic in templates leaves it untested. | Default templates **embedded** in the binary + `--templates DIR` to override. The logic (signatures, TODOs, default values) lives in C++ and reaches the template already formatted (§15). |
+| R18 | §10 | `tool.yaml` | YAML adds yaml-cpp; nlohmann/json is already mandatory because of inja. | Configuration in JSON for the MVP; the loader is isolated so that YAML can be added later. **[confirmed]** |
+| R19 | §5 | Placeholder arguments in the generated tests | `{}` is ambiguous between `f(int)` and `f(double)` and does not bind to `T&`. Besides, **running** legacy methods with zero values can hang or touch hardware and take down the whole test binary. | Named locals of exact type; the placeholder (`FAIL()`/`QFAIL`) goes **first**: what follows compiles (it checks the API) but does not run (§9.2). |
+| R20 | §5 | Tests on a `const` object | — | `const Foo& const_sut = sut;` for `const` methods; `static_assert(noexcept(…))` for `noexcept` (§9.2). |
+| R21 | §4 | Free functions | Calls to the project's own macros (`MY_EXPECT_OK(x)`) or to libc (`strlen`) would be taken for functions under test. | ALL_CAPS identifiers = macros; a list of known C/standard functions + `external_functions` in the config (§7.8). |
+| R22 | §8 | Stubs | With `-Werror -Wunused-parameter` (common in embedded) the stubs do not compile. | Commented-out parameter names in the definitions: `int Foo::f(int /*value*/)`. |
+| R23 | §2, §8 | Deterministic | Not made concrete. | No timestamps or absolute paths; stable order (vectors, never `unordered_*` in emission); LF; final newline; no trailing spaces. The goldens verify it (§16). |
+| R24 | §7 | Dependencies through `FetchContent` with tags | Tags can move. *Verified* in this environment: GitHub's `/archive/` tarballs are blocked by the proxy; `git clone` works. | Shallow git by tag **and** verification of the commit SHA after the download (configure fails on mismatch). Offline mode with `FETCHCONTENT_SOURCE_DIR_*` (§17). *Implemented and tested.* |
+| R25 | §6 | `GTEST_SKIP()`, `INSTANTIATE_TEST_SUITE_P` | They exist since GTest 1.10; before that, `INSTANTIATE_TEST_CASE_P`. | The frontend recognises both names; the backend assumes GTest ≥ 1.10. |
+| R26 | §4 | Stubs with `throw` give the *red* phase | *Verified* (GTest 1.16, Qt 6.4.2): GTest catches the exception **per test** and carries on (all red). QTest reports `FAIL! Caught unhandled exception` and **rethrows** → `std::terminate`: the following slots do not run. It is still red, but only the first failure is seen. | `throw` is kept (red guaranteed in both). Documented for QTest (one slot can be run on its own: `tst_foo slotName`). Future improvement: a `hook` policy (§8.3). The QTest round trip checks what really happens (§16). |
+| R27 | §8 | — | *Verified*: with Clang, `-std=c++14 -Wpedantic -Werror`, GTest 1.16's own `TEST` macro fails (`[[maybe_unused]]` is a C++17 extension). Without `-Wpedantic`, or in C++17, it compiles. | In the round trip, C++14 test TUs are compiled with `-Wall -Wextra -Werror` (without `-Wpedantic`); the stubs (without GTest) do get `-Wpedantic`. |
 
 ---
 
-## 2. Decisiones
+## 2. Decisions
 
-| # | Decisión | Motivo |
+| # | Decision | Reason |
 |---|---|---|
-| D1 | **tree-sitter en ambas direcciones** (MVP). Interfaz de frontend preparada para un frontend libclang opcional (`MT_WITH_LIBCLANG`, futuro). **[confirmado]** | Una sola dependencia de parser, fijada y sin toolchain; tolera código que no compila; mismas utilidades de extracción de tipos en las dos direcciones. Para *esqueletos* basta la sintaxis: la cabecera declara explícitamente lo que hace falta. libclang exigiría include paths de Qt y del proyecto solo para leer firmas. |
-| D2 | Nombre del binario `mirrortest`; namespace C++ `mt`; prefijo de anotaciones `// @mt:`; marcadores `// <mt:begin X>` / `// <mt:end X>`; TODOs `TODO(mt):`; códigos de diagnóstico `mt-*`. **[confirmado]** | Coherente con el repo; `@gen:` es demasiado genérico y podría colisionar. |
-| D3 | Generador en C++17. Salida: el **mismo** código para todos los `--std`, válido desde C++11, salvo lo listado en §13.3. | Menos variantes = menos superficie de error. `--std` solo cambia lo que de verdad depende del estándar. |
-| D4 | Política de stubs por defecto `throw std::logic_error`; `--no-exceptions` ⇒ `std::abort()`. | Fase *red* garantizada en GTest y QTest (ambos marcan el fallo; QTest aborta tras el primero, R26), y sin excepciones también. |
-| D5 | `auto` sobre un resultado de la API bajo test ⇒ **error** por defecto (`--auto-policy=todo` lo degrada a aviso + tipo placeholder). | AT §11: «fallar ruidosamente». Un error claro con `fichero:línea` es mejor que un tipo inventado. |
-| D6 | Placeholder por defecto en gen-tests: `FAIL()` / `QFAIL` (alternativa `--placeholder=skip`). **[confirmado]** | Más estricto y coherente con TDD; `skip` está disponible para no romper CI al generar en bloque sobre código legado. |
-| D7 | Modo de escritura por defecto `--overwrite=never`: si el fichero existe y difiere, se escribe `<fichero>.new` y se avisa; si es idéntico, no se toca. | No destructivo e idempotente (AT §4). |
-| D8 | Todo o nada: si hay cualquier diagnóstico de error, no se escribe ningún fichero. Escritura atómica (temporal + `rename`). | Nunca dejar un árbol a medio generar. |
-| D9 | Configuración: defaults < `--config fichero.json` < línea de comandos. Sin descubrimiento implícito de ficheros de configuración. Claves desconocidas = error. | Predecible; las erratas en la config fallan en vez de ignorarse. |
-| D10 | Guardas `#ifndef` por defecto (`"guard": "pragma-once"` opcional). | Portabilidad y convención habitual en embebido. |
-| D11 | Todo texto generado (comentarios, `TODO(mt)`, mensajes de stubs y diagnósticos) en inglés. Documentación de diseño en español; README, comentarios del código y documentación de usuario en inglés. | Coherente con tus otros repositorios; el código generado acaba en proyectos de terceros. |
+| D1 | **tree-sitter in both directions** (MVP). The frontend interface is prepared for an optional libclang frontend (`MT_WITH_LIBCLANG`, future). **[confirmed]** | A single parser dependency, pinned and needing no toolchain; it tolerates code that does not compile; the same type-extraction utilities in both directions. For *skeletons* the syntax is enough: the header explicitly declares what is needed. libclang would require Qt and project include paths just to read signatures. |
+| D2 | Binary name `mirrortest`; C++ namespace `mt`; annotation prefix `// @mt:`; markers `// <mt:begin X>` / `// <mt:end X>`; TODOs `TODO(mt):`; diagnostic codes `mt-*`. **[confirmed]** | Consistent with the repo; `@gen:` is too generic and could collide. |
+| D3 | Generator in C++17. Output: the **same** code for every `--std`, valid from C++11, except what is listed in §13.3. | Fewer variants = less surface for error. `--std` only changes what really depends on the standard. |
+| D4 | Default stub policy `throw std::logic_error`; `--no-exceptions` ⇒ `std::abort()`. | A *red* phase guaranteed in GTest and QTest (both report the failure; QTest aborts after the first, R26), and without exceptions too. |
+| D5 | `auto` over a result of the API under test ⇒ **error** by default (`--auto-policy=todo` downgrades it to a warning + placeholder type). | AT §11: "fail loudly". A clear error with `file:line` is better than an invented type. |
+| D6 | Default placeholder in gen-tests: `FAIL()` / `QFAIL` (alternative `--placeholder=skip`). **[confirmed]** | Stricter and consistent with TDD; `skip` is available so that CI is not broken when generating in bulk over legacy code. |
+| D7 | Default write mode `--overwrite=never`: if the file exists and differs, `<file>.new` is written and a warning is issued; if it is identical, it is not touched. | Non-destructive and idempotent (AT §4). |
+| D8 | All or nothing: if there is any error diagnostic, no file is written. Atomic writing (temporary file + `rename`). | Never leave a half-generated tree. |
+| D9 | Configuration: defaults < `--config file.json` < command line. No implicit discovery of configuration files. Unknown keys = error. | Predictable; typos in the config fail instead of being ignored. |
+| D10 | `#ifndef` guards by default (`"guard": "pragma-once"` optional). | Portability and the usual convention in embedded. |
+| D11 | All generated text (comments, `TODO(mt)`, stub messages and diagnostics) in English. All documentation — design, plan, README, user documentation — and code comments in English as well. | Consistent with the owner's other repositories; the generated code ends up in third-party projects. |
 
 ---
 
-## 3. Arquitectura
+## 3. Architecture
 
 ```
                  ┌──────────────┐        ┌──────────────┐
-  tests (.cpp) ─▶│ preprocess   │        │ preprocess   │◀─ cabeceras (.h)
+  tests (.cpp) ─▶│ preprocess   │        │ preprocess   │◀─ headers (.h)
                  │ (blanking)   │        │ (blanking)   │
                  └──────┬───────┘        └──────┬───────┘
                         ▼                       ▼
@@ -80,14 +80,14 @@ README de GoogleTest por versión).
                  └──────┬───────┘        └──────┬───────┘
                         ▼                       ▼
             ┌───────────────────────┐   ┌───────────────┐
-            │ TestFrontend          │   │ CodeFrontend  │──┐ también lee
-            │  recognizer (gtest/qt)│   │ (headers→IR)  │  │ fixtures y
-            │  → UsageFacts         │   └───────┬───────┘  │ cabeceras
-            │  → Inference          │◀──────────┼──────────┘ existentes
+            │ TestFrontend          │   │ CodeFrontend  │──┐ also reads
+            │  recognizer (gtest/qt)│   │ (headers→IR)  │  │ fixtures and
+            │  → UsageFacts         │   └───────┬───────┘  │ existing
+            │  → Inference          │◀──────────┼──────────┘ headers
             └──────────┬────────────┘           │
                        ▼                        ▼
                 ┌──────────────────────────────────────┐
-                │   ir::Model   (clases, funciones)    │
+                │   ir::Model   (classes, functions)   │
                 └──────┬────────────────────┬──────────┘
                        ▼                    ▼
               ┌────────────────┐   ┌─────────────────┐
@@ -99,82 +99,83 @@ README de GoogleTest por versión).
                       │            └────────┬────────┘
                       ▼                     ▼
                 ┌──────────────────────────────────────┐
-                │ OutputPlan  (ruta, contenido, acción)│  ← puro, en memoria
+                │ OutputPlan  (path, content, action)  │  ← pure, in memory
                 └──────────────────┬───────────────────┘
                                    ▼
                 ┌──────────────────────────────────────┐
-                │ Writer: never/merge/force, .new,     │  ← única capa con E/S
-                │ dry-run (diff), check, atómico       │
+                │ Writer: never/merge/force, .new,     │  ← the only layer with I/O
+                │ dry-run (diff), check, atomic        │
                 └──────────────────────────────────────┘
 ```
 
-Principios:
+Principles:
 
-- **Núcleo puro, E/S en los bordes.** Todo lo anterior al `Writer` son
-  funciones de datos a datos. Golden tests, `--dry-run`, `--check` y merge
-  salen gratis de ahí.
-- **Diagnósticos acumulados**, no excepciones, para errores de la *entrada*
-  (§12). Las excepciones quedan para fallos internos o de E/S.
-- **La CLI también está en la librería**: `mt::cli::run(args, env)` devuelve el
-  código de salida; `apps/cli/main.cpp` solo la llama. Los goldens ejecutan la
-  CLI real en proceso. `env` lleva el directorio base para rutas relativas y los
-  `std::ostream` de salida y error: nada de `chdir` ni de estado global.
+- **Pure core, I/O at the edges.** Everything before the `Writer` is a function
+  from data to data. Golden tests, `--dry-run`, `--check` and merge come for
+  free from that.
+- **Accumulated diagnostics**, not exceptions, for errors in the *input*
+  (§12). Exceptions are left for internal or I/O failures.
+- **The CLI is in the library too**: `mt::cli::run(args, env)` returns the exit
+  code; `apps/cli/main.cpp` only calls it. The goldens run the real CLI in
+  process. `env` carries the base directory for relative paths and the output
+  and error `std::ostream`s: no `chdir` and no global state.
 
-### 3.1 Módulos y ficheros
+### 3.1 Modules and files
 
 ```
 include/mirrortest/
-  ir/          model.h  type.h  classify.h        IR, ortografía de tipos, clasificación (by-value, includes)
-  syntax/      tree.h  preprocess.h  extract.h    tree-sitter RAII, blanking, utilidades de nodos/tipos
+  ir/          model.h  type.h  classify.h        IR, type spelling, classification (by-value, includes)
+  syntax/      tree.h  preprocess.h  extract.h    tree-sitter RAII, blanking, node/type utilities
   core/        diagnostics.h  config.h  naming.h  output.h  writer.h  diff.h  merge.h  templates.h  source.h
   frontend/    code_frontend.h  test_frontend.h  facts.h  literals.h  annotations.h  inference.h
   backend/     impl_backend.h  test_planner.h  gtest_backend.h  qtest_backend.h
   cli/         run.h
-src/<mismos módulos>.cpp
+src/<same modules>.cpp
 templates/     impl/{header,source}.inja   gtest/test_file.inja   qtest/test_file.inja
 apps/cli/main.cpp
 tests/unit/  tests/golden/  tests/roundtrip/
 cmake/       MtDependencies.cmake  MtEmbedFiles.cmake
 ```
 
-Una sola librería estática `mt_core`; el ejecutable `mirrortest`; ejecutables de
-test `mt_unit_tests` y `mt_golden_tests`; los round-trip son scripts CTest.
+A single static library `mt_core`; the `mirrortest` executable; the test
+executables `mt_unit_tests` and `mt_golden_tests`; the round trips are CTest
+scripts.
 
 ---
 
 ## 4. IR
 
-Fuente: [`include/mirrortest/ir/model.h`](../include/mirrortest/ir/model.h) (ya
-implementado; es el contrato entre módulos). Puntos clave:
+Source: [`include/mirrortest/ir/model.h`](../include/mirrortest/ir/model.h)
+(already implemented; it is the contract between modules). Key points:
 
-- `Type::spelling` es **autoritativo**: es lo que se emite. Los campos
-  descompuestos (`base`, `is_const`, `ref`, `pointer_depth`) sirven para
-  decisiones (paso por valor o `const&`, valor por defecto) y solo describen las
-  formas comunes; lo exótico conserva su `spelling` y se trata de forma
-  conservadora.
-- `normalize_spelling()` solo toca espacios, nunca reordena (`T const&` se
-  respeta). `make_type()` construye la forma canónica. Ambos implementados y
-  con tests (`src/ir/type.cpp`).
-- `Origin` ordena la confianza: `Defaulted < Inferred < Declared < Annotated`.
-  Ante conflicto gana el mayor y se avisa.
-- `Method::notes` → comentarios `// TODO(mt): …` encima de la declaración.
-- `TestPlan`/`Stmt` es neutral: el código de *arrange/act* es C++ válido en
-  ambos frameworks y viaja como texto; lo que depende del framework
-  (placeholder, aserciones) es un `Stmt::Kind` propio que pinta cada backend.
+- `Type::spelling` is **authoritative**: it is what gets emitted. The
+  decomposed fields (`base`, `is_const`, `ref`, `pointer_depth`) serve decisions
+  (pass by value or `const&`, default value) and only describe the common
+  shapes; anything exotic keeps its `spelling` and is treated conservatively.
+- `normalize_spelling()` only touches whitespace and never reorders (`T const&`
+  is respected). `make_type()` builds the canonical form. Both are implemented
+  and tested (`src/ir/type.cpp`).
+- `Origin` orders trust: `Defaulted < Inferred < Declared < Annotated`. On a
+  conflict the higher one wins and a warning is issued.
+- `Method::notes` → `// TODO(mt): …` comments above the declaration.
+- `TestPlan`/`Stmt` is neutral: the *arrange/act* code is valid C++ in both
+  frameworks and travels as text; what depends on the framework (placeholder,
+  assertions) is its own `Stmt::Kind` that each backend renders.
 
 ---
 
-## 5. Capa sintáctica
+## 5. Syntax layer
 
 ### 5.1 `syntax::Tree` / `syntax::Node`
 
-Implementado (`include/mirrortest/syntax/tree.h`). `Tree` posee árbol y copia del
-fuente (tras `unique_ptr`, así mover el `Tree` no invalida los `string_view` de
-los `Node`). `parse_cpp()` nunca falla por entrada mala (da nodos `ERROR`); solo
-lanza si el runtime rechaza la gramática (ABI). `tests/unit/test_syntax_tree.cpp`
-fija las formas de nodo de las que dependen los frontends (resultado del spike).
+Implemented (`include/mirrortest/syntax/tree.h`). `Tree` owns the tree and a
+copy of the source (behind a `unique_ptr`, so moving the `Tree` does not
+invalidate the `string_view`s of the `Node`s). `parse_cpp()` never fails on bad
+input (it yields `ERROR` nodes); it only throws if the runtime rejects the
+grammar (ABI). `tests/unit/test_syntax_tree.cpp` pins the node shapes the
+frontends depend on (the result of the spike).
 
-### 5.2 Preprocesado: *blanking* que preserva offsets
+### 5.2 Preprocessing: *blanking* that preserves offsets
 
 `syntax/preprocess.h`:
 
@@ -189,582 +190,604 @@ struct Preprocessed { std::string text; std::vector<QtMarker> markers;
 Preprocessed preprocess(std::string_view source, const MacroTable& table = {});
 ```
 
-Implementado en `include/mirrortest/syntax/preprocess.h`.
+Implemented in `include/mirrortest/syntax/preprocess.h`.
 
-Reglas (todas con tests unitarios):
+Rules (all with unit tests):
 
-1. **Longitud idéntica** a la entrada; los `\n` (y `\r`) dentro de un tramo
-   borrado se conservan → líneas y columnas de los diagnósticos siguen siendo
-   las del fichero original. Invariante comprobado en cada test:
-   `out.text.size() == in.size()` y mismas posiciones de `\n`.
-2. BOM UTF-8 inicial → 3 espacios.
-3. Escáner léxico mínimo que **no toca**: comentarios `//` (con continuación
-   `\`) y `/* */`; literales de cadena y carácter con escapes; *raw strings*
-   `R"delim(…)delim"` con prefijos `u8R`, `uR`, `UR`, `LR`; líneas de
-   preprocesador (`#` como primer carácter no blanco, con continuaciones).
-4. Solo se reconocen identificadores completos (límites de token).
-5. Tabla de macros por defecto:
+1. **Same length** as the input; the `\n` (and `\r`) inside an erased span are
+   kept → the lines and columns of the diagnostics remain those of the original
+   file. The invariant is checked in every test: `out.text.size() == in.size()`
+   and the same `\n` positions.
+2. A leading UTF-8 BOM → 3 spaces.
+3. A minimal lexical scanner that **does not touch**: `//` comments (with `\`
+   continuation) and `/* */`; string and character literals with escapes; *raw
+   strings* `R"delim(…)delim"` with the prefixes `u8R`, `uR`, `UR`, `LR`;
+   preprocessor lines (`#` as the first non-blank character, with
+   continuations).
+4. Only whole identifiers are recognised (token boundaries).
+5. Default macro table:
 
-   | Macro | Tratamiento |
+   | Macro | Treatment |
    |---|---|
-   | `Q_OBJECT` | espacios; marcador `QObject` |
-   | `Q_GADGET` | espacios; marcador `Gadget` (un gadget **no** es un `QObject`: sin señales ni slots) |
-   | `Q_NAMESPACE`, `Q_REQUIRED_RESULT`, `Q_DECL_DEPRECATED` | espacios |
-   | `Q_INVOKABLE` | espacios; marcador `Invokable` |
-   | `slots`, `Q_SLOTS` | solo si va seguido de un único `:` (espacios/tabuladores entre medias) **y** el token anterior es `public`/`protected`/`private` → espacios; marcador `SlotsSection` en el offset de ese especificador. En cualquier otro caso (`int slots = 0;`, `c ? slots : x`) no se toca. |
-   | `signals`, `Q_SIGNALS` | solo si va seguido de un único `:` y el token anterior es un especificador de acceso o un límite de miembro (`{` `}` `;` `:`). Tras un especificador (`public signals:`) → espacios, marcador en el especificador. Tras un límite → `public` + relleno (la sección debe seguir viendo un especificador de acceso), marcador en el offset de `signals`. |
-   | `Q_DECL_OVERRIDE`, `Q_DECL_FINAL`, `Q_DECL_NOEXCEPT`, `Q_DECL_CONSTEXPR`, `Q_NULLPTR` | `override`, `final`, `noexcept`, `constexpr`, `nullptr` + relleno |
-   | `Q_PROPERTY`, `Q_ENUM`, `Q_ENUMS`, `Q_FLAG`, `Q_FLAGS`, `Q_CLASSINFO`, `Q_INTERFACES`, `Q_DECLARE_METATYPE`, `Q_DECLARE_PRIVATE`, `Q_DECLARE_PUBLIC`, `Q_PRIVATE_SLOT`, `Q_DECL_DEPRECATED_X`, `Q_DISABLE_COPY`, `Q_DISABLE_COPY_MOVE` | tipo función: identificador + `( … )` balanceado (respetando cadenas, comentarios y *raw strings* dentro) → espacios. Solo se admiten **espacios o tabuladores** antes del `(`, no saltos de línea: tras `MY_ATTR⏎(void)f();` el `(` es una sentencia, no los argumentos. `Q_DISABLE_COPY*` deja marcador `DisableCopy`. Si no sigue `(`, o el paréntesis no se cierra, solo se borra el identificador. |
-   | `config.ignore_macros` | objeto o función según siga `(` (misma regla) |
-   | Macro de export: identificador `[A-Z][A-Z0-9_]*` entre `class`/`struct` y otro identificador que no sea `final` (`class FOO_EXPORT Widget :`) | espacios. `class FOO final` y `class FOO {` conservan `FOO`: es el nombre. |
+   | `Q_OBJECT` | spaces; `QObject` marker |
+   | `Q_GADGET` | spaces; `Gadget` marker (a gadget is **not** a `QObject`: no signals or slots) |
+   | `Q_NAMESPACE`, `Q_REQUIRED_RESULT`, `Q_DECL_DEPRECATED` | spaces |
+   | `Q_INVOKABLE` | spaces; `Invokable` marker |
+   | `slots`, `Q_SLOTS` | only if followed by a single `:` (spaces/tabs in between) **and** the previous token is `public`/`protected`/`private` → spaces; `SlotsSection` marker at the offset of that specifier. In any other case (`int slots = 0;`, `c ? slots : x`) it is not touched. |
+   | `signals`, `Q_SIGNALS` | only if followed by a single `:` and the previous token is an access specifier or a member boundary (`{` `}` `;` `:`). After a specifier (`public signals:`) → spaces, marker on the specifier. After a boundary → `public` + padding (the section must still see an access specifier), marker at the offset of `signals`. |
+   | `Q_DECL_OVERRIDE`, `Q_DECL_FINAL`, `Q_DECL_NOEXCEPT`, `Q_DECL_CONSTEXPR`, `Q_NULLPTR` | `override`, `final`, `noexcept`, `constexpr`, `nullptr` + padding |
+   | `Q_PROPERTY`, `Q_ENUM`, `Q_ENUMS`, `Q_FLAG`, `Q_FLAGS`, `Q_CLASSINFO`, `Q_INTERFACES`, `Q_DECLARE_METATYPE`, `Q_DECLARE_PRIVATE`, `Q_DECLARE_PUBLIC`, `Q_PRIVATE_SLOT`, `Q_DECL_DEPRECATED_X`, `Q_DISABLE_COPY`, `Q_DISABLE_COPY_MOVE` | function-like: identifier + balanced `( … )` (respecting strings, comments and raw strings inside) → spaces. Only **spaces or tabs** are allowed before the `(`, not line breaks: after `MY_ATTR⏎(void)f();` the `(` is a statement, not the arguments. `Q_DISABLE_COPY*` leaves a `DisableCopy` marker. If no `(` follows, or the parenthesis does not close, only the identifier is erased. |
+   | `config.ignore_macros` | object-like or function-like depending on whether `(` follows (same rule) |
+   | Export macro: an identifier `[A-Z][A-Z0-9_]*` between `class`/`struct` and another identifier that is not `final` (`class FOO_EXPORT Widget :`) | spaces. `class FOO final` and `class FOO {` keep `FOO`: it is the name. |
 
-6. Los marcadores se asocian después por rango: `QObject`/`Gadget` → el
-   `class_specifier` que lo contiene; `SlotsSection`/`SignalsSection` → el
-   `access_specifier` en ese offset; `Invokable` → la siguiente declaración de
-   miembro; `DisableCopy` → el `class_specifier` que lo contiene.
-7. Un macro blanqueado es invisible para el escáner: no cambia cuál fue «el
-   token anterior» (así `Q_OBJECT` entre `{` y `signals:` no impide reconocerlo).
-8. Comprobado con ASan/UBSan sobre 21 000 entradas truncadas y corrompidas
-   (invariantes de longitud y saltos de línea; sin accesos fuera de rango). El
-   test unitario `PreprocessRobustness` repite una parte con semilla fija.
+6. The markers are associated afterwards by range: `QObject`/`Gadget` → the
+   `class_specifier` that contains it; `SlotsSection`/`SignalsSection` → the
+   `access_specifier` at that offset; `Invokable` → the next member
+   declaration; `DisableCopy` → the `class_specifier` that contains it.
+7. A blanked macro is invisible to the scanner: it does not change which token
+   was "the previous token" (so `Q_OBJECT` between `{` and `signals:` does not
+   prevent it from being recognised).
+8. Checked with ASan/UBSan on 21,000 truncated and corrupted inputs (length and
+   line-break invariants; no out-of-range accesses). The unit test
+   `PreprocessRobustness` repeats part of it with a fixed seed.
 
-### 5.3 Extracción de tipos desde nodos (`syntax/extract.h`)
+### 5.3 Extracting types from nodes (`syntax/extract.h`)
 
-Implementado. Un tipo se lee como **texto**, no reconstruyéndolo de la forma del
-árbol de declaradores (que es del revés: en `const char* const names[3]` el
-nombre está en medio de su propio tipo):
+Implemented. A type is read as **text**, not rebuilt from the shape of the
+declarator tree (which is inside out: in `const char* const names[3]` the name
+sits in the middle of its own type):
 
-    tipo   = calificadores y especificador de tipo, en orden de fuente
-    sufijo = texto del declarador sin el nombre ni la parte de función
+    type   = qualifiers and type specifier, in source order
+    suffix = the declarator's text without the name or the function part
 
-así `const char* const names[3]` es `const char` + `* const[3]`. Vale para
-cualquier forma —incluidas las que nadie previó— y conserva exactamente lo que
-escribió el usuario. Los campos estructurados de `ir::Type` (`is_const`, `ref`,
-`pointer_depth`) solo se rellenan si el sufijo es del tipo simple (`*`, `&`,
-`const`); para punteros a función, arrays y punteros a miembro el `spelling` es
-exacto y no se afirma nada más.
+so `const char* const names[3]` is `const char` + `* const[3]`. It works for any
+shape —including those nobody foresaw— and keeps exactly what the user wrote.
+The structured fields of `ir::Type` (`is_const`, `ref`, `pointer_depth`) are
+only filled in if the suffix is of the simple kind (`*`, `&`, `const`); for
+function pointers, arrays and pointers to members the `spelling` is exact and
+nothing finer is claimed.
 
-Formas de nodo de tree-sitter-cpp 0.23.4 de las que depende (verificadas con el
-árbol real, fijadas en `test_extract.cpp`):
+Node shapes of tree-sitter-cpp 0.23.4 it depends on (verified against the real
+tree, pinned in `test_extract.cpp`):
 
-- `virtual` es un token **anónimo**: se busca entre *todos* los hijos
-  (`has_token`). `...` en `f(int, ...)` también lo es y se perdía en silencio
-  (`f(int, ...)` se leía como `f(int)`); ahora es un parámetro de tipo `...`.
-- `int (*cb)(int)` es un `function_declarator` cuyo declarador es un
-  `parenthesized_declarator`: **parece un método y es una variable**
-  (`is_function_pointer`, sin `function`).
-- Una clase/enum anidado es un `field_declaration` con `struct_specifier` /
-  `enum_specifier` como tipo y **sin declarador**.
-- `reference_declarator` no etiqueta su declarador interno (`inner_declarator`
-  usa el último hijo nombrado); un parámetro sin nombre lleva
+- `virtual` is an **anonymous** token: it is searched among *all* the children
+  (`has_token`). `...` in `f(int, ...)` is one too and used to get lost
+  silently (`f(int, ...)` was read as `f(int)`); it is now a parameter of type
+  `...`.
+- `int (*cb)(int)` is a `function_declarator` whose declarator is a
+  `parenthesized_declarator`: it **looks like a method and is a variable**
+  (`is_function_pointer`, no `function`).
+- A nested class/enum is a `field_declaration` with a `struct_specifier` /
+  `enum_specifier` as its type and **no declarator**.
+- `reference_declarator` does not label its inner declarator
+  (`inner_declarator` uses the last named child); an unnamed parameter carries
   `abstract_*_declarator`.
-- `int const x` pone `type_qualifier` *después* del tipo; el orden se conserva.
-- `constexpr` y `mutable` son `type_qualifier` pero no forman parte del tipo;
-  `static`/`inline`/`extern` son `storage_class_specifier`.
-- Un `noexcept(expr)` no constante no se afirma: solo `noexcept` y
-  `noexcept(true)` cuentan.
-- Un `init_declarator` (`int x = 3`) lleva el valor aparte: no es parte del tipo.
-- Packs: `Args&&... args` → `variadic_declarator` anidado; el sufijo conserva
-  los `...` (`Args&&...`).
+- `int const x` puts the `type_qualifier` *after* the type; the order is kept.
+- `constexpr` and `mutable` are `type_qualifier`s but not part of the type;
+  `static`/`inline`/`extern` are `storage_class_specifier`s.
+- A non-constant `noexcept(expr)` is not asserted: only `noexcept` and
+  `noexcept(true)` count.
+- An `init_declarator` (`int x = 3`) carries the value separately: it is not
+  part of the type.
+- Packs: `Args&&... args` → a nested `variadic_declarator`; the suffix keeps the
+  `...` (`Args&&...`).
 
-## 6. Frontend de código (cabeceras → `ir::Model`)
+## 6. Code frontend (headers → `ir::Model`)
 
-Implementado en `frontend/code_frontend.h` (`read_declarations`, `read_header`).
-Se usa en tres sitios: entrada de gen-tests; cabeceras existentes en gen-impl
-(API ya conocida + merge); fixtures y clases de test dentro de los tests. Por eso
-lee **declaraciones**, no cabeceras: sirve cualquier unidad de traducción.
+Implemented in `frontend/code_frontend.h` (`read_declarations`, `read_header`).
+It is used in three places: the input of gen-tests; existing headers in gen-impl
+(already-known API + merge); fixtures and test classes inside the tests. That is
+why it reads **declarations**, not headers: any translation unit will do.
 
-### 6.1 Recorrido
+### 6.1 Traversal
 
-- `translation_unit` → `namespace_definition` (incluido `nested_namespace_specifier`
-  `a::b`), `linkage_specification` (`extern "C"`, con o sin llaves),
-  `preproc_if`/`preproc_ifdef`/`preproc_elif`/`preproc_else` (todas las ramas, §6.5),
-  `preproc_include` (ruta sin delimitadores + `is_system`).
-  Namespaces anónimos: se omiten (enlace interno, no testeables desde fuera).
-- `class_specifier`/`struct_specifier` **con cuerpo** → `Class`. Sin cuerpo
-  (declaración adelantada, `class Foo* f();`) → ignorar. `union` → ignorar.
-  `struct S { … } s;` define `S` además de declarar `s`. Dentro de
-  `template_declaration` → `template_params` (texto entre `<>`, p. ej.
+- `translation_unit` → `namespace_definition` (including the
+  `nested_namespace_specifier` `a::b`), `linkage_specification` (`extern "C"`,
+  with or without braces), `preproc_if`/`preproc_ifdef`/`preproc_elif`/
+  `preproc_else` (all branches, §6.5), `preproc_include` (path without
+  delimiters + `is_system`). Anonymous namespaces: skipped (internal linkage,
+  not testable from outside).
+- `class_specifier`/`struct_specifier` **with a body** → `Class`. Without a body
+  (forward declaration, `class Foo* f();`) → ignored. `union` → ignored.
+  `struct S { … } s;` defines `S` as well as declaring `s`. Inside a
+  `template_declaration` → `template_params` (the text between `<>`, e.g.
   `typename T, int N = 4`).
-- `enum_specifier` **con nombre y cuerpo** → `Enum` (`is_scoped` por el token
-  anónimo `class`/`struct`; `underlying` por el campo `base`; enumeradores por
-  su campo `name`). Anónimos y adelantados, ignorados.
-- `declaration`/`function_definition` en ámbito de namespace con
-  `function_declarator` (no puntero a función) → `Function` (incluye `static`,
-  `inline`, operadores y retorno final). **No** son funciones: variables,
-  punteros a función, `int Foo::bar() {}` (define un miembro), plantillas de
-  función (aviso `mt-unsupported` y se omiten).
-- Una clase leída dos veces (ramas `#if`, o dos llamadas) es **una** clase: se
-  funden los miembros y no se repite una firma ya presente (nombre + tipos de
-  parámetros + `const` + ref-qualifier); tampoco bases, campos ni tipos anidados.
+- `enum_specifier` **with a name and a body** → `Enum` (`is_scoped` through the
+  anonymous token `class`/`struct`; `underlying` through the `base` field;
+  enumerators through their `name` field). Anonymous and forward-declared ones
+  are ignored.
+- `declaration`/`function_definition` at namespace scope with a
+  `function_declarator` (not a function pointer) → `Function` (includes
+  `static`, `inline`, operators and trailing return). These are **not**
+  functions: variables, function pointers, `int Foo::bar() {}` (defines a
+  member), function templates (`mt-unsupported` warning and they are skipped).
+- A class read twice (`#if` branches, or two declarations) is **one** class: the
+  members are merged and a signature already present (name + parameter types +
+  `const` + ref-qualifier) is not repeated; neither are bases, fields or
+  nested types.
 
-### 6.2 Miembros (formas verificadas con el árbol real)
+### 6.2 Members (shapes verified against the real tree)
 
-| Forma tree-sitter | Resultado |
+| tree-sitter shape | Result |
 |---|---|
-| `field_declaration` / `declaration` / `function_definition` con `function_declarator` que no es puntero a función | método (uno por declarador) |
-| `declaration` cuyo declarador es el nombre de la clase y sin tipo | `Constructor`; `explicit_function_specifier` → `is_explicit` |
+| `field_declaration` / `declaration` / `function_definition` with a `function_declarator` that is not a function pointer | method (one per declarator) |
+| `declaration` whose declarator is the class name and with no type | `Constructor`; `explicit_function_specifier` → `is_explicit` |
 | `destructor_name` (`~A`) | `Destructor` |
-| `operator_cast` (`explicit operator bool() const`, `operator const char*() const`) | `Conversion`, nombre `operator <tipo destino>`, sin `ret` |
-| nombre que empieza por `operator` seguido de algo que no continúa un identificador | `Operator`; el nombre se normaliza (`operator ==` → `operator==`, `operator  new [ ]` → `operator new[]`); `operatorX` es un método normal |
+| `operator_cast` (`explicit operator bool() const`, `operator const char*() const`) | `Conversion`, name `operator <target type>`, no `ret` |
+| a name that starts with `operator` followed by something that does not continue an identifier | `Operator`; the name is normalised (`operator ==` → `operator==`, `operator  new [ ]` → `operator new[]`); `operatorX` is an ordinary method |
 | `delete_method_clause` / `default_method_clause` | `is_deleted` / `is_defaulted` |
 | `default_value` = `0` | `is_pure` |
-| `virtual` (token anónimo), `static`, `virtual_specifier` `override`/`final`, `const`, `noexcept`, ref-qualifier | flags |
-| `template_declaration` dentro de la clase | método con `is_template` |
-| `field_declaration` con declarador no-función (incluye `int (*cb)(int)`, arrays, bitfields, `static constexpr`) | `Field` (uno por declarador: `int a, *b;`) |
-| `field_declaration` sin declarador cuyo tipo es clase/enum, `type_definition`, `alias_declaration` | nombre a `nested_types` (el cuerpo de una clase anidada no se lee: fase 7) |
-| `friend_declaration`, `using_declaration`, `static_assert_declaration` | no son miembros |
+| `virtual` (anonymous token), `static`, `virtual_specifier` `override`/`final`, `const`, `noexcept`, ref-qualifier | flags |
+| `template_declaration` inside the class | method with `is_template` |
+| `field_declaration` with a non-function declarator (includes `int (*cb)(int)`, arrays, bitfields, `static constexpr`) | `Field` (one per declarator: `int a, *b;`) |
+| `field_declaration` with no declarator whose type is a class/enum, `type_definition`, `alias_declaration` | name goes to `nested_types` (the body of a nested class is not read: phase 7) |
+| `friend_declaration`, `using_declaration`, `static_assert_declaration` | not members |
 
-Un método ya presente (misma firma) no se añade dos veces. El tipo de retorno es el
-declarado o el de `-> T`; `auto` sin retorno final queda como `auto`.
+A method already present (same signature) is not added twice. The return type is
+the declared one or that of `-> T`; `auto` without a trailing return stays as
+`auto`.
 
-Acceso: `private` por defecto en `class`, `public` en `struct`; cada
-`access_specifier` lo cambia. **Qt** (con los marcadores del preprocesado, §5.2):
-`SlotsSection`/`SignalsSection` en el offset de un `access_specifier` →
-`QtRole::Slot`/`Signal` hasta el siguiente especificador; un `Invokable` entre el
-final del miembro anterior y el inicio de este → `QtRole::Invokable`; `QObject` →
-`is_qobject`, `Gadget` → `is_gadget`, `DisableCopy` → `disable_copy`, siempre que el
-marcador esté en la clase y no dentro de una clase anidada.
+Access: `private` by default in a `class`, `public` in a `struct`; every
+`access_specifier` changes it. **Qt** (with the preprocessing markers, §5.2):
+`SlotsSection`/`SignalsSection` at the offset of an `access_specifier` →
+`QtRole::Slot`/`Signal` up to the next specifier; an `Invokable` between the end
+of the previous member and the start of this one → `QtRole::Invokable`;
+`QObject` → `is_qobject`, `Gadget` → `is_gadget`, `DisableCopy` →
+`disable_copy`, always provided the marker is in the class and not inside a
+nested class.
 
-### 6.3 Clases «construibles»
+### 6.3 "Constructible" classes
 
-Una clase es *default-constructible* si: no declara constructores, o declara uno
-público, no borrado y sin parámetros obligatorios; y no es abstracta (ningún
-`is_pure`). `Q_DISABLE_COPY` no afecta a esto (solo a copiar). La usa el
-planner (§9.2).
+A class is *default-constructible* if: it declares no constructors, or declares
+one that is public, not deleted and has no mandatory parameters; and it is not
+abstract (no `is_pure`). `Q_DISABLE_COPY` does not affect this (only copying).
+The planner uses it (§9.2).
 
-### 6.4 No soportado (diagnóstico explícito, nunca silencio)
+### 6.4 Not supported (an explicit diagnostic, never silence)
 
-Plantillas de función (`mt-unsupported`, aviso), especializaciones, miembros
-generados por macros no reconocidas, herencia de constructores
-(`using Base::Base;`), `concept`/`requires`. Las plantillas de clase se leen y
-llevan `template_params`; el planner decide qué hacer con ellas.
+Function templates (`mt-unsupported`, warning), specialisations, members
+generated by unrecognised macros, constructor inheritance (`using Base::Base;`),
+`concept`/`requires`. Class templates are read and carry `template_params`; the
+planner decides what to do with them.
 
-### 6.5 Compilación condicional
+### 6.5 Conditional compilation
 
-Se recorren todas las ramas. Declaraciones con la misma firma se fusionan (gana
-la primera en orden de fuente). Pendiente (tarea 4.1): si dos ramas declaran el
-mismo (nombre, aridad) con firmas distintas, se conservan ambas y se emite la
-nota `mt-conditional` con las dos líneas: es el usuario quien sabe qué
-configuración aplica.
+All branches are visited. Declarations with the same signature are merged (the
+first in source order wins). Pending (task 4.1): if two branches declare the
+same (name, arity) with different signatures, both are kept and the
+`mt-conditional` note is emitted with the two lines: the user is the one who
+knows which configuration applies.
 
-### 6.6 Errores de parseo
+### 6.6 Parse errors
 
-El parser siempre da un árbol. Cada nodo `ERROR` (el más externo; hasta 10, luego
-una nota «and N more parse errors») es un aviso `mt-parse` con su posición, y se
-lee lo que lo rodea: una cabecera que casi parsea es mucho más útil que ninguna.
+The parser always gives a tree. Every `ERROR` node (the outermost; up to 10,
+then a note "and N more parse errors") is an `mt-parse` warning with its
+position, and what surrounds it is read: a header that almost parses is far more
+useful than none.
 
 ---
 
-## 7. Frontend de tests (tests → `ir::Model`)
+## 7. Tests frontend (tests → `ir::Model`)
 
-### 7.1 Tubería
+### 7.1 Pipeline
 
 1. `preprocess` (§5.2) → `parse_cpp`.
-2. Detección de framework (`--framework auto`): GTest si incluye
-   `gtest/gtest.h`/`gmock/gmock.h` o usa `TEST`/`TEST_F`/`TEST_P`; QTest si
-   incluye `QtTest`/`QTest`/`QtTest/QtTest` o usa `QTEST_*MAIN` o tiene
-   secciones `slots`. Ambos o ninguno → error `mt-framework` (pedir
+2. Framework detection (`--framework auto`): GTest if it includes
+   `gtest/gtest.h`/`gmock/gmock.h` or uses `TEST`/`TEST_F`/`TEST_P`; QTest if it
+   includes `QtTest`/`QTest`/`QtTest/QtTest` or uses `QTEST_*MAIN` or has
+   `slots` sections. Both or neither → `mt-framework` error (ask for
    `--framework`).
-3. Recolección de **cuerpos a analizar**: todo cuerpo de función del fichero
-   (`TEST*`, métodos de fixture incluidos `SetUp`/`TearDown`/constructor,
-   *slots* de QTest dentro y fuera de la clase, funciones auxiliares), cada uno
-   con su ámbito (§7.4).
-4. Recorrido de sentencias con tabla de símbolos → **hechos** (`facts.h`).
-5. Clasificación de nombres (§7.7) → qué clases/funciones hay que generar.
-6. **Inferencia** (`inference.h`): hechos → `ir::Model` con `Origin`, `reason`,
-   `notes` y diagnósticos.
+3. Collection of the **bodies to analyse**: every function body in the file
+   (`TEST*`, fixture methods including `SetUp`/`TearDown`/the constructor,
+   QTest *slots* inside and outside the class, helper functions), each with its
+   scope (§7.4).
+4. Statement traversal with a symbol table → **facts** (`facts.h`).
+5. Name classification (§7.7) → which classes/functions have to be generated.
+6. **Inference** (`inference.h`): facts → `ir::Model` with `Origin`, `reason`,
+   `notes` and diagnostics.
 
-Separar hechos de inferencia permite testear cada mitad por separado:
-*fragmento de C++ → hechos esperados* y *hechos → modelo esperado*.
+Separating facts from inference allows each half to be tested on its own:
+*C++ fragment → expected facts* and *facts → expected model*.
 
-### 7.2 Hechos
+### 7.2 Facts
 
-Definidos en `frontend/facts.h`. Los hechos se referencian entre sí por
-**índice** en los vectores de `TestFileFacts` (`FactRef{kind, index}`), nunca por
-puntero, de modo que el conjunto se copia y se mueve sin cuidado. Lo que el
-frontend registra y lo que **no** decide:
+Defined in `frontend/facts.h`. Facts refer to each other by **index** into the
+vectors of `TestFileFacts` (`FactRef{kind, index}`), never by pointer, so the
+set can be copied and moved without care. What the frontend records, and what
+it does **not** decide:
 
-| Hecho | Contenido | Observaciones |
+| Fact | Content | Notes |
 |---|---|---|
-| `MethodCall` | receptor (`TypeName`), método, `args`, `on_const`, `via_arrow`, `use`, `where`, `ns` | `x.m()`, `x->m()`, `(*p).m()` |
-| `ScopedCall` | `scope` tal como se escribió, nombre, `args`, `use` | `X::m()`: si `X` es clase o namespace lo decide §7.7 (R13) |
-| `FreeCall` | nombre, `args`, `use`, `owner` | función, macro, libc o *cast* funcional `Foo(3)`: lo decide §7.8. `this->m()` también cae aquí. `owner` es la clase del fichero cuyo método contiene la llamada (los cuerpos de `TEST_F` cuentan como métodos de la fixture) |
-| `FieldAccess` | receptor, campo, `on_const`, `via_arrow`, `use` | `obj.x` sin llamar; `obj.x = 5;` da `Assigned` con el tipo del lado derecho |
-| `Construction` | tipo, `Form`, `args` | `Default`, `Direct`, `Brace`, `Copy` (`Foo f = 5;`), `Functional` (`Foo g = Foo(3);`), `New`, `MakeUnique` (también `make_shared`) |
-| `TypeUse` | tipo, `from_throw_assertion` | tipos de declaraciones, parámetros, retornos, `new`, *casts*, `catch` y `EXPECT_THROW(…, E)` |
-| `Unresolved` | `ChainedCall`, texto, `where`, `root`, `call`, `resolved` | ver §7.3: `call` es la llamada hecha sobre el resultado desconocido (todo menos el receptor) y `root` la llamada de la que cuelga |
-| `TestCaseInfo` | `TEST`/`TEST_F`/`TEST_P`, suite, nombre, `ns` | |
+| `MethodCall` | receiver (`TypeName`), method, `args`, `on_const`, `via_arrow`, `use`, `where`, `ns` | `x.m()`, `x->m()`, `(*p).m()` |
+| `ScopedCall` | `scope` as written, name, `args`, `use` | `X::m()`: whether `X` is a class or a namespace is decided by §7.7 (R13) |
+| `FreeCall` | name, `args`, `use`, `owner` | function, macro, libc or functional *cast* `Foo(3)`: decided by §7.8. `this->m()` falls here too. `owner` is the class of the file whose method contains the call (`TEST_F` bodies count as methods of the fixture) |
+| `FieldAccess` | receiver, field, `on_const`, `via_arrow`, `use` | `obj.x` not called; `obj.x = 5;` gives `Assigned` with the type of the right-hand side |
+| `Construction` | type, `Form`, `args` | `Default`, `Direct`, `Brace`, `Copy` (`Foo f = 5;`), `Functional` (`Foo g = Foo(3);`), `New`, `MakeUnique` (also `make_shared`) |
+| `TypeUse` | type, `from_throw_assertion` | types of declarations, parameters, return values, `new`, *casts*, `catch` and `EXPECT_THROW(…, E)` |
+| `Unresolved` | `ChainedCall`, text, `where`, `root`, `call`, `resolved` | see §7.3: `call` is the call made on the unknown result (everything but the receiver) and `root` the call it hangs from |
+| `TestCaseInfo` | `TEST`/`TEST_F`/`TEST_P`, suite, name, `ns` | |
 
-`ValueInfo` (argumento de una llamada o construcción): `text`, `where`,
-`type` (el de un literal, de una variable declarada, de un *cast*; ausente si
-nada lo dice), `warnings` (de clasificar el literal; se emiten solo si el tipo
-se usa), `is_string_literal` (su tipo lo decide el contexto),
-`is_null_pointer`, `is_lvalue`, `is_moved`, `is_address_of` (y entonces `type`
-es el del puntero: `&n` es `int*`), `var_name`, `from` (la llamada o campo de
-la API de donde viene) y `auto_origin` (§7.3).
+`ValueInfo` (an argument of a call or construction): `text`, `where`, `type`
+(that of a literal, of a declared variable, of a *cast*; absent if nothing says),
+`warnings` (from classifying the literal; emitted only if the type is used),
+`is_string_literal` (its type is decided by the context), `is_null_pointer`,
+`is_lvalue`, `is_moved`, `is_address_of` (and then `type` is the pointer's:
+`&n` is `int*`), `var_name`, `from` (the call or field of the API it comes
+from) and `auto_origin` (§7.3).
 
-`TestFileFacts` guarda además lo que el propio fichero declara: `local`
-(clases, enums y funciones; las fixtures nunca se generan), `includes`,
-`using_namespaces`, `using_declarations` (`using acme::Foo;`) y
-`local_type_names` (alias y `typedef`).
+`TestFileFacts` also keeps what the file itself declares: `local` (classes,
+enums and functions; fixtures are never generated), `includes`,
+`using_namespaces`, `using_declarations` (`using acme::Foo;`) and
+`local_type_names` (aliases and `typedef`s).
 
-`ResultUse{kind, hint}` con `UseKind { Unknown, Discarded, Compared,
-Condition, Assigned, AutoBound, Argument, Receiver }`. **El primer contexto que
-reclama un resultado se lo queda**: `Compared` dentro de `EXPECT_EQ` no pasa a
-`Argument`. `hint` es el tipo que el contexto implica, tal como se escribió
-(`const std::string&`, `unsigned`): quitar `const`/`&` de nivel superior es
-asunto de la inferencia (§7.9), no del frontend.
+`ResultUse{kind, hint}` with `UseKind { Unknown, Discarded, Compared,
+Condition, Assigned, AutoBound, Argument, Receiver }`. **The first context to
+claim a result keeps it**: `Compared` inside `EXPECT_EQ` does not become
+`Argument`. `hint` is the type the context implies, as written
+(`const std::string&`, `unsigned`): removing the top-level `const`/`&` is a job
+for the inference (§7.9), not for the frontend.
 
-Diferencias con el esquema inicial de este apartado: `is_const` desaparece de
-`ValueInfo` (la constancia va en `ir::Type`); `is_static` no es un campo (es
-`ScopedCall`); las anotaciones se añaden en 2.6; `CtorFact` pasa a
-`Construction` con formas explícitas; `ResultUse.where` sobra (lo lleva la
-llamada); se añade `Receiver`.
+Differences from the initial sketch of this section: `is_const` disappears from
+`ValueInfo` (constness goes in `ir::Type`); `is_static` is not a field (it is a
+`ScopedCall`); annotations are added in 2.6; `CtorFact` becomes `Construction`
+with explicit forms; `ResultUse.where` is redundant (the call carries it);
+`Receiver` is added.
 
-### 7.3 Tabla de símbolos
+### 7.3 Symbol table
 
-Ámbitos anidados por `compound_statement`, `if`/`while`/`for`/`switch` (la
-variable declarada en la condición vive en su ámbito), `try`/`catch` y lambdas;
-se declara en orden. Fuentes: declaraciones locales (`T v;`, `T v(…)`,
-`T v{…}`, `T v = …`), parámetros de funciones, lambdas y `catch`,
-`QFETCH(T, v)` (texto: se parte en la **última coma de nivel superior**;
-*verificado*: el nodo varía según `T` sea primitivo o no; fase 5), miembros de
-fixture/clase de test (con los de sus clases base locales), `for (T x : …)`.
-Cada símbolo guarda el tipo declarado completo (para saber `const`,
-referencia, puntero, puntero inteligente).
+Scopes nested by `compound_statement`, `if`/`while`/`for`/`switch` (a variable
+declared in the condition lives in its scope), `try`/`catch` and lambdas;
+declaration happens in order. Sources: local declarations (`T v;`, `T v(…)`,
+`T v{…}`, `T v = …`), parameters of functions, lambdas and `catch`,
+`QFETCH(T, v)` (text: it is split at the **last top-level comma**; *verified*:
+the node varies depending on whether `T` is primitive; phase 5), members of the
+fixture/test class (including those of its local base classes), `for (T x : …)`.
+Each symbol keeps the complete declared type (to know about `const`, reference,
+pointer, smart pointer).
 
-Receptor de una llamada `x.m()` / `x->m()`:
-- `x` local/miembro de tipo `T`, `T&`, `const T&` → clase `T`, `on_const` si
-  `const`. `x->m()` sobre un valor, o `x.m()` sobre un puntero, no es una
-  llamada reconocible.
-- `x->m()` con `T*`, `const T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`,
+Receiver of a call `x.m()` / `x->m()`:
+- `x` local/member of type `T`, `T&`, `const T&` → class `T`, `on_const` if
+  `const`. `x->m()` on a value, or `x.m()` on a pointer, is not a recognisable
+  call.
+- `x->m()` with `T*`, `const T*`, `std::unique_ptr<T>`, `std::shared_ptr<T>`,
   `QScopedPointer<T>`, `QSharedPointer<T>`, `QPointer<T>` → `T`
-  (`shared_ptr<const T>` → `on_const`). `p.reset()` con punto es una llamada al
-  puntero, no a `T`.
-- `(*p).m()` igual que `p->m()`.
-- Receptor desconocido (identificador no declarado, `auto` sin tipo
-  deducible, parámetro `auto` de una lambda) → nota `mt-unknown-receiver`, se
-  ignora.
-- Llamada encadenada `a.b().c()` → el tipo de `a.b()` es desconocido: la
-  llamada a `b` queda `Receiver` y se registra **un** `Unresolved` (solo el
-  primer eslabón desconocido; `a.b().c().d()` no genera otro por `d`).
-  `mt-chained-call` y la política de tipo desconocido se aplican en §7.9.
-  `Unresolved.root` guarda la llamada de la que cuelga: en `Foo(3).size()` la raíz
-  es un `FreeCall` llamado `Foo`, y si §7.7 concluye que `Foo` es una clase
-  ya no hay nada sin resolver.
+  (`shared_ptr<const T>` → `on_const`). `p.reset()` with a dot is a call on the
+  pointer, not on `T`.
+- `(*p).m()` is the same as `p->m()`.
+- Unknown receiver (an undeclared identifier, an `auto` with no deducible type,
+  an `auto` parameter of a lambda) → `mt-unknown-receiver` note, ignored.
+- Chained call `a.b().c()` → the type of `a.b()` is unknown: the call to `b` is
+  left as `Receiver` and **one** `Unresolved` is recorded (only the first
+  unknown link; `a.b().c().d()` does not generate another for `d`).
+  `mt-chained-call` and the unknown-type policy are applied in §7.9.
+  `Unresolved.root` keeps the call it hangs from: in `Foo(3).size()` the root is
+  a `FreeCall` named `Foo`, and if §7.7 concludes that `Foo` is a class there is
+  nothing left unresolved.
 
-**`auto` y variables**: `auto x = Foo(1)` no sabe si `Foo` es tipo o función (la
-sintaxis no lo dice), así que `x` queda sin tipo y `x.run()` es una llamada
-encadenada con raíz `FreeCall Foo`. Si `auto x = call;`, el símbolo recuerda la
-llamada (`auto_origin`): **lo que luego se hace con `x` es evidencia sobre la
-llamada**. `auto n = foo.count(); EXPECT_EQ(n, 5u);` deja `count()` como
-`AutoBound` con `hint = unsigned int` (razón «through variable 'n'»); el primer
-`hint` gana y los contextos sin pista (argumento, descarte, receptor) no
-añaden nada. Con `auto x = 3u;` o `std::make_unique<Foo>()` el tipo sí se
-deduce (`auto` por valor descarta `const` y `&`; `auto&` conserva la constancia
-de lo que liga). *Motivo del cambio*: sin esto, el patrón más habitual
-(`auto r = calc.add(2, 3); EXPECT_EQ(r, 5);`) obligaba a tipar `add` a mano
-pese a que la línea siguiente lo dice.
+**`auto` and variables**: `auto x = Foo(1)` does not know whether `Foo` is a
+type or a function (the syntax does not say), so `x` is left without a type and
+`x.run()` is a chained call rooted in `FreeCall Foo`. If `auto x = call;`, the
+symbol remembers the call (`auto_origin`): **what is later done with `x` is
+evidence about the call**. `auto n = foo.count(); EXPECT_EQ(n, 5u);` leaves
+`count()` as `AutoBound` with `hint = unsigned int` (reason "through variable
+'n'"); the first `hint` wins and contexts without a hint (argument, discard,
+receiver) add nothing. With `auto x = 3u;` or `std::make_unique<Foo>()` the type
+is deduced (`auto` by value drops `const` and `&`; `auto&` keeps the constness
+of what it binds to). *Reason for the change*: without it, the most common
+pattern (`auto r = calc.add(2, 3); EXPECT_EQ(r, 5);`) forced `add` to be typed
+by hand even though the next line says it.
 
-**Miembros de clases del propio fichero**: un miembro por valor de tipo clase
-(`Foo foo_;`, `Baz c_{1, 2};`, `Qux d_ = Qux(2);`) es una `Construction` (un
-fixture que lo tiene exige que `Foo` sea construible por defecto), igual que
-los inicializadores del constructor (`F() : a_(3), b_{4} {}`, también fuera de
-la clase). Punteros, referencias y miembros `static` no construyen nada.
+**Members of the file's own classes**: a by-value member of class type
+(`Foo foo_;`, `Baz c_{1, 2};`, `Qux d_ = Qux(2);`) is a `Construction` (a fixture
+that has it requires `Foo` to be default-constructible), and so are the
+constructor's initialisers (`F() : a_(3), b_{4} {}`, also when defined outside
+the class). Pointers, references and `static` members construct nothing.
 
-### 7.4 Ámbitos por tipo de cuerpo
+### 7.4 Scopes by kind of body
 
-| Cuerpo | Símbolos visibles además de los locales |
+| Body | Symbols visible besides the locals |
 |---|---|
-| `TEST(S, N)` | globales del fichero |
-| `TEST_F(F, N)`, `TEST_P(F, N)` | miembros de la clase `F` definida en el fichero (si no está: `mt-unknown-fixture`, aviso, y el cuerpo se lee igualmente); `GetParam()` tipado por `TestWithParam<T>` o `WithParamInterface<T>` (sin tipo de parámetro, `GetParam()` es una llamada libre más) |
-| métodos de la fixture, dentro o fuera de la clase, constructores y destructores | miembros de la fixture y de sus bases locales; en un constructor, también sus parámetros y los inicializadores |
-| funciones auxiliares | sus parámetros |
-| slots/métodos de la clase QTest | miembros de la clase de test |
+| `TEST(S, N)` | the file's globals |
+| `TEST_F(F, N)`, `TEST_P(F, N)` | members of the class `F` defined in the file (if it is not there: `mt-unknown-fixture`, warning, and the body is read anyway); `GetParam()` typed by `TestWithParam<T>` or `WithParamInterface<T>` (without a parameter type, `GetParam()` is just another free call) |
+| fixture methods, inside or outside the class, constructors and destructors | members of the fixture and of its local bases; in a constructor, also its parameters and the initialisers |
+| helper functions | their parameters |
+| slots/methods of the QTest class | members of the test class |
 
-`TYPED_TEST`/`TYPED_TEST_P` no se soportan: aviso `mt-unsupported` y se salta el
-cuerpo. Las macros de aserción se reconocen en cualquier posición (también
-anidadas, `ASSERT_NO_THROW(EXPECT_EQ(a, b))`) y nunca son una `FreeCall`;
-`EXPECT_CALL`/`ON_CALL` descartan **toda** la cadena (`.Times(2).WillOnce(Return(x))`):
-`Return`, `_` o `Invoke` no son código bajo prueba.
+`TYPED_TEST`/`TYPED_TEST_P` are not supported: `mt-unsupported` warning and the
+body is skipped. Assertion macros are recognised in any position (also nested,
+`ASSERT_NO_THROW(EXPECT_EQ(a, b))`) and are never a `FreeCall`;
+`EXPECT_CALL`/`ON_CALL` discard the **whole** chain
+(`.Times(2).WillOnce(Return(x))`): `Return`, `_` or `Invoke` are not code under
+test.
 
-### 7.5 Clasificador de literales (`literals.h`)
+### 7.5 Literal classifier (`literals.h`)
 
-| Literal | Tipo |
+| Literal | Type |
 |---|---|
-| entero sin sufijo, cabe en 32 bits con signo | `int` |
-| entero sin sufijo decimal fuera de `int` | `long long` + aviso `mt-literal-range` (en ARM32 y x86-64 el tipo real difiere) |
-| hex/oct/bin sin sufijo en `(INT_MAX, UINT_MAX]` | `unsigned int` (igual en ILP32 y LP64) |
-| hex/oct/bin sin sufijo > `UINT_MAX` | `long long` si cabe, si no `unsigned long long`; + aviso (el estándar da `long`/`unsigned long` en LP64 y `long long` en ILP32) |
-| sufijos `u` · `l` · `ul`/`lu` · `ll` · `ull`/`llu` | `unsigned int` · `long` · `unsigned long` · `long long` · `unsigned long long`; `l`/`ul` con valor fuera de 32 bits → aviso «no cabe en `long` de ARM32» |
-| `z` · `uz`/`zu` (C++23) | `std::ptrdiff_t` (nota: tipo con signo correspondiente a `size_t`) · `std::size_t`; si `--std` < 23 → aviso |
-| flotante sin sufijo · `f` · `l` | `double` · `float` · `long double` |
-| `f16`, `bf16`, … (C++23) | no soportado → `mt-literal` |
-| signo `-`/`+` incluido en el token (R11) | conserva el tipo (`-1u` sigue siendo `unsigned int`) |
-| separadores de dígitos `'` | se ignoran |
-| `'a'` · `u8'a'` · `u'a'` · `U'a'` · `L'a'` · `'ab'` | `char` · `char` (≤C++17) / `char8_t` · `char16_t` · `char32_t` · `wchar_t` · `int` + aviso |
-| cadena `"…"`, `R"(…)"`, concatenadas | «cadena de `char`»: el tipo final lo decide el contexto (§7.6) |
+| unsuffixed integer that fits in 32 signed bits | `int` |
+| unsuffixed decimal integer outside `int` | `long long` + `mt-literal-range` warning (on ARM32 and x86-64 the real type differs) |
+| unsuffixed hex/oct/bin in `(INT_MAX, UINT_MAX]` | `unsigned int` (the same in ILP32 and LP64) |
+| unsuffixed hex/oct/bin > `UINT_MAX` | `long long` if it fits, otherwise `unsigned long long`; + warning (the standard gives `long`/`unsigned long` in LP64 and `long long` in ILP32) |
+| suffixes `u` · `l` · `ul`/`lu` · `ll` · `ull`/`llu` | `unsigned int` · `long` · `unsigned long` · `long long` · `unsigned long long`; `l`/`ul` with a value outside 32 bits → warning "does not fit in ARM32's `long`" |
+| `z` · `uz`/`zu` (C++23) | `std::ptrdiff_t` (note: the signed type corresponding to `size_t`) · `std::size_t`; if `--std` < 23 → warning |
+| floating-point unsuffixed · `f` · `l` | `double` · `float` · `long double` |
+| `f16`, `bf16`, … (C++23) | not supported → `mt-literal` |
+| `-`/`+` sign included in the token (R11) | keeps the type (`-1u` is still `unsigned int`) |
+| digit separators `'` | ignored |
+| `'a'` · `u8'a'` · `u'a'` · `U'a'` · `L'a'` · `'ab'` | `char` · `char` (≤C++17) / `char8_t` · `char16_t` · `char32_t` · `wchar_t` · `int` + warning |
+| string `"…"`, `R"(…)"`, concatenated | "`char` string": the final type is decided by the context (§7.6) |
 | `u8"…"` · `u"…"` · `U"…"` · `L"…"` | `const char*` (≤17) / `const char8_t*` · `const char16_t*` · `const char32_t*` · `const wchar_t*` |
-| `true`/`false` · `nullptr` | `bool` · puntero de tipo desconocido (`mt-unknown-param`) |
+| `true`/`false` · `nullptr` | `bool` · pointer of unknown type (`mt-unknown-param`) |
 | `"…"s` · `"…"sv` | `std::string` · `std::string_view` |
-| enteros con `h`/`min`/`s`/`ms`/`us`/`ns` | `std::chrono::hours` … `nanoseconds` |
-| otros literales de usuario | `mt-literal` |
+| integers with `h`/`min`/`s`/`ms`/`us`/`ns` | `std::chrono::hours` … `nanoseconds` |
+| other user-defined literals | `mt-literal` |
 | `static_cast<T>(e)`, `(T)e`, `T(e)`, `T{e}` | `T` (`Declared`) |
 | `sizeof(…)` | `std::size_t` |
-| enumerador de enum conocido `E::X` | `E` |
+| enumerator of a known enum `E::X` | `E` |
 
-Implementado en `frontend/literals.h` (`classify_number`, `classify_character`,
-`classify_string`, `classify_literal`). Trabaja sobre el **texto** del literal, de
-modo que se prueba sin parser; `classify_literal` despacha por tipo de nodo
+Implemented in `frontend/literals.h` (`classify_number`, `classify_character`,
+`classify_string`, `classify_literal`). It works on the literal's **text**, so it
+is tested without a parser; `classify_literal` dispatches by node type
 (`number_literal`, `user_defined_literal`, `char_literal`, `string_literal`,
-`raw_string_literal`, `concatenated_string`, `true`/`false`, `null`) y fija la
-posición del tipo. Detalles fijados al implementarlo:
+`raw_string_literal`, `concatenated_string`, `true`/`false`, `null`) and sets
+the position of the type. Details settled while implementing it:
 
-- Cada tipo inferido lleva `Origin::Inferred` y `reason = "literal <texto>"`, que
-  es lo que acaba en `// TODO(mt): … inferred from literal 3u`.
-- tree-sitter lexea `-1`, `+2` y `-1u` como **un** `number_literal`, pero `- 3` es
-  un `unary_expression`: ese caso lo resuelve el tipado de expresiones (2.4). Un
-  `-1u` sigue siendo `unsigned int`; `-2147483648` es `long long`, porque
-  `2147483648` no cabe en `int` pase lo que pase delante.
-- Entero `u` por encima de `UINT_MAX` → `unsigned long long` + `mt-literal-range`
-  (el estándar daría `unsigned long` en LP64). `l` solo da `long`; si el valor no
-  cabe en 32 bits, aviso de ARM32. Overflow de `unsigned long long` → ese tipo +
-  `mt-literal` «demasiado grande». Un sufijo inválido o definido por el usuario
-  (`3f`, `3_km`, `1.5s`, `1.5f16`) es `Unsupported` + `mt-literal`, sin tipo.
-- `0x1e5` es el entero 485, no un flotante: en hexadecimal el exponente es `p`.
-- Cadena ordinaria (`"x"`, `R"(x)"`, `"a" "b"`): `Kind::String` **sin tipo**; lo
-  decide el contexto (§7.6). Con prefijo (`L u U u8`) es un puntero tipado; con
-  sufijo `s`/`sv`, el `std::basic_string[_view]` del carácter correspondiente.
-- Las características de un estándar mayor que `--std` (separadores `'` y `0b`:
-  C++14; `"x"s` y chrono: C++14; `"x"sv` y `u8'a'`: C++17; sufijo `z`: C++23)
-  dan `mt-std`, no un tipo distinto.
-- `character_count` cuenta cada escape (`\x41`, `\101`, `\u00e9`) y cada punto de
-  código UTF-8 como un carácter: `'\x41'` es `char`, `'\x41\x42'` es `int`.
-- No es de este módulo: `static_cast<T>(e)`, `(T)e`, `T(e)`, `T{e}`, `sizeof(…)`,
-  `E::X`. Son expresiones con tipo propio; las tipa el frontend de tests (2.4).
+- Every inferred type carries `Origin::Inferred` and `reason = "literal <text>"`,
+  which is what ends up in `// TODO(mt): … inferred from literal 3u`.
+- tree-sitter lexes `-1`, `+2` and `-1u` as **one** `number_literal`, but `- 3`
+  is a `unary_expression`: that case is resolved by the typing of expressions
+  (2.4). `-1u` is still `unsigned int`; `-2147483648` is `long long`, because
+  `2147483648` does not fit in `int` whatever comes in front of it.
+- A `u` integer above `UINT_MAX` → `unsigned long long` + `mt-literal-range`
+  (the standard would give `unsigned long` in LP64). `l` only gives `long`; if
+  the value does not fit in 32 bits, an ARM32 warning. `unsigned long long`
+  overflow → that type + `mt-literal` "too large". An invalid or user-defined
+  suffix (`3f`, `3_km`, `1.5s`, `1.5f16`) is `Unsupported` + `mt-literal`, with
+  no type.
+- `0x1e5` is the integer 485, not a float: in hexadecimal the exponent is `p`.
+- Ordinary string (`"x"`, `R"(x)"`, `"a" "b"`): `Kind::String` **with no type**;
+  the context decides (§7.6). With a prefix (`L u U u8`) it is a typed pointer;
+  with the suffix `s`/`sv`, the `std::basic_string[_view]` of the corresponding
+  character.
+- Features of a standard newer than `--std` (separators `'` and `0b`: C++14;
+  `"x"s` and chrono: C++14; `"x"sv` and `u8'a'`: C++17; suffix `z`: C++23) give
+  `mt-std`, not a different type.
+- `character_count` counts each escape (`\x41`, `\101`, `\u00e9`) and each UTF-8
+  code point as one character: `'\x41'` is `char`, `'\x41\x42'` is `int`.
+- Not this module's job: `static_cast<T>(e)`, `(T)e`, `T(e)`, `T{e}`,
+  `sizeof(…)`, `E::X`. They are expressions with a type of their own; the tests
+  frontend types them (2.4).
 
-### 7.6 Contexto de uso → pista de tipo
+### 7.6 Usage context → type hint
 
-| Contexto | Pista para el resultado / argumento |
+| Context | Hint for the result / argument |
 |---|---|
-| `EXPECT_/ASSERT_EQ, NE, LT, LE, GT, GE (a, b)` | cada lado toma el tipo del otro; cadena → `std::string` |
+| `EXPECT_/ASSERT_EQ, NE, LT, LE, GT, GE (a, b)` | each side takes the type of the other; string → `std::string` |
 | `EXPECT_/ASSERT_TRUE/FALSE(c)` | `bool` |
-| `EXPECT_/ASSERT_STREQ, STRNE, STRCASEEQ, STRCASENE` | `const char*` (`const wchar_t*` si el literal es `L"…"`) |
+| `EXPECT_/ASSERT_STREQ, STRNE, STRCASEEQ, STRCASENE` | `const char*` (`const wchar_t*` if the literal is `L"…"`) |
 | `EXPECT_/ASSERT_FLOAT_EQ` · `DOUBLE_EQ` · `NEAR(a,b,eps)` | `float` · `double` · `double` |
-| `EXPECT_/ASSERT_THROW(stmt, E)`, `ANY_THROW`, `NO_THROW`, `EXPECT_DEATH(stmt, re)` | se analiza `stmt` (puede ser un bloque `{…}`); su resultado es `Discarded` |
-| `EXPECT_THAT(v, matcher)` | sin pista (`mt-unknown-return`); matchers: fase posterior |
-| `… << "msg"` | se desenvuelve el operando izquierdo |
-| `QCOMPARE(a, b)`, `QTRY_COMPARE*` | cada lado el del otro; cadena → `QString` |
+| `EXPECT_/ASSERT_THROW(stmt, E)`, `ANY_THROW`, `NO_THROW`, `EXPECT_DEATH(stmt, re)` | `stmt` is analysed (it can be a `{…}` block); its result is `Discarded` |
+| `EXPECT_THAT(v, matcher)` | no hint (`mt-unknown-return`); matchers: later phase |
+| `… << "msg"` | the left operand is unwrapped |
+| `QCOMPARE(a, b)`, `QTRY_COMPARE*` | each side the other's; string → `QString` |
 | `QVERIFY(c)`, `QVERIFY2(c, m)`, `QTRY_VERIFY*` | `bool` |
-| `QVERIFY_EXCEPTION_THROWN(stmt, E)` · `QVERIFY_THROWS_EXCEPTION(E, stmt…)` · `QVERIFY_THROWS_NO_EXCEPTION(stmt)` | se analiza `stmt` (ojo: orden invertido entre las dos primeras) |
-| `if`/`while`/`for`/`do` (condición), `!x`, `x && y`, `x \|\| y`, `c ? … : …` | `bool`. La condición de un `switch` es un entero: sin pista |
-| `x == lit`, `!=`, `<`, `<=`, `>`, `>=` | tipo del literal |
-| `T v = call;`, y `T v(call);` / `T v{call};` cuando `T` **no** es clase | `T` sin `const`/`&` de nivel superior; si `T` es `U&` no-const → retorno `U&` (un temporal no liga). El frontend guarda `T` tal como se declaró; quitar calificadores es de la inferencia. Con `T` clase, `Bar b(call);` es un argumento del constructor (`Argument`, sin pista) |
-| `v = call;` con `v` declarado `T` | `T` |
-| `auto v = call;` (también `auto&`, `const auto&`) | `AutoBound` → política `auto` (D5) |
-| sentencia de expresión `call;` | `Discarded` → `void` + aviso `mt-unused-result` |
-| `GTEST_SKIP`, `FAIL`, `SUCCEED`, `ADD_FAILURE`, `QFAIL`, `QSKIP`, `QEXPECT_FAIL`, `QWARN` | se ignoran |
+| `QVERIFY_EXCEPTION_THROWN(stmt, E)` · `QVERIFY_THROWS_EXCEPTION(E, stmt…)` · `QVERIFY_THROWS_NO_EXCEPTION(stmt)` | `stmt` is analysed (beware: reversed order between the first two) |
+| `if`/`while`/`for`/`do` (condition), `!x`, `x && y`, `x \|\| y`, `c ? … : …` | `bool`. The condition of a `switch` is an integer: no hint |
+| `x == lit`, `!=`, `<`, `<=`, `>`, `>=` | type of the literal |
+| `T v = call;`, and `T v(call);` / `T v{call};` when `T` is **not** a class | `T` without the top-level `const`/`&`; if `T` is a non-const `U&` → return `U&` (a temporary does not bind). The frontend keeps `T` as declared; stripping qualifiers is the inference's job. With a class `T`, `Bar b(call);` is a constructor argument (`Argument`, no hint) |
+| `v = call;` with `v` declared `T` | `T` |
+| `auto v = call;` (also `auto&`, `const auto&`) | `AutoBound` → `auto` policy (D5) |
+| expression statement `call;` | `Discarded` → `void` + `mt-unused-result` warning |
+| `GTEST_SKIP`, `FAIL`, `SUCCEED`, `ADD_FAILURE`, `QFAIL`, `QSKIP`, `QEXPECT_FAIL`, `QWARN` | ignored |
 
-### 7.7 Clasificación de nombres
+### 7.7 Name classification
 
-Implementada en `frontend/classify.h` (listas de nombres ajenos en
-`frontend/known_names.h`). Entra un `TestFileFacts`, sale un `Classified`: los
-hechos más lo que la clasificación añadió, las **clases** y las **funciones**
-que hay que generar —cada una con los índices de los hechos que la mencionan— en
-orden de primer uso en el fuente, y diagnósticos. Pasos, en este orden:
+Implemented in `frontend/classify.h` (the lists of names that belong to somebody
+else are in `frontend/known_names.h`). A `TestFileFacts` goes in and a
+`Classified` comes out: the facts plus whatever classification added, the
+**classes** and the **functions** to generate —each with the indices of the
+facts that mention it— in order of first use in the source, and diagnostics.
+Steps, in this order:
 
-1. clases a partir de tipos, construcciones y receptores;
-2. llamadas `X::m()` (R13);
-3. llamadas sin calificar (§7.8);
-4. llamadas pendientes sobre un *cast* funcional (§7.3);
-5. tipos de excepción.
+1. classes from types, constructions and receivers;
+2. `X::m()` calls (R13);
+3. unqualified calls (§7.8);
+4. calls pending on a functional *cast* (§7.3);
+5. exception types.
 
-**Candidato a clase**: aparece como tipo de una declaración, miembro, parámetro,
-retorno, `catch` o alias (`TypeUse`), en `new N(…)`, como argumento de plantilla de
-`make_unique`/`make_shared`/puntero inteligente, como receptor de una llamada
-o de un campo, en una construcción, como `N(…)` siendo además clase por alguna de
-esas vías (un *cast* funcional), o como ámbito de una llamada `N::m()` (R13,
-abajo). Un tipo que solo aparece en `EXPECT_THROW(…, E)` **no** es candidato
-(ver el final de este apartado).
+**Class candidate**: it appears as the type of a declaration, member,
+parameter, return value, `catch` or alias (`TypeUse`), in `new N(…)`, as a
+template argument of `make_unique`/`make_shared`/a smart pointer, as the
+receiver of a call or of a field, in a construction, as `N(…)` when it is also a
+class through one of those routes (a functional *cast*), or as the scope of an
+`N::m()` call (R13, below). A type that appears only in `EXPECT_THROW(…, E)` is
+**not** a candidate (see the end of this section).
 
-**Externo** (nunca se genera):
-- en `std::`, `testing::`, `QTest::`, `Qt::` o `__gnu_cxx::`; o con
-  `using std::x;`/`using testing::x;` (el nombre pasa a ser de ellos);
-- patrón Qt `^Q[A-Z]`; tipos fundamentales y los de `<cstddef>`/`<cstdint>`/
-  `<cstdio>` y los *typedefs* de Qt (`qint64`, `uint`, …);
-- con `using namespace std;`, los nombres de tipos de la biblioteca estándar
-  (`string`, `vector`, `unique_ptr`, …); sin él, `string` es un nombre más;
-- declarado en el propio fichero (fixtures, structs auxiliares, enums, alias y
-  `typedef`) o parámetro de plantilla;
-- declarado en una cabecera existente analizada (§7.10): por nombre simple si
-  se usa sin calificar; si se califica (`other::Known`), el espacio de nombres de
-  la cabecera tiene que terminar en el calificador escrito;
-- `Outer::Inner` con `Outer` ajeno: tipo anidado de otro;
-- `config.external_types`: una entrada simple (`Legacy`) cubre cualquier
-  calificador; una calificada (`vendor::Driver`) cubre también la forma corta.
+**External** (never generated):
+- in `std::`, `testing::`, `QTest::`, `Qt::` or `__gnu_cxx::`; or with
+  `using std::x;`/`using testing::x;` (the name becomes theirs);
+- the Qt pattern `^Q[A-Z]`; fundamental types and those of `<cstddef>`/
+  `<cstdint>`/`<cstdio>` and Qt's *typedefs* (`qint64`, `uint`, …);
+- with `using namespace std;`, the names of the standard library's types
+  (`string`, `vector`, `unique_ptr`, …); without it, `string` is just another
+  name;
+- declared in the file itself (fixtures, helper structs, enums, aliases and
+  `typedef`s) or a template parameter;
+- declared in an existing header that was analysed (§7.10): by simple name if it
+  is used unqualified; if it is qualified (`other::Known`), the header's
+  namespace has to end in the qualifier as written;
+- `Outer::Inner` with a foreign `Outer`: somebody else's nested type;
+- `config.external_types`: a simple entry (`Legacy`) covers any qualifier; a
+  qualified one (`vendor::Driver`) also covers the short form.
 
-**A generar** = candidatos − externos. Un tipo anidado en una clase *a generar*
-(`Outer::Inner`) se avisa una vez (`mt-unsupported`) y no se genera.
+**To generate** = candidates − externals. A type nested in a class *to be
+generated* (`Outer::Inner`) is reported once (`mt-unsupported`) and not
+generated.
 
-**Namespace de una clase** (se decide por clase, no por mención), en este
-orden, y la primera regla que aplique manda:
-1. un nombre calificado (`ns::Foo`) es esa clase; `using acme::Foo;` o cualquier
-   mención calificada en el fichero dice dónde vive `Foo` para el resto de
-   menciones sin calificar. Si el mismo nombre aparece con dos calificadores
-   distintos son **dos clases**, y las menciones sin calificar van a la primera
-   (`mt-ambiguous-scope`, aviso);
-2. anotación `// @mt: class Foo namespace ns` (solo para lo que no va calificado);
-3. el `namespace ns { … }` donde está el test;
-4. exactamente un `using namespace ns;` (sin contar `std`/`testing`/`QTest`) → `ns`,
-   con nota `mt-ambiguous-scope`;
-5. varios `using namespace` → `config.default_namespace` si existe; si no, global y
-   aviso `mt-ambiguous-scope`;
+**Namespace of a class** (decided per class, not per mention), in this order,
+and the first rule that applies wins:
+1. a qualified name (`ns::Foo`) is that class; `using acme::Foo;` or any
+   qualified mention in the file says where `Foo` lives for the rest of the
+   unqualified mentions. If the same name appears with two different
+   qualifiers they are **two classes**, and the unqualified mentions go to the
+   first one (`mt-ambiguous-scope`, warning);
+2. the annotation `// @mt: class Foo namespace ns` (only for what is not
+   qualified);
+3. the `namespace ns { … }` the test is in;
+4. exactly one `using namespace ns;` (not counting `std`/`testing`/`QTest`) →
+   `ns`, with an `mt-ambiguous-scope` note;
+5. several `using namespace` → `config.default_namespace` if it exists;
+   otherwise global and an `mt-ambiguous-scope` warning;
 6. `config.default_namespace`;
 7. global.
 
-**`X::m(args)` (R13)**, con `X` el último calificador y el resto su namespace:
-0. `std::`/`testing::`/`QTest::`, `X` externo (`QString::number`, `Fixture::Helper`,
-   clase de una cabecera) o función ya declarada en el fichero o en una cabecera
-   (`helpers::twice`) → nada que generar;
-1. `X` es una clase a generar → método `static` de `X`;
-2. el fichero muestra `X` como namespace —`namespace X {…}` (también donde se
-   sitúan los tests), `using namespace X;`, calificador de un tipo (`X::Foo`),
-   o namespace de algo declarado en el fichero o en una cabecera— → función
-   libre de ese namespace, sin aviso;
-3. si no hay manera de saberlo: `X` en mayúscula → clase (se crea) con aviso
-   `mt-ambiguous-scope`; en minúscula → función de namespace, con el mismo aviso.
-   La segunda llamada `X::otra()` ya encuentra la clase y no vuelve a avisar.
+**`X::m(args)` (R13)**, with `X` the last qualifier and the rest its namespace:
+0. `std::`/`testing::`/`QTest::`, an external `X` (`QString::number`,
+   `Fixture::Helper`, a class from a header) or a function already declared in
+   the file or in a header (`helpers::twice`) → nothing to generate;
+1. `X` is a class to be generated → `static` method of `X`;
+2. the file shows `X` as a namespace —`namespace X {…}` (also where the tests
+   are placed), `using namespace X;`, the qualifier of a type (`X::Foo`), or the
+   namespace of something declared in the file or in a header— → free function
+   of that namespace, with no warning;
+3. if there is no way to know: `X` capitalised → class (it is created) with an
+   `mt-ambiguous-scope` warning; lowercase → namespace function, with the same
+   warning. The second call `X::other()` already finds the class and does not
+   warn again.
 
-### 7.8 Funciones libres
+### 7.8 Free functions
 
-Una llamada no calificada `f(args)` (también `::f(args)`) es, por este orden:
-1. nombre de `config.ignore_macros` → nada;
-2. el nombre de una clase a generar → **construcción funcional** (`Foo(3)`): se
-   añade un `Construction::Functional` y la clase la recoge;
-3. TODO_MAYÚSCULAS (R21) → macro, nada. (Una clase llamada `ADC` gana a la regla
-   de macros por el paso 2);
-4. nombre de un tipo ajeno (`QString("x")`, `size_t(3)`, la fixture) → *cast* a un
-   tipo ajeno, nada;
-5. función de la biblioteca C (`strlen`, `memcpy`, `abs`, `printf`, `assert`,
-   `offsetof`, …), función Qt `^q[A-Z]` (`qDebug`), miembro heredado de la fixture de
-   GoogleTest (`SetUp`, `GetParam`, `RecordProperty`, …) o nombre traído con
-   `using std::x;` → nada;
-6. con `using namespace std;`, función estándar (`move`, `swap`, `max`, …) → nada;
-7. `config.external_functions` (una entrada calificada `vendor::init` cubre también
-   `init()`), función definida o declarada en el fichero o en una cabecera →
-   nada;
-8. llamada dentro de una fixture a un método (o campo) de la propia fixture o de
-   sus bases, locales o de cabeceras → nada (`FreeCall.owner`);
-9. en otro caso → **función libre a generar**. Su namespace es el que el fichero
-   escriba en otra llamada `ns::f(…)` si la hay; si no, las mismas reglas 3–7 de
-   arriba que para las clases.
+An unqualified call `f(args)` (also `::f(args)`) is, in this order:
+1. a name in `config.ignore_macros` → nothing;
+2. the name of a class to be generated → a **functional construction**
+   (`Foo(3)`): a `Construction::Functional` is added and the class picks it up;
+3. ALL_CAPS (R21) → a macro, nothing. (A class called `ADC` beats the macro rule
+   thanks to step 2);
+4. the name of somebody else's type (`QString("x")`, `size_t(3)`, the fixture) →
+   a *cast* to a foreign type, nothing;
+5. a function of the C library (`strlen`, `memcpy`, `abs`, `printf`, `assert`,
+   `offsetof`, …), a Qt function `^q[A-Z]` (`qDebug`), a member inherited from
+   the GoogleTest fixture (`SetUp`, `GetParam`, `RecordProperty`, …) or a name
+   brought in with `using std::x;` → nothing;
+6. with `using namespace std;`, a standard function (`move`, `swap`, `max`, …)
+   → nothing;
+7. `config.external_functions` (a qualified entry `vendor::init` also covers
+   `init()`), a function defined or declared in the file or in a header →
+   nothing;
+8. a call inside a fixture to a method (or field) of the fixture itself or of its
+   bases, local or from headers → nothing (`FreeCall.owner`);
+9. otherwise → a **free function to generate**. Its namespace is the one the file
+   writes in another call `ns::f(…)` if there is one; if not, the same rules 3–7
+   above as for classes.
 
-Una llamada a una variable local (lambda, puntero a función, `std::function`)
-nunca llega aquí: el frontend (§7.3) la trata como llamada al objeto, y solo
-produce un hecho (`operator()`) si el objeto es de una clase.
+A call to a local variable (lambda, function pointer, `std::function`) never gets
+here: the frontend (§7.3) treats it as a call on the object, and it only
+produces a fact (`operator()`) if the object is of a class.
 
-**Llamadas pendientes** (§7.3): `Unresolved` con raíz un `FreeCall` cuyo nombre
-resulta ser una clase (`Foo(3).size()`, `auto f = Foo(1); f.run();`) pasan a ser
-un `MethodCall` normal de esa clase (`Unresolved::resolved`, `method_call`), con el
-uso que ya tuvieran; si la raíz es un *cast* a un tipo ajeno no queda nada que
-resolver; con cualquier otra raíz (`foo.make().run()`) siguen sin resolver y la
-inferencia les aplica la política de §7.9.
+**Pending calls** (§7.3): an `Unresolved` rooted in a `FreeCall` whose name turns
+out to be a class (`Foo(3).size()`, `auto f = Foo(1); f.run();`) becomes an
+ordinary `MethodCall` of that class (`Unresolved::resolved`, `method_call`),
+with the use it already had; if the root is a *cast* to a foreign type there is
+nothing left to resolve; with any other root (`foo.make().run()`) they stay
+unresolved and the inference applies the policy of §7.9 to them.
 
-**Tipos de excepción** (`EXPECT_THROW(stmt, E)`): `E` no es candidato por sí solo,
-porque generar una clase de excepción exige una base que el test no dice. Debe
-ser externo (`std::runtime_error`), venir de una cabecera, o ser clase por otra
-vía; si no, `mt-unknown-type` (aviso). *Motivo*: inventar `class BadInput {}` sin
-`std::exception` haría que `EXPECT_THROW` no compilase.
+**Exception types** (`EXPECT_THROW(stmt, E)`): `E` is not a candidate on its own,
+because generating an exception class requires a base that the test does not
+state. It must be external (`std::runtime_error`), come from a header, or be a
+class through some other route; otherwise `mt-unknown-type` (warning).
+*Reason*: inventing `class BadInput {}` without `std::exception` would make
+`EXPECT_THROW` fail to compile.
 
-### 7.9 Inferencia (hechos → modelo)
+### 7.9 Inference (facts → model)
 
-- **Unificación**: los usos de un método se agrupan por (clase, nombre,
-  aridad). Distinta aridad = sobrecarga distinta. Misma aridad y tipos de
-  argumento distintos → **un** método, gana el de mayor `Origin` y, a igualdad,
-  el primero en orden de fuente; aviso `mt-conflict` con las alternativas. Para
-  sobrecargas por tipo: anotación `overload`.
-- **Parámetros** desde `ValueInfo`:
-  - literal → su tipo (por valor); cadena → `config.string_literal_param`
-    (por defecto `const char*`).
-  - variable de tipo `T`: si `T` es *by-value* (abajo) → `T`; si no `const T&`.
-  - `std::move(x)` → `T` por valor (nota); `&x` → `T*`.
-  - resultado de otra llamada de la API ya inferida → su tipo (pasada de
-    punto fijo, máx. 4 iteraciones; fase 2, tarea propia).
-  - desconocido → política (D5): `error` (`mt-unknown-param`) o `todo`
-    (`config.placeholder_type`, por defecto `int`, con TODO).
-  - nombre del parámetro: el de la variable si el argumento es un identificador;
-    si no `arg1…argN`; duplicados → sufijo numérico.
-- **Retorno**: pista de mayor `Origin`; solo `Discarded` → `void` + aviso;
-  `AutoBound`/`Unknown` sin otra pista → política D5. Conflicto → `mt-conflict`.
-- **`const`**: si **algún** uso es sobre un acceso `const`. Sin evidencia, no
-  `const` (no se inventa; en métodos de 0 argumentos cuyo resultado se compara
-  se añade la nota `TODO(mt): consider making this const`).
-- **`static`**: si algún uso es `X::m()` (§7.7).
-- **Constructores**: un ctor por aridad usada; constructor por defecto solo si
-  se usa *y* hay otro ctor declarado (si no, el implícito basta). Un solo
-  parámetro → `explicit` salvo que se observe inicialización por copia
-  (`Foo f = 5;`). Copia/movimiento desde otro `Foo` → implícitos, nada que
-  generar.
-- **Campos**: `obj.x` no llamado → campo público, tipo por el contexto
-  (`obj.x = 5;`, comparación). Brace-init con argumentos se trata siempre como
-  constructor (no agregado) en el MVP.
-- **By-value**: tipos fundamentales (todas las combinaciones), `std::size_t`,
-  `size_t`, `std::ptrdiff_t`, `std::nullptr_t`, `std::byte`, `(std::)(u)intN_t`,
+- **Unification**: the uses of a method are grouped by (class, name, arity). A
+  different arity = a different overload. The same arity and different argument
+  types → **one** method; the one with the higher `Origin` wins and, on a tie,
+  the first in source order; `mt-conflict` warning with the alternatives. For
+  overloads by type: the `overload` annotation.
+- **Parameters** from `ValueInfo`:
+  - literal → its type (by value); string → `config.string_literal_param`
+    (`const char*` by default).
+  - variable of type `T`: if `T` is *by-value* (below) → `T`; otherwise
+    `const T&`.
+  - `std::move(x)` → `T` by value (note); `&x` → `T*`.
+  - result of another API call that has already been inferred → its type (a
+    fixed-point pass, at most 4 iterations; phase 2, a task of its own).
+  - unknown → policy (D5): `error` (`mt-unknown-param`) or `todo`
+    (`config.placeholder_type`, `int` by default, with a TODO).
+  - parameter name: the variable's if the argument is an identifier; otherwise
+    `arg1…argN`; duplicates → numeric suffix.
+- **Return**: the hint with the highest `Origin`; only `Discarded` → `void` +
+  warning; `AutoBound`/`Unknown` without another hint → D5 policy. Conflict →
+  `mt-conflict`.
+- **`const`**: if **any** use is on a `const` access. Without evidence, not
+  `const` (nothing is invented; on methods with 0 arguments whose result is
+  compared the note `TODO(mt): consider making this const` is added).
+- **`static`**: if any use is `X::m()` (§7.7).
+- **Constructors**: one ctor per arity used; a default constructor only if it is
+  used *and* another ctor is declared (otherwise the implicit one is enough). A
+  single parameter → `explicit` unless copy-initialisation is observed
+  (`Foo f = 5;`). Copy/move from another `Foo` → implicit, nothing to generate.
+- **Fields**: `obj.x` not called → a public field, type from the context
+  (`obj.x = 5;`, comparison). Brace-init with arguments is always treated as a
+  constructor (not an aggregate) in the MVP.
+- **By-value**: fundamental types (all combinations), `std::size_t`, `size_t`,
+  `std::ptrdiff_t`, `std::nullptr_t`, `std::byte`, `(std::)(u)intN_t`,
   `(u)int_fastN_t`, `(u)int_leastN_t`, `(u)intptr_t`, `(u)intmax_t`, `qint*`,
-  `quint*`, `qreal`, `qsizetype`, `uchar`, `ushort`, `uint`, `ulong`, punteros,
-  enums conocidos, `std::string_view`, `QStringView`, `std::chrono::*`, y
-  `config.by_value_types`. Resto → `const T&`.
+  `quint*`, `qreal`, `qsizetype`, `uchar`, `ushort`, `uint`, `ulong`, pointers,
+  known enums, `std::string_view`, `QStringView`, `std::chrono::*`, and
+  `config.by_value_types`. Everything else → `const T&`.
 
-### 7.10 Cabeceras existentes
+### 7.10 Existing headers
 
-Cada `#include "…"` del test se busca en: directorio del test, `-I…` (en orden),
-`--out-include`. Si existe, se analiza con el frontend de código (un nivel, sin
-recursión en el MVP): sus clases/funciones/enums pasan a **externos conocidos**
-(tipados: aportan firmas `Declared`). Si la cabecera encontrada está en
-`--out-include`, es un **objetivo existente** → merge/never (§10, §11).
+Each `#include "…"` of the test is searched for in: the test's directory,
+`-I…` (in order), `--out-include`. If it exists, it is analysed with the code
+frontend (one level, no recursion in the MVP): its classes/functions/enums
+become **known externals** (typed: they contribute `Declared` signatures). If
+the header found is in `--out-include`, it is an **existing target** →
+merge/never (§10, §11).
 
-### 7.11 Anotaciones (`// @mt:`)
+### 7.11 Annotations (`// @mt:`)
 
 ```
-anotación  := "// @mt:" directiva { ";" directiva }
-directiva  := "returns" TIPO                         (corta: aplica a la siguiente sentencia)
-            | "overload" | "ignore"                  (corta)
-            | MIEMBRO "returns" TIPO                 (larga: ámbito de fichero)
-            | MIEMBRO "param" N TIPO                 (N empieza en 1)
-            | MIEMBRO ("const" | "static" | "virtual" | "noexcept")
-            | "class" NOMBRE "namespace" NS
-            | "class" NOMBRE "header" "\"" RUTA "\""
-MIEMBRO    := [NS "::"] CLASE "::" MÉTODO
+annotation := "// @mt:" directive { ";" directive }
+directive  := "returns" TYPE                         (short: applies to the next statement)
+            | "overload" | "ignore"                  (short)
+            | MEMBER "returns" TYPE                  (long: file scope)
+            | MEMBER "param" N TYPE                  (N starts at 1)
+            | MEMBER ("const" | "static" | "virtual" | "noexcept")
+            | "class" NAME "namespace" NS
+            | "class" NAME "header" "\"" PATH "\""
+MEMBER     := [NS "::"] CLASS "::" METHOD
 ```
 
-- Forma corta: aplica a la sentencia siguiente (o a la de la misma línea si el
-  comentario va al final). Error `mt-annotation` si esa sentencia contiene cero
-  o más de una llamada de la API.
-- `TIPO` = resto del texto hasta `;` o fin, normalizado.
-- Las anotaciones son `Origin::Annotated`. `config.overrides` admite las formas
-  largas con el mismo significado.
+- Short form: it applies to the next statement (or to the one on the same line
+  if the comment comes at the end). `mt-annotation` error if that statement
+  contains zero or more than one call of the API.
+- `TYPE` = the rest of the text up to `;` or the end, normalised.
+- Annotations are `Origin::Annotated`. `config.overrides` accepts the long forms
+  with the same meaning.
 
 ---
 
-## 8. Backend de implementación (modelo → `.h` + `.cpp`)
+## 8. Implementation backend (model → `.h` + `.cpp`)
 
-### 8.1 Asignación de ficheros
+### 8.1 File assignment
 
-- Cabeceras *a generar* = `#include "…"` del test que no existen (§7.10).
-- Clase ↔ cabecera por nombre normalizado (`match_key`: minúsculas, sin `_` ni
-  `-`; la cabecera, sin directorios ni extensión, vía `file_stem`):
-  `foo_bar.h` ↔ `FooBar`. `stem` = `snake_case(Clase)`: `HTTPServer` →
-  `http_server`, `Vec3D` → `vec3_d`, `UTF8String` → `utf8_string` (reglas en
+- Headers *to generate* = the test's `#include "…"` that do not exist (§7.10).
+- Class ↔ header by normalised name (`match_key`: lowercase, without `_` or `-`;
+  the header without directories or extension, through `file_stem`):
+  `foo_bar.h` ↔ `FooBar`. `stem` = `snake_case(Class)`: `HTTPServer` →
+  `http_server`, `Vec3D` → `vec3_d`, `UTF8String` → `utf8_string` (rules in
   `core/naming.h`).
-- Clases/funciones sin pareja → la primera cabecera a generar en orden de
-  fuente; si no hay ninguna → `naming.header` (por defecto `{stem}.h` con
-  `stem = snake_case(Clase)`) + aviso `mt-no-include`.
-- Rutas: cabecera en `<out-include>/<ruta tal como se incluye>` (con
-  subdirectorios: `acme/foo.h`); fuente en `<out-src>/<mismo directorio>/<stem>.cpp`.
-  `--out` fija ambos si no se dan por separado.
+- Classes/functions without a pair → the first header to generate in source
+  order; if there is none → `naming.header` (by default `{stem}.h` with
+  `stem = snake_case(Class)`) + `mt-no-include` warning.
+- Paths: header at `<out-include>/<path as included>` (with subdirectories:
+  `acme/foo.h`); source at `<out-src>/<same directory>/<stem>.cpp`. `--out` sets
+  both if they are not given separately.
 
-### 8.2 Cabecera
+### 8.2 Header
 
 ```cpp
 // Generated by mirrortest from tests/foo_test.cpp. Review every TODO(mt).
@@ -792,26 +815,26 @@ public:
 #endif  // ACME_FOO_H
 ```
 
-- `config.file_header` (p. ej. cabecera corporativa) se antepone; nunca la
-  licencia de mirrortest.
-- Guarda (`include_guard`) desde la ruta incluida: mayúsculas, lo no
-  alfanumérico → `_`, con las rachas colapsadas y los extremos recortados (un
-  `_` inicial o un `__` serían identificadores reservados): `../a/foo.h` →
-  `A_FOO_H`; si empieza por dígito, prefijo `H_`.
-- Includes desde los tipos usados (`ir/classify.h`): `std::string`→`<string>`,
+- `config.file_header` (e.g. a corporate header) is prepended; never the
+  mirrortest licence.
+- Guard (`include_guard`) from the included path: uppercase, anything
+  non-alphanumeric → `_`, with runs collapsed and the ends trimmed (a leading
+  `_` or a `__` would be reserved identifiers): `../a/foo.h` → `A_FOO_H`; if it
+  starts with a digit, the prefix `H_`.
+- Includes from the types used (`ir/classify.h`): `std::string`→`<string>`,
   `std::string_view`→`<string_view>`, `std::vector`→`<vector>`, `std::map`,
   `std::set`, `std::unordered_map`, `std::array`, `std::list`, `std::deque`,
   `std::optional`, `std::variant`, `std::tuple`, `std::function`→`<functional>`,
-  punteros inteligentes→`<memory>`, `std::pair`→`<utility>`,
+  smart pointers→`<memory>`, `std::pair`→`<utility>`,
   `std::size_t`/`ptrdiff_t`/`nullptr_t`→`<cstddef>`, `(std::)(u)intN_t`→`<cstdint>`,
-  `std::chrono::*`→`<chrono>`, `Q[A-Z]\w*`→`<QNombre>`; clases generadas en
-  otra cabecera → `"otra.h"`; externas de cabeceras existentes → esa cabecera.
-  Orden: sistema alfabético, luego locales alfabético.
-- Orden de miembros: constructores, luego métodos por primera aparición en el
-  test, luego campos. Namespaces como bloques anidados (válido en C++11).
-- Funciones libres: región `// <mt:begin functions>` en el namespace.
+  `std::chrono::*`→`<chrono>`, `Q[A-Z]\w*`→`<QName>`; classes generated in
+  another header → `"other.h"`; externals from existing headers → that header.
+  Order: system ones alphabetically, then local ones alphabetically.
+- Member order: constructors, then methods by first appearance in the test, then
+  fields. Namespaces as nested blocks (valid in C++11).
+- Free functions: a `// <mt:begin functions>` region in the namespace.
 
-### 8.3 Fuente (stubs)
+### 8.3 Source (stubs)
 
 ```cpp
 // Generated by mirrortest from tests/foo_test.cpp. Review every TODO(mt).
@@ -836,47 +859,48 @@ void Foo::run() {
 }  // namespace acme
 ```
 
-Política `--stub-policy`:
+`--stub-policy` policy:
 
-| Política | Métodos (incl. `void`) | Ctor/dtor | Include |
+| Policy | Methods (incl. `void`) | Ctor/dtor | Include |
 |---|---|---|---|
-| `throw` (defecto) | `throw std::logic_error("mirrortest: not implemented: <firma>")` | vacío | `<stdexcept>` |
-| `abort` (`--no-exceptions`) | `std::abort();` | vacío | `<cstdlib>` |
-| `default` | `return R{};` · `void` → vacío · retorno por referencia o `R` no construible por defecto → `std::abort()` + aviso | vacío | `<cstdlib>` si hace falta |
+| `throw` (default) | `throw std::logic_error("mirrortest: not implemented: <signature>")` | empty | `<stdexcept>` |
+| `abort` (`--no-exceptions`) | `std::abort();` | empty | `<cstdlib>` |
+| `default` | `return R{};` · `void` → empty · return by reference or an `R` that is not default-constructible → `std::abort()` + warning | empty | `<cstdlib>` if needed |
 
-Con `default` se emite una vez `mt-stub-may-pass`. Nombres de parámetro siempre
-comentados (R22). `--no-rtti`: el generador nunca emite `typeid`/`dynamic_cast`;
-la opción queda como garantía documentada y se pasa a las plantillas. La región
-`includes` se emite aunque esté vacía, para que el merge pueda añadir includes.
+With `default`, `mt-stub-may-pass` is emitted once. Parameter names are always
+commented out (R22). `--no-rtti`: the generator never emits `typeid`/
+`dynamic_cast`; the option remains as a documented guarantee and is passed to
+the templates. The `includes` region is emitted even when empty, so that the
+merge can add includes.
 
-Mejora futura (no MVP), por R26: política `hook` — los stubs llaman a
-`mt_not_implemented("<firma>")` declarada en una cabecera generada, con una
-definición por defecto que lanza o aborta y que el lado de test puede
-sustituir (p. ej. por `QTest::qFail` + valor por defecto) para que QTest siga
-ejecutando el resto de slots.
+Future improvement (not MVP), because of R26: a `hook` policy — the stubs call
+`mt_not_implemented("<signature>")`, declared in a generated header, with a
+default definition that throws or aborts and that the test side can replace
+(e.g. by `QTest::qFail` + a default value) so that QTest goes on running the
+rest of the slots.
 
 ---
 
-## 9. Planner de tests y backends (modelo → tests)
+## 9. Test planner and backends (model → tests)
 
-### 9.1 Casos
+### 9.1 Cases
 
-- Por clase no plantilla con algo público: suite `config.naming.suite`
-  (`{Class}Test`) en el namespace de la clase.
-- Un caso por constructor público (`Constructs`, y si hay varios
-  `Constructs_<tipos>`), por método público no borrado ni destructor, y por
-  señal Qt (QTest: esqueleto `QSignalSpy`).
-- Nombres (`core/naming.h`): el del método; operadores por tabla
+- Per non-template class with anything public: suite `config.naming.suite`
+  (`{Class}Test`) in the class's namespace.
+- One case per public constructor (`Constructs`, and if there are several
+  `Constructs_<types>`), per public method that is not deleted, and per
+  destructor, and per Qt signal (QTest: a `QSignalSpy` skeleton).
+- Names (`core/naming.h`): the method's; operators through a table
   (`operator==`→`OperatorEq`, `operator[]`→`OperatorIndex`,
   `operator()`→`OperatorCall`, `operator bool`→`ConversionToBool`,
-  `operator const char*`→`ConversionToConstCharPtr`, …; la tabla completa está
-  en `test_base_name`). Si varios casos comparten nombre, los distingue el
-  sufijo de tipos (`type_suffix`, sin `const`/`&`, `*`→`ptr`):
-  `set_int`, `set_std_string`; lo que aún colisione (`size()` y `size() const`)
-  recibe `_2`, `_3`… por orden, también frente a nombres ya tomados por otros
-  métodos (`unique_test_names`).
+  `operator const char*`→`ConversionToConstCharPtr`, …; the full table is in
+  `test_base_name`). If several cases share a name, the type suffix tells them
+  apart (`type_suffix`, without `const`/`&`, `*`→`ptr`): `set_int`,
+  `set_std_string`; whatever still collides (`size()` and `size() const`) gets
+  `_2`, `_3`… in order, also against names already taken by other methods
+  (`unique_test_names`).
 
-### 9.2 Cuerpo
+### 9.2 Body
 
 ```cpp
 TEST(FooTest, size) {
@@ -893,40 +917,41 @@ TEST(FooTest, size) {
 }
 ```
 
-- **Placeholder primero** (R19): `FAIL()`/`GTEST_SKIP()`/`QFAIL`/`QSKIP`
-  retornan; el resto compila contra la API real pero no se ejecuta. GCC y
-  Clang no avisan de código inalcanzable con `-Wall -Wextra`; MSVC sí (C4702
-  en `/W4`): limitación documentada, MSVC no es objetivo.
-- `sut`: `Foo sut;` si es default-constructible (§6.3); si no, el constructor
-  público con todos los parámetros *construibles* y menos parámetros (empate:
-  orden de declaración) con locales; si ninguno → línea comentada + TODO.
-  Métodos `static` → sin `sut`.
-- Argumentos: un local por parámetro obligatorio `T nombre{};` con `T` = tipo
-  del parámetro sin `const`/`&` de nivel superior; nombre = el del parámetro (o
-  `argN`), sin colisiones. `T&&` → `std::move(nombre)` (+ `<utility>`).
-  Parámetros con valor por defecto: se omiten (comentario indicándolo).
-- Tipo *construible*: fundamental, enum, puntero, tipos `std::`/Qt de valor
-  conocidos, clases del mismo modelo default-constructibles,
-  `config.default_constructible_types`. Si algún argumento no lo es → la
-  llamada se emite comentada (`Stmt::commented_out`) con TODO.
-- Métodos `const` → a través de `const Foo& const_sut = sut;`.
-- `noexcept` → `static_assert(noexcept(<llamada>), "…")`.
-- Resultado: `const R result = …;` si `R` es valor; `R result = …;` si `R` es
-  referencia; `void` → solo la llamada. Siempre `(void)result;`.
-- Tipos anidados de la clase en firmas → calificados `Foo::Item` (los tests ya
-  están dentro del namespace de la clase).
+- **Placeholder first** (R19): `FAIL()`/`GTEST_SKIP()`/`QFAIL`/`QSKIP` return;
+  the rest compiles against the real API but does not run. GCC and Clang do not
+  warn about unreachable code with `-Wall -Wextra`; MSVC does (C4702 at `/W4`):
+  a documented limitation, MSVC is not a target.
+- `sut`: `Foo sut;` if it is default-constructible (§6.3); otherwise the public
+  constructor whose parameters are all *constructible* and that has the fewest
+  parameters (tie: declaration order) with locals; if none → a commented-out
+  line + TODO. `static` methods → no `sut`.
+- Arguments: one local per mandatory parameter `T name{};` with `T` = the
+  parameter's type without the top-level `const`/`&`; name = the parameter's (or
+  `argN`), without collisions. `T&&` → `std::move(name)` (+ `<utility>`).
+  Parameters with a default value: omitted (with a comment saying so).
+- *Constructible* type: fundamental, enum, pointer, known `std::`/Qt value
+  types, default-constructible classes of the same model,
+  `config.default_constructible_types`. If any argument is not → the call is
+  emitted commented out (`Stmt::commented_out`) with a TODO.
+- `const` methods → through `const Foo& const_sut = sut;`.
+- `noexcept` → `static_assert(noexcept(<call>), "…")`.
+- Result: `const R result = …;` if `R` is a value; `R result = …;` if `R` is a
+  reference; `void` → just the call. Always `(void)result;`.
+- Nested types of the class in signatures → qualified `Foo::Item` (the tests are
+  already inside the class's namespace).
 
-### 9.3 Includes del test
+### 9.3 Includes of the test
 
-Framework (`<gtest/gtest.h>` / `<QtTest>`), la cabecera bajo test **tal como la
-incluiría el usuario** (ruta relativa al primer `-I` que la contiene; si no, el
-nombre; `--include-as` para forzarla), `<utility>` si se usa `std::move`.
+The framework (`<gtest/gtest.h>` / `<QtTest>`), the header under test **as the
+user would include it** (the path relative to the first `-I` that contains it;
+otherwise the name; `--include-as` to force it), `<utility>` if `std::move` is
+used.
 
 ### 9.4 GoogleTest
 
-`TEST` por defecto; `TEST_F` con fixture generada (`Foo sut;` como miembro)
-cuando `config.gtest.fixture = true` (fase 6). gmock: mocks de interfaces
-(fase 6). Entrada: `gtest_main`, sin código extra.
+`TEST` by default; `TEST_F` with a generated fixture (`Foo sut;` as a member)
+when `config.gtest.fixture = true` (phase 6). gmock: mocks of interfaces
+(phase 6). Entry point: `gtest_main`, no extra code.
 
 ### 9.5 QTest
 
@@ -953,217 +978,220 @@ QTEST_GUILESS_MAIN(acme::TestFoo)
 #include "tst_foo.moc"
 ```
 
-- Fichero `tst_{stem}.cpp`; clase `Test{Class}` (configurables).
-- `#include "<stem>.moc"` al final, **debe coincidir con el nombre del fichero**
-  (AUTOMOC). Documentado en la propia salida con un comentario.
-- Main: `QTEST_GUILESS_MAIN` por defecto (`--qt-main appless|guiless|gui`).
+- File `tst_{stem}.cpp`; class `Test{Class}` (configurable).
+- `#include "<stem>.moc"` at the end, which **must match the file name**
+  (AUTOMOC). Documented in the output itself with a comment.
+- Main: `QTEST_GUILESS_MAIN` by default (`--qt-main appless|guiless|gui`).
 
-### 9.6 Diferencias Qt 5 / Qt 6 (`--qt 5|6`, defecto 6)
+### 9.6 Qt 5 / Qt 6 differences (`--qt 5|6`, default 6)
 
-Solo afecta a macros de excepción (R6). `QSKIP("…")` de un argumento y
-`QTEST_*MAIN` son iguales en 5.15 y 6.x.
+It only affects the exception macros (R6). A one-argument `QSKIP("…")` and
+`QTEST_*MAIN` are the same in 5.15 and 6.x.
 
 ---
 
-## 10. Escritura de ficheros
+## 10. Writing files
 
-Implementado en `core/output.h` (`OutputPlan`: el plan, como datos) y
-`core/writer.h` (`write_plan`: la única capa con E/S).
+Implemented in `core/output.h` (`OutputPlan`: the plan, as data) and
+`core/writer.h` (`write_plan`: the only layer with I/O).
 
-- `OutputPlan` = vector de `{ruta, contenido}`. La ruta es la que verá el
-  usuario (ya con el directorio de salida; relativa o absoluta); el writer la
-  resuelve contra un directorio base pero **la muestra tal cual**.
-- Acción por fichero, calculada contra disco: `Create` (no existe), `Unchanged`
-  (mismos bytes: **no se toca**, ni el mtime), y si difiere según
-  `--overwrite`: `never` → `WriteNew` (`<fichero>.new` al lado, el original
-  intacto), `force` → `Overwrite`, `merge` → `Merge` mediante la `MergeFn`
-  (fase 3). Sin `MergeFn`, o si esta devuelve «no se puede fusionar», se
-  degrada a `WriteNew` (con aviso `mt-unsupported` en el primer caso). Un
-  `MergeResult` idéntico al fichero es `Unchanged`.
-- `.new` existente se sobrescribe (es nuestro). Un `.new` viejo junto a un
-  fichero ahora `Unchanged` se deja como está.
-- **Todo o nada** (D8): primero se decide y valida *todo* (rutas vacías o
-  duplicadas tras normalizar, destino que existe y no es fichero regular,
-  ilegible…) acumulando todos los errores `mt-io`; con alguno no se escribe nada
-  y el informe queda vacío. Después, **stage-then-commit**: se escriben todos
-  los `<destino>.mt-tmp` (creando directorios padre) y solo si todos están en
-  disco se hace `rename` de cada uno; un fallo antes de los renames borra los
-  temporales. Un fallo *durante* los renames (prácticamente imposible tras
-  haber escrito los temporales) puede dejar ficheros anteriores colocados.
-  Al sobrescribir se conservan los permisos del fichero.
-- `--dry-run`: no escribe y rellena `FileResult::diff` (diff unificado, 3 líneas
-  de contexto, `--- a/…` / `+++ b/…`) de cada fichero cambiado: para un
-  `WriteNew` es el diff contra el propio fichero; para un `Merge`, contra el
-  resultado fusionado. Salida 0. `--check`: igual pero el llamador no imprime y
-  sale con 4 si `WriteReport::has_changes()` (cualquier acción que no sea
-  `Unchanged`). Combinados: se imprime y se sale con 4. Diff propio en
-  `core/diff.h`: Myers O(ND) tras recortar la cabeza y la cola comunes, con las
-  convenciones de git (`--- /dev/null` para ficheros nuevos, rangos `-3` /
-  `-2,0`, `\ No newline at end of file`; las líneas se comparan con su
-  terminador, así que añadir o quitar el salto final es un cambio). Pasadas
-  `kMaxEdits` (2000) ediciones el tramo distinto se presenta entero como «todo
-  lo viejo fuera, todo lo nuevo dentro»: sigue siendo un diff correcto, no
-  mínimo. Determinista; verificado con un aplicador de parches de referencia y
-  una LCS sobre 600 pares aleatorios.
-- Resumen (`format_summary`, por stderr salvo `--quiet`): `created X`,
+- `OutputPlan` = a vector of `{path, content}`. The path is the one the user
+  will see (already including the output directory; relative or absolute); the
+  writer resolves it against a base directory but **shows it as it is**.
+- Action per file, computed against the disk: `Create` (does not exist),
+  `Unchanged` (same bytes: **not touched**, not even the mtime), and if it
+  differs, depending on `--overwrite`: `never` → `WriteNew` (`<file>.new` next
+  to it, the original intact), `force` → `Overwrite`, `merge` → `Merge` through
+  the `MergeFn` (phase 3). Without a `MergeFn`, or if it answers "cannot be
+  merged", it degrades to `WriteNew` (with an `mt-unsupported` warning in the
+  first case). A `MergeResult` identical to the file is `Unchanged`.
+- An existing `.new` is overwritten (it is ours). An old `.new` next to a file
+  that is now `Unchanged` is left as it is.
+- **All or nothing** (D8): first *everything* is decided and validated (empty or
+  duplicate paths after normalising, a destination that exists and is not a
+  regular file, unreadable…) accumulating all the `mt-io` errors; with any of
+  them nothing is written and the report is empty. Then **stage-then-commit**:
+  all the `<destination>.mt-tmp` files are written (creating parent
+  directories) and only if all of them are on disk is each one `rename`d; a
+  failure before the renames deletes the temporaries. A failure *during* the
+  renames (practically impossible after the temporaries were written) can leave
+  some earlier files in place. When overwriting, the file's permissions are
+  kept.
+- `--dry-run`: does not write and fills `FileResult::diff` (a unified diff, 3
+  lines of context, `--- a/…` / `+++ b/…`) for each changed file: for a
+  `WriteNew` it is the diff against the file itself; for a `Merge`, against the
+  merged result. Exit 0. `--check`: the same, but the caller does not print and
+  exits with 4 if `WriteReport::has_changes()` (any action other than
+  `Unchanged`). Combined: it prints and exits with 4. Own diff in
+  `core/diff.h`: Myers O(ND) after trimming the common head and tail, with git's
+  conventions (`--- /dev/null` for new files, ranges `-3` / `-2,0`,
+  `\ No newline at end of file`; lines are compared together with their
+  terminator, so adding or removing the final newline is a change). Beyond
+  `kMaxEdits` (2000) edits the differing stretch is presented whole as "all the
+  old out, all the new in": still a correct diff, not a minimal one.
+  Deterministic; verified with a reference patch applier and an LCS over 600
+  random pairs.
+- Summary (`format_summary`, on stderr unless `--quiet`): `created X`,
   `unchanged X`, `overwrote X`, `wrote X.new (X exists and differs)`,
-  `merged N members into X` (`1 member`); con `--dry-run` los cambios se leen
+  `merged N members into X` (`1 member`); with `--dry-run` the changes read
   `would create X`, `would overwrite X`, …
 
 ---
 
-## 11. Merge por regiones (`--overwrite=merge`)
+## 11. Merge by regions (`--overwrite=merge`)
 
-### 11.1 Regiones
+### 11.1 Regions
 
-Líneas exactas (tras recortar espacios): `// <mt:begin ETIQUETA>` …
-`// <mt:end ETIQUETA>`, con `ETIQUETA` = `includes`, `functions` o el nombre
-calificado de la clase. Anidar o duplicar regiones = error `mt-merge-region`.
+Exact lines (after trimming whitespace): `// <mt:begin LABEL>` …
+`// <mt:end LABEL>`, with `LABEL` = `includes`, `functions` or the qualified
+name of the class. Nesting or duplicating regions = `mt-merge-region` error.
 
-### 11.2 Clave de miembro
+### 11.2 Member key
 
-Dos nociones distintas, para no confundirlas:
+Two different notions, so as not to confuse them:
 
-- **Firma completa** = (nombre, tipos de parámetros normalizados, `const`,
-  ref-qualifier). Identifica un miembro de verdad; la usa el frontend de código
-  para deduplicar (§6.5). `at(int)` y `at(int) const` son dos miembros.
-- **Clave de merge** = (nombre, aridad); si algún tipo de parámetro es
-  `Annotated` o hay anotación `overload` → (nombre, tipos normalizados).
-  Decide si un miembro inferido «ya existe» en el fichero del usuario. Ni el
-  tipo de retorno (no distingue sobrecargas) ni `const` (añadir `size() const`
-  junto a la `size()` del usuario sorprendería) forman parte de ella (R16);
-  diferencias en ellos → `mt-merge-mismatch`.
+- **Full signature** = (name, normalised parameter types, `const`,
+  ref-qualifier). It identifies a member for real; the code frontend uses it to
+  deduplicate (§6.5). `at(int)` and `at(int) const` are two members.
+- **Merge key** = (name, arity); if any parameter type is `Annotated` or there is
+  an `overload` annotation → (name, normalised types). It decides whether an
+  inferred member "already exists" in the user's file. Neither the return type
+  (it does not distinguish overloads) nor `const` (adding `size() const` next to
+  the user's `size()` would be surprising) is part of it (R16); differences in
+  them → `mt-merge-mismatch`.
 
-### 11.3 Algoritmo (por fichero objetivo existente)
+### 11.3 Algorithm (per existing target file)
 
-1. Idéntico al deseado → `Unchanged`.
-2. Analizar el fichero existente con el frontend de código: miembros de cada
-   clase (en **toda** la clase, no solo en la región) o definiciones
-   `Clase::metodo(…)` en el `.cpp`.
-3. Faltantes = deseados cuya clave no existe. Insertar sus declaraciones (con
-   sus TODOs) justo antes de la línea `<mt:end …>`, con la sangría del
-   marcador, en el orden del modelo deseado. En el `.cpp`, faltantes =
-   declarados en la cabecera (ya fusionada) sin definición, comparando por
-   **firma completa** (ahí los dos lados son código declarado).
-4. Miembro existente con tipos distintos a los inferidos → aviso
-   `mt-merge-mismatch`, sin tocarlo.
-5. Includes faltantes → región `includes`; si no existe, solo aviso.
-6. Clase sin región → `WriteNew` + aviso `mt-merge-no-region` (no se edita
-   código fuera de regiones, nunca).
-7. Comprobación final: se re-parsea el resultado; si tiene más nodos de error
-   que el original → `WriteNew` + aviso `mt-merge-broke` (aviso y no error:
-   un error impediría escribir el `.new`, D8).
-8. Nunca se borra nada.
+1. Identical to the desired one → `Unchanged`.
+2. Analyse the existing file with the code frontend: the members of each class
+   (in the **whole** class, not just in the region) or the `Class::method(…)`
+   definitions in the `.cpp`.
+3. Missing = desired ones whose key does not exist. Insert their declarations
+   (with their TODOs) right before the `<mt:end …>` line, with the marker's
+   indentation, in the order of the desired model. In the `.cpp`, missing =
+   declared in the header (already merged) without a definition, comparing by
+   **full signature** (there both sides are declared code).
+4. An existing member with types different from the inferred ones →
+   `mt-merge-mismatch` warning, left untouched.
+5. Missing includes → the `includes` region; if it does not exist, only a
+   warning.
+6. A class without a region → `WriteNew` + `mt-merge-no-region` warning (code
+   outside regions is never edited).
+7. Final check: the result is re-parsed; if it has more error nodes than the
+   original → `WriteNew` + `mt-merge-broke` warning (a warning and not an error:
+   an error would prevent writing the `.new`, D8).
+8. Nothing is ever deleted.
 
 ---
 
-## 12. Diagnósticos
+## 12. Diagnostics
 
-Formato GCC (lo entienden IDEs y CI): `fichero:línea:col: error|warning|note:
-mensaje [mt-código]`. Ordenados por (fichero, línea, columna, código).
-`--strict` convierte avisos en errores.
+GCC format (understood by IDEs and CI): `file:line:col: error|warning|note:
+message [mt-code]`. Sorted by (file, line, column, code). `--strict` turns
+warnings into errors.
 
-| Código | Severidad | Cuándo |
+| Code | Severity | When |
 |---|---|---|
-| `mt-io` | error | no se puede leer/escribir |
-| `mt-config` | error | configuración inválida o clave desconocida |
-| `mt-framework` | error | framework no detectable o ambiguo |
-| `mt-parse` | warning | el parser marcó regiones como `ERROR` (sin contar formas conocidas que se tratan por texto, como `QFETCH(int, v)`) |
-| `mt-auto` | error (política) | `auto` recibe un resultado de la API |
-| `mt-unknown-return`, `mt-unknown-param` | error (política) | tipo no inferible |
-| `mt-chained-call` | error (política) | llamada sobre el resultado de otra llamada |
-| `mt-unused-result` | warning | resultado no usado → `void` |
-| `mt-conflict` | warning | inferencias incompatibles |
-| `mt-literal`, `mt-literal-range` | warning | literal no soportado / fuera de rango |
+| `mt-io` | error | cannot read/write |
+| `mt-config` | error | invalid configuration or unknown key |
+| `mt-framework` | error | framework not detectable or ambiguous |
+| `mt-parse` | warning | the parser marked regions as `ERROR` (not counting known shapes handled by text, such as `QFETCH(int, v)`) |
+| `mt-auto` | error (policy) | `auto` receives a result of the API |
+| `mt-unknown-return`, `mt-unknown-param` | error (policy) | type cannot be inferred |
+| `mt-chained-call` | error (policy) | call on the result of another call |
+| `mt-unused-result` | warning | unused result → `void` |
+| `mt-conflict` | warning | incompatible inferences |
+| `mt-literal`, `mt-literal-range` | warning | unsupported / out-of-range literal |
 | `mt-vexing-parse` | warning | `Foo f();` |
-| `mt-ambiguous-scope` | warning / note | `X::m()` sin saber si `X` es clase o namespace; un nombre escrito con dos namespaces; varios `using namespace` sin `default_namespace` (aviso); un único `using namespace` que decide el namespace (nota) |
-| `mt-unknown-receiver`, `mt-unknown-fixture` | note / warning | receptor o fixture no localizados |
-| `mt-unknown-type` | warning | tipo usado (p. ej. en `EXPECT_THROW`) que no se genera ni se conoce |
-| `mt-no-include` | warning | clase sin `#include` que la reclame |
-| `mt-annotation` | error | anotación mal formada o sin destino único |
-| `mt-unsupported` | warning | construcción fuera del subconjunto soportado |
-| `mt-conditional` | note | miembro en `#if` con versiones distintas |
-| `mt-stub-may-pass` | warning | política `default` |
-| `mt-merge-region` | error | regiones mal formadas o duplicadas |
-| `mt-merge-no-region`, `mt-merge-mismatch`, `mt-merge-broke` | warning | ver §11 |
-| `mt-std` | warning | tipo que exige un estándar mayor que `--std` |
+| `mt-ambiguous-scope` | warning / note | `X::m()` without knowing whether `X` is a class or a namespace; a name written with two namespaces; several `using namespace` without `default_namespace` (warning); a single `using namespace` that decides the namespace (note) |
+| `mt-unknown-receiver`, `mt-unknown-fixture` | note / warning | receiver or fixture not located |
+| `mt-unknown-type` | warning | a type used (e.g. in `EXPECT_THROW`) that is neither generated nor known |
+| `mt-no-include` | warning | class with no `#include` claiming it |
+| `mt-annotation` | error | malformed annotation, or one without a single target |
+| `mt-unsupported` | warning | construct outside the supported subset |
+| `mt-conditional` | note | member under `#if` with different versions |
+| `mt-stub-may-pass` | warning | `default` policy |
+| `mt-merge-region` | error | malformed or duplicated regions |
+| `mt-merge-no-region`, `mt-merge-mismatch`, `mt-merge-broke` | warning | see §11 |
+| `mt-std` | warning | a type that requires a standard newer than `--std` |
 
 ---
 
 ## 13. CLI
 
-### 13.1 Sintaxis
+### 13.1 Syntax
 
 ```
-mirrortest gen-impl  [--tests] FICHERO... --out DIR [--out-include DIR] [--out-src DIR]
+mirrortest gen-impl  [--tests] FILE... --out DIR [--out-include DIR] [--out-src DIR]
                      [--framework auto|gtest|qtest] [--stub-policy throw|abort|default]
-                     [--no-exceptions] [--no-rtti] [--auto-policy error|todo] [COMUNES]
-mirrortest gen-tests [--header] FICHERO... --out DIR [--framework gtest|qtest]
-                     [--placeholder fail|skip] [--include-as RUTA] [--qt 5|6]
-                     [--qt-main appless|guiless|gui] [COMUNES]
-COMUNES: -I DIR ... | --std c++11|c++14|c++17|c++20|c++23 (defecto c++17)
-         --overwrite never|merge|force (defecto never) | --dry-run | --check
-         --config FICHERO.json | --templates DIR | --strict | --quiet | --verbose
-         --compile-commands FICHERO (fase 8: solo para extraer -I)
+                     [--no-exceptions] [--no-rtti] [--auto-policy error|todo] [COMMON]
+mirrortest gen-tests [--header] FILE... --out DIR [--framework gtest|qtest]
+                     [--placeholder fail|skip] [--include-as PATH] [--qt 5|6]
+                     [--qt-main appless|guiless|gui] [COMMON]
+COMMON:  -I DIR ... | --std c++11|c++14|c++17|c++20|c++23 (default c++17)
+         --overwrite never|merge|force (default never) | --dry-run | --check
+         --config FILE.json | --templates DIR | --strict | --quiet | --verbose
+         --compile-commands FILE (phase 8: only to extract -I)
 ```
 
-Implementado en `cli/run.h` (`parse_options`, `finish_run`, `run`); `main.cpp`
-solo construye el `Env` y llama a `run`. `--compile-commands` **no está
-registrado** hasta la tarea 8.1: pasarlo es hoy un error de uso, no una opción
-aceptada e ignorada.
+Implemented in `cli/run.h` (`parse_options`, `finish_run`, `run`); `main.cpp`
+only builds the `Env` and calls `run`. `--compile-commands` is **not
+registered** until task 8.1: passing it today is a usage error, not an accepted
+and ignored option.
 
-- **Entradas**: posicionales o con `--tests`/`--header` (AT §10); primero los
-  posicionales y luego los de la opción, cada grupo en el orden escrito. Sin
-  entradas → error de uso.
-- **Salida**: `gen-impl` necesita `--out`, o `--out-include` y `--out-src`;
-  `--out-include`/`--out-src` caen cada uno por separado en `--out`
-  (`Options::header_dir()` / `source_dir()`). `gen-tests` necesita `--out`.
-- **Opciones repetibles** (`-I`, `--tests`, `--header`): un valor por aparición,
-  todas las apariciones acumuladas. CLI11 las hace voraces por defecto
-  (`-I inc test.cpp` se tragaría `test.cpp` como segundo directorio y dejaría la
-  orden sin entradas); hacen falta a la vez `expected(1)`,
-  `allow_extra_args(false)` y `multi_option_policy(TakeAll)` (ninguna basta
-  sola, comprobado contra esta versión). `-Idir` pegado también funciona.
-- **Validación**: valores fuera de su conjunto (`--std c++98`, `--qt 4`,
-  `--framework auto` en `gen-tests`, …) son error de uso que dice qué es válido;
-  los conjuntos salen de `core/config.h` (`std_names()`, …), una sola fuente de
-  verdad para CLI y fichero. `--quiet` y `--verbose` se excluyen;
-  `--include-as` exige exactamente una cabecera. Las opciones de un comando que
-  no son del otro (`--stub-policy` en `gen-tests`) son error de uso.
-- **Precedencia** (D9): defaults → `--config` → línea de comandos, y **solo una
-  opción realmente pasada** pisa al fichero (su valor por defecto nunca lo
-  hace: `--std` por defecto es c++17 y un fichero con c++11 debe ganar si falta
-  `--std`). `--no-exceptions`/`--no-rtti` solo pueden activar. Las rutas
-  relativas (config, entradas, plantillas, salida) se resuelven contra
-  `Env::cwd`, nunca con `chdir`, y se **muestran como las escribió el usuario**.
-- **`--quiet`**: quita las notas y el resumen; los avisos y errores se imprimen
-  siempre. **`--verbose`**: más información (p. ej. las plantillas sustituidas).
+- **Inputs**: positional or with `--tests`/`--header` (AT §10); the positional
+  ones first and then those of the option, each group in the order written.
+  Without inputs → usage error.
+- **Output**: `gen-impl` needs `--out`, or `--out-include` and `--out-src`;
+  `--out-include`/`--out-src` each fall back separately to `--out`
+  (`Options::header_dir()` / `source_dir()`). `gen-tests` needs `--out`.
+- **Repeatable options** (`-I`, `--tests`, `--header`): one value per
+  occurrence, all occurrences accumulated. CLI11 makes them greedy by default
+  (`-I inc test.cpp` would swallow `test.cpp` as a second directory and leave
+  the command without inputs); `expected(1)`, `allow_extra_args(false)` and
+  `multi_option_policy(TakeAll)` are all needed at once (none is enough on its
+  own, checked against this version). A glued `-Idir` works too.
+- **Validation**: values outside their set (`--std c++98`, `--qt 4`,
+  `--framework auto` in `gen-tests`, …) are a usage error that says what is
+  valid; the sets come from `core/config.h` (`std_names()`, …), a single source
+  of truth for the CLI and the file. `--quiet` and `--verbose` are mutually
+  exclusive; `--include-as` requires exactly one header. Options of one command
+  that belong to the other (`--stub-policy` in `gen-tests`) are a usage error.
+- **Precedence** (D9): defaults → `--config` → command line, and **only an
+  option actually passed** overrides the file (its default value never does:
+  the default `--std` is c++17 and a file saying c++11 must win if `--std` is
+  absent). `--no-exceptions`/`--no-rtti` can only switch on. Relative paths
+  (config, inputs, templates, output) are resolved against `Env::cwd`, never
+  with `chdir`, and are **shown as the user wrote them**.
+- **`--quiet`**: removes the notes and the summary; warnings and errors are
+  always printed. **`--verbose`**: more information (e.g. the templates that were
+  replaced).
 
-### 13.2 Códigos de salida
+### 13.2 Exit codes
 
-`0` éxito (incluido «nada que hacer», `--help` y `--version`) · `1` hay errores
-de diagnóstico que no son de E/S · `2` uso incorrecto · `3` E/S (**todos** los
-errores registrados son `mt-io`; si hay mezcla, `1`) · `4` `--check` con
-diferencias (solo si no hay errores).
+`0` success (including "nothing to do", `--help` and `--version`) · `1` there are
+diagnostic errors that are not I/O ones · `2` incorrect usage · `3` I/O (**all**
+the recorded errors are `mt-io`; if they are mixed, `1`) · `4` `--check` with
+differences (only if there are no errors).
 
-`finish_run` es el final común de cada comando: aplica `--strict` (avisos →
-errores), imprime los diagnósticos ordenados por stderr, y con un informe de
-escritura: `--dry-run` imprime el diff de cada fichero por stdout; el resumen va
-a stderr salvo `--quiet` o `--check` (que queda en silencio, salvo
-diagnósticos); un error suprime diffs y resumen.
+`finish_run` is the common ending of every command: it applies `--strict`
+(warnings → errors), prints the sorted diagnostics on stderr, and with a write
+report: `--dry-run` prints each file's diff on stdout; the summary goes to
+stderr unless `--quiet` or `--check` (which stays silent, apart from
+diagnostics); an error suppresses diffs and summary.
 
-### 13.3 Lo único que cambia con `--std`
+### 13.3 The only things `--std` changes
 
-| Aspecto | Efecto |
+| Aspect | Effect |
 |---|---|
-| `u8'a'`, `u8"…"` | `char`/`const char*` hasta C++17; `char8_t` desde C++20 |
-| `std::optional`, `std::variant`, `std::string_view`, `std::byte` en firmas | aviso `mt-std` si `--std` < 17 |
-| sufijos `z`/`uz` | aviso `mt-std` si `--std` < 23 |
-| plantillas | variable `std` disponible (número: 11, 14, …) |
+| `u8'a'`, `u8"…"` | `char`/`const char*` up to C++17; `char8_t` from C++20 |
+| `std::optional`, `std::variant`, `std::string_view`, `std::byte` in signatures | `mt-std` warning if `--std` < 17 |
+| suffixes `z`/`uz` | `mt-std` warning if `--std` < 23 |
+| templates | the `std` variable is available (a number: 11, 14, …) |
 
 ---
 
-## 14. Configuración (`--config fichero.json`)
+## 14. Configuration (`--config file.json`)
 
 ```json
 {
@@ -1193,182 +1221,186 @@ diagnósticos); un error suprime diffs y resumen.
 }
 ```
 
-Implementado en `include/mirrortest/core/config.h` (`Config`, `apply_config_json`,
-`load_config_file`). Reglas:
+Implemented in `include/mirrortest/core/config.h` (`Config`,
+`apply_config_json`, `load_config_file`). Rules:
 
-- **Capas** (D9): `Config{}` (defaults) → `apply_config_json` (fichero) → la CLI
-  fija los campos de las opciones que recibió. Cada capa solo cambia lo que
-  dice; las **listas se reemplazan**, no se fusionan.
-- **Validación estricta, todo en una pasada**: clave desconocida (con su ruta:
-  `naming.colour`, `overrides.A::f.retuns`), tipo erróneo o valor fuera de su
-  conjunto son errores `mt-config`; se reportan todos y, si hay alguno, el
-  `Config` queda **intacto** (se trabaja sobre una copia).
-- El JSON admite comentarios `//` y `/* */`. Un JSON inválido es un error con la
-  posición que da nlohmann/json.
-- `naming.*`: cada patrón admite un único marcador y debe contenerlo
-  (`{stem}` en los de fichero, `{Class}` en los de nombre); si no, todas las
-  clases irían al mismo fichero o suite.
-- `no_exceptions` hace que `stub_policy: throw` se comporte como `abort`
-  (`effective_stub_policy`); un `default` explícito se respeta.
-- `file_header` debe ser un comentario C++ (`//` o `/*`), porque se emite tal
-  cual al principio de cada fichero; se normalizan los saltos de línea y se
-  recortan los finales.
-- Los tipos (`type_map`, `by_value_types`, `overrides.*.returns`/`params`,
-  `template_instantiations`, …) se guardan **normalizados** con
-  `normalize_spelling`; dos claves de `type_map` que normalizan igual son un
-  error.
-- `overrides`: clave `Clase::miembro` o `ns::Clase::miembro`; valor con
-  `returns`, `params` (objeto `{"1": "int", "3": "double"}`, posiciones desde 1
-  sin ceros a la izquierda), `const`, `static`, `virtual`, `noexcept`. Mismo
-  significado que la forma larga de la anotación (§7.11).
-- `type_map` se aplica al final a tipos `Inferred`/`Defaulted` (nunca a
-  `Declared`/`Annotated`), comparando `base` normalizado.
+- **Layers** (D9): `Config{}` (defaults) → `apply_config_json` (file) → the CLI
+  sets the fields of the options it received. Each layer only changes what it
+  says; **lists are replaced**, not merged.
+- **Strict validation, everything in one pass**: an unknown key (with its path:
+  `naming.colour`, `overrides.A::f.retuns`), a wrong type or a value outside its
+  set are `mt-config` errors; all of them are reported and, if there is any, the
+  `Config` stays **intact** (the work is done on a copy).
+- The JSON allows `//` and `/* */` comments. Invalid JSON is an error with the
+  position nlohmann/json gives.
+- `naming.*`: each pattern accepts a single placeholder and must contain it
+  (`{stem}` in the file ones, `{Class}` in the name ones); otherwise all the
+  classes would go to the same file or suite.
+- `no_exceptions` makes `stub_policy: throw` behave as `abort`
+  (`effective_stub_policy`); an explicit `default` is respected.
+- `file_header` must be a C++ comment (`//` or `/*`), because it is emitted
+  verbatim at the top of every file; line breaks are normalised and trailing ones
+  are trimmed.
+- Types (`type_map`, `by_value_types`, `overrides.*.returns`/`params`,
+  `template_instantiations`, …) are stored **normalised** with
+  `normalize_spelling`; two `type_map` keys that normalise to the same thing are
+  an error.
+- `overrides`: key `Class::member` or `ns::Class::member`; value with `returns`,
+  `params` (an object `{"1": "int", "3": "double"}`, positions from 1 with no
+  leading zeros), `const`, `static`, `virtual`, `noexcept`. Same meaning as the
+  long form of the annotation (§7.11).
+- `type_map` is applied last, to `Inferred`/`Defaulted` types (never to
+  `Declared`/`Annotated`), comparing the normalised `base`.
 
 ---
 
-## 15. Plantillas
+## 15. Templates
 
-Implementado en `core/templates.h` (`TemplateStore`) y
-`cmake/MtEmbedFiles.cmake`. Documentación de usuario en `docs/templates.md`.
+Implemented in `core/templates.h` (`TemplateStore`) and
+`cmake/MtEmbedFiles.cmake`. User documentation in `docs/templates.md`.
 
-- Por defecto **embebidas**: `templates/**/*.inja` → `mt_embedded_templates.cpp`
-  generado en *configure* (con `CONFIGURE_DEPENDS`: editar, añadir o quitar una
-  plantilla reconfigura y recompila solo; el fichero solo se reescribe si cambia
-  su contenido). Cada una es un *raw string* `R"mt_tpl(…)mt_tpl"`; el configure
-  falla nombrando el fichero si una plantilla contiene `)mt_tpl"`. Se normalizan
-  a LF al embeber (un `core.autocrlf` en Windows no debe cambiar la salida).
-  Probado en aislamiento con un mini-proyecto CMake (`tests/cmake/embed`):
-  contenido con `;`, `[ ]`, `"`, `\`, `${…}` y `@…@` intacto, CRLF→LF, orden
-  por nombre y no reescritura sin cambios.
-- `--templates DIR`: un fichero con la misma ruta relativa sustituye al
-  embebido; los demás siguen embebidos. Un `.inja` del directorio que no
-  sustituye a ninguno es un **aviso** y se ignora (casi siempre es una errata, y
-  un override que nunca se aplica en silencio es peor que un error). Un
-  directorio inexistente es un error `mt-io`; un override que no se puede leer,
-  también. `overridden()` lista los sustituidos (para `--verbose`).
-- inja con `trim_blocks` y `lstrip_blocks`; variable indefinida = error
-  (*verificado* en `tests/unit/test_dependencies.cpp`). **Peculiaridad
-  verificada**: con `trim_blocks` inja quita los espacios y tabuladores tras
-  cualquier `%}` además del salto de línea (Jinja solo el salto), así que
-  `{% if x %} de` pierde su espacio inicial; un espacio que deba sobrevivir va
-  en una expresión: `{% if x %}{{ " de " }}`. Los `include` se resuelven
-  **solo** contra el almacén, nunca contra ficheros del directorio actual.
-- Se analizan todas las plantillas la primera vez que se renderiza (o con
-  `validate()`), se registran como incluibles y se reportan **todas** las que no
-  analizan, cada una con su nombre y la línea que da inja. Mientras alguna esté
-  rota no se renderiza ninguna, y el error se repite en cada llamada (no solo en
-  la primera): es ruidoso a propósito. Los errores de un override apuntan a su
-  fichero; los de una plantilla embebida, a `(built-in) <nombre>`.
-- **Contrato**: la plantilla recibe un *view model* JSON con todo ya formateado
-  en C++ (`declaration`, `definition_head`, `body`, `notes[]`, `includes[]`,
-  `namespaces[]`…). La plantilla solo coloca. El tipo es `nlohmann::json`, que
-  es el de inja y **ordena las claves de los objetos**; lo que deba salir en un
-  orden concreto va en arrays (corrige la mención a `ordered_json` de la primera
-  versión). El merge (§11) reutiliza esas mismas cadenas, no las plantillas.
-  Variables de cada plantilla en `docs/templates.md`.
-- Plantilla compartida ya existente: `common/file_header.inja` (`file_header`,
+- **Embedded** by default: `templates/**/*.inja` → `mt_embedded_templates.cpp`,
+  generated at *configure* time (with `CONFIGURE_DEPENDS`: editing, adding or
+  removing a template reconfigures and recompiles by itself; the file is only
+  rewritten if its content changes). Each one is a *raw string*
+  `R"mt_tpl(…)mt_tpl"`; configure fails naming the file if a template contains
+  `)mt_tpl"`. They are normalised to LF when embedded (a `core.autocrlf` on
+  Windows must not change the output). Tested in isolation with a mini CMake
+  project (`tests/cmake/embed`): content with `;`, `[ ]`, `"`, `\`, `${…}` and
+  `@…@` intact, CRLF→LF, ordering by name and no rewriting without changes.
+- `--templates DIR`: a file with the same relative path replaces the embedded
+  one; the others stay embedded. A `.inja` in the directory that does not
+  replace any is a **warning** and is ignored (it is almost always a typo, and
+  an override that is silently never applied is worse than an error). A
+  nonexistent directory is an `mt-io` error; so is an override that cannot be
+  read. `overridden()` lists the ones that were replaced (for `--verbose`).
+- inja with `trim_blocks` and `lstrip_blocks`; an undefined variable = an error
+  (*verified* in `tests/unit/test_dependencies.cpp`). **Verified peculiarity**:
+  with `trim_blocks` inja strips the spaces and tabs after any `%}` in addition
+  to the line break (Jinja only the line break), so `{% if x %} of` loses its
+  leading space; a space that has to survive goes inside an expression:
+  `{% if x %}{{ " of " }}`. `include`s are resolved **only** against the store,
+  never against files in the current directory.
+- All the templates are parsed the first time anything is rendered (or with
+  `validate()`), registered as includable, and **all** the ones that fail to
+  parse are reported, each with its name and the line inja gives. While any of
+  them is broken none is rendered, and the error is repeated on every call (not
+  just the first): it is loud on purpose. Errors in an override point to its
+  file; those in an embedded template, to `(built-in) <name>`.
+- **Contract**: the template receives a JSON *view model* with everything
+  already formatted in C++ (`declaration`, `definition_head`, `body`,
+  `notes[]`, `includes[]`, `namespaces[]`…). The template only places things.
+  The type is `nlohmann::json`, which is inja's and **sorts the keys of
+  objects**; whatever has to come out in a specific order goes in arrays
+  (this corrects the mention of `ordered_json` in the first version). The merge
+  (§11) reuses those same strings, not the templates. The variables of each
+  template are in `docs/templates.md`.
+- Shared template already existing: `common/file_header.inja` (`file_header`,
   `source`) → `[file_header\n]// Generated by mirrortest[ from <source>]. Review
   every TODO(mt).\n`.
 
 ---
 
-## 16. Estrategia de pruebas del generador
+## 16. Testing strategy for the generator
 
-1. **Unitarias** (GoogleTest): cada módulo; fragmentos de C++ como cadenas.
-   Frontend de tests en dos mitades (*C++ → hechos*, *hechos → modelo*).
-2. **Golden** (`tests/golden/`, contrato completo en `tests/golden/golden.h`
-   y `tests/golden/README.md`): `tests/golden/<grupo>/<caso>/` con
-   - `args.txt` (un argumento por línea; `${IN}` y `${OUT}` → las rutas
-     **relativas** `in` y `out`), `input/` (→ `<work>/in`), `existing/`
-     (opcional, → `<work>/out` antes de ejecutar) y `notes.md` (ignorado);
-   - lo esperado: `expected/` (**solo** el árbol bajo `<work>/out`),
-     `stdout.txt`, `stderr.txt` y `exit_code.txt` (ausentes = vacío / 0).
-     Se separan del árbol esperado para no mezclar metadatos con ficheros
-     generados (cambio respecto a la primera versión, que usaba
-     `expected/diagnostics.txt`). Los casos que fijan el comportamiento `.new`
-     llevan ficheros `*.new` (desbloqueados en `.gitignore`).
-   - El runner ejecuta la CLI real **en proceso** (`mt::cli::run`) con un
-     directorio temporal nuevo como `cwd`, así que toda ruta impresa es la
-     relativa de `args.txt` y los goldens no dependen de dónde se clone el repo.
-     Cada caso se ejecuta **dos veces** en directorios distintos y los
-     resultados (código, stdout, stderr, árbol) deben ser idénticos.
-   - Convenciones comprobadas sobre la salida real: LF, salto final, sin
-     espacios finales en los ficheros (los flujos quedan exentos: un diff
-     unificado imprime el contexto vacío como `" "`), y ninguna ruta absoluta
-     (ni la del directorio de trabajo ni la del caso).
-   - Un fallo muestra el caso, el flujo o fichero y un diff esperado/real. Un
-     directorio de caso con una entrada desconocida (casi siempre una errata:
-     `expeced/`) es un error de layout.
-   - Actualización explícita: `MT_UPDATE_GOLDEN=1 ctest -R golden` o el target
-     `update-golden`; nunca a mano. Se **niega a grabar** una salida no
-     determinista o que rompa una convención, y borra lo que ya no se produce.
-   - El propio runner está probado (`tests/golden/test_golden_runner.cpp`) con
-     una CLI falsa: descubrimiento, layout, cada tipo de diferencia, update,
-     determinismo y convenciones. Los ficheros de `tests/golden/` se marcan
-     `-text` en `.gitattributes` para que git no reescriba sus finales de línea.
-3. **Round-trip** (CTest + `cmake -P tests/roundtrip/run_case.cmake`):
-   - gen-impl: generar → configurar un subproyecto que reutiliza las fuentes de
-     GoogleTest ya descargadas (sin red) → compilar stubs con `-std=c++11
-     -Wall -Wextra -Wpedantic -Werror` y tests con `-std=c++14 -Wall -Wextra
-     -Werror` (R27) → ejecutar con `--gtest_output=json` → exigir `tests > 0` y
-     **`failures == tests`** (todo rojo) → regenerar y exigir `unchanged`
-     (idempotencia).
-   - gen-tests: compilar la implementación de ejemplo + tests generados →
-     exigir `failures == tests` (`fail`) o `skipped == tests` (`skip`).
-   - QTest (si `find_package(Qt6|Qt5 COMPONENTS Test)` lo encuentra; si no, el
-     test CTest se marca *skipped* con `SKIP_RETURN_CODE`):
-     gen-tests → ninguna línea `PASS   : TestX::<slot>()` de un slot generado
-     y nº de líneas `FAIL!`/`SKIP` = nº de slots (`Totals:` cuenta también
-     `initTestCase`/`cleanupTestCase` como *passed*, no sirve tal cual);
-     gen-impl → salida ≠ 0, al menos un `FAIL!` y **ningún** `PASS` de un slot
-     de test (R26: tras la primera excepción QTest aborta).
-   - **ARM**: si `MT_ARM_CXX` está definido (CI instala
-     `g++-arm-linux-gnueabihf`), los stubs generados se compilan con
-     `-std=c++11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only`, y con política `abort`
-     además `-fno-exceptions -fno-rtti`.
-4. **Corpus de casos límite**: plantillas, namespaces anidados,
-   `const`/`static`/`noexcept`, sobrecargas, herencia, operadores,
-   `enum class`, punteros inteligentes, macros Qt, `#if`.
-5. **Sanitizers** ASan/UBSan en CI sobre todos los tests (ya activo).
-6. CI: GCC y Clang × Debug/RelWithDebInfo con `-Werror`; job de sanitizers; job
-   de round-trip con Qt 6 (y Qt 5 cuando exista el backend QTest); job ARM.
+1. **Unit** (GoogleTest): every module; C++ fragments as strings. The tests
+   frontend in two halves (*C++ → facts*, *facts → model*).
+2. **Golden** (`tests/golden/`, full contract in `tests/golden/golden.h` and
+   `tests/golden/README.md`): `tests/golden/<group>/<case>/` with
+   - `args.txt` (one argument per line; `${IN}` and `${OUT}` → the **relative**
+     paths `in` and `out`), `input/` (→ `<work>/in`), `existing/` (optional, →
+     `<work>/out` before running) and `notes.md` (ignored);
+   - the expectations: `expected/` (**only** the tree under `<work>/out`),
+     `stdout.txt`, `stderr.txt` and `exit_code.txt` (absent = empty / 0). They
+     are kept apart from the expected tree so as not to mix metadata with
+     generated files (a change from the first version, which used
+     `expected/diagnostics.txt`). The cases that pin the `.new` behaviour carry
+     `*.new` files (unblocked in `.gitignore`).
+   - The runner executes the real CLI **in process** (`mt::cli::run`) with a new
+     temporary directory as `cwd`, so every printed path is the relative one
+     from `args.txt` and the goldens do not depend on where the repo is cloned.
+     Each case is run **twice** in different directories and the results (code,
+     stdout, stderr, tree) must be identical.
+   - Conventions checked on the real output: LF, final newline, no trailing
+     spaces in files (streams are exempt: a unified diff prints empty context as
+     `" "`), and no absolute path (neither the working directory's nor the
+     case's).
+   - A failure shows the case, the stream or file, and an expected/actual diff.
+     A case directory with an unknown entry (almost always a typo: `expeced/`) is
+     a layout error.
+   - Explicit update: `MT_UPDATE_GOLDEN=1 ctest -R golden` or the
+     `update-golden` target; never by hand. It **refuses to record** output that
+     is non-deterministic or breaks a convention, and deletes what is no longer
+     produced.
+   - The runner itself is tested (`tests/golden/test_golden_runner.cpp`) with a
+     fake CLI: discovery, layout, each kind of difference, update, determinism
+     and conventions. The files under `tests/golden/` are marked `-text` in
+     `.gitattributes` so that git does not rewrite their line endings.
+3. **Round trip** (CTest + `cmake -P tests/roundtrip/run_case.cmake`):
+   - gen-impl: generate → configure a subproject that reuses the GoogleTest
+     sources already downloaded (no network) → compile the stubs with
+     `-std=c++11 -Wall -Wextra -Wpedantic -Werror` and the tests with
+     `-std=c++14 -Wall -Wextra -Werror` (R27) → run with `--gtest_output=json` →
+     require `tests > 0` and **`failures == tests`** (all red) → regenerate and
+     require `unchanged` (idempotence).
+   - gen-tests: compile the example implementation + generated tests → require
+     `failures == tests` (`fail`) or `skipped == tests` (`skip`).
+   - QTest (if `find_package(Qt6|Qt5 COMPONENTS Test)` finds it; otherwise the
+     CTest test is marked *skipped* with `SKIP_RETURN_CODE`): gen-tests → no
+     `PASS   : TestX::<slot>()` line for a generated slot and the number of
+     `FAIL!`/`SKIP` lines = the number of slots (`Totals:` also counts
+     `initTestCase`/`cleanupTestCase` as *passed*, so it cannot be used as it
+     is); gen-impl → exit ≠ 0, at least one `FAIL!` and **no** `PASS` for a test
+     slot (R26: after the first exception QTest aborts).
+   - **ARM**: if `MT_ARM_CXX` is defined (CI installs
+     `g++-arm-linux-gnueabihf`), the generated stubs are compiled with
+     `-std=c++11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only`, and with the
+     `abort` policy also `-fno-exceptions -fno-rtti`.
+4. **Corpus of edge cases**: templates, nested namespaces,
+   `const`/`static`/`noexcept`, overloads, inheritance, operators,
+   `enum class`, smart pointers, Qt macros, `#if`.
+5. **Sanitizers** ASan/UBSan in CI on all the tests (already active).
+6. CI: GCC and Clang × Debug/RelWithDebInfo with `-Werror`; a sanitizers job; a
+   round-trip job with Qt 6 (and Qt 5 once the QTest backend exists); an ARM
+   job.
 
 ---
 
-## 17. Dependencias
+## 17. Dependencies
 
-| Dependencia | Versión | Commit | Licencia | Uso |
+| Dependency | Version | Commit | Licence | Use |
 |---|---|---|---|---|
-| tree-sitter | v0.25.10 | `da6fe9be…` | MIT | runtime del parser (ABI 13–15) |
-| tree-sitter-cpp | v0.23.4 | `f41e1a04…` | MIT | gramática C++ (ABI 14) |
-| nlohmann/json | v3.12.0 | `55f93686…` | MIT | configuración, view models |
-| inja | v3.5.0 | `7d1b4600…` | MIT | plantillas |
+| tree-sitter | v0.25.10 | `da6fe9be…` | MIT | parser runtime (ABI 13–15) |
+| tree-sitter-cpp | v0.23.4 | `f41e1a04…` | MIT | C++ grammar (ABI 14) |
+| nlohmann/json | v3.12.0 | `55f93686…` | MIT | configuration, view models |
+| inja | v3.5.0 | `7d1b4600…` | MIT | templates |
 | CLI11 | v2.5.0 | `4160d259…` | BSD-3 | CLI |
-| GoogleTest | v1.16.0 | `6910c9d9…` | BSD-3 | tests (última línea con C++14, R7) |
+| GoogleTest | v1.16.0 | `6910c9d9…` | BSD-3 | tests (the last line with C++14, R7) |
 
-Commits completos y mecanismo en `cmake/MtDependencies.cmake`. Cambiar una
-versión es un cambio revisado: tag y commit juntos, y re-ejecutar goldens y
-round-trip. Requisitos de build: CMake ≥ 3.20, compilador C++17 y C11, git.
+Full commits and the mechanism in `cmake/MtDependencies.cmake`. Changing a
+version is a reviewed change: tag and commit together, and re-running the
+goldens and the round trip. Build requirements: CMake ≥ 3.20, a C++17 and C11
+compiler, git.
 
 ---
 
-## 18. Riesgos (actualizado)
+## 18. Risks (updated)
 
-| Riesgo | Mitigación |
+| Risk | Mitigation |
 |---|---|
-| Inferencia incorrecta de tipos | `Origin` + `TODO(mt)`, error con `auto`, anotaciones, `type_map` |
-| Sobrescritura de código del usuario | `never` por defecto, merge solo dentro de regiones, re-parseo de comprobación, todo o nada |
-| Macros que rompen el parseo sintáctico | blanking con tabla + `ignore_macros`; aviso `mt-parse` si quedan nodos `ERROR` |
-| Ramas `#if` contradictorias | §6.5 |
-| Diferencias ILP32/LP64 | §7.5, nunca `long` por magnitud |
-| Tests generados que pasan sin valor | placeholder primero; política de stubs `throw` |
-| Ejecutar código legado con valores basura | placeholder primero: el cuerpo no se ejecuta |
-| Deriva de GTest/Qt/tree-sitter | versiones fijadas por commit; `test_syntax_tree.cpp` fija formas de nodo; goldens |
-| Red corporativa sin acceso a GitHub | `FETCHCONTENT_SOURCE_DIR_*` con verificación de commit |
-| Alcance inabarcable | subconjunto declarado; el resto `mt-unsupported`, nunca silencio |
+| Wrong type inference | `Origin` + `TODO(mt)`, an error with `auto`, annotations, `type_map` |
+| Overwriting user code | `never` by default, merge only inside regions, a re-parse check, all or nothing |
+| Macros that break syntactic parsing | blanking with a table + `ignore_macros`; `mt-parse` warning if `ERROR` nodes remain |
+| Contradictory `#if` branches | §6.5 |
+| ILP32/LP64 differences | §7.5, never `long` by magnitude |
+| Generated tests that pass without value | placeholder first; `throw` stub policy |
+| Running legacy code with garbage values | placeholder first: the body does not run |
+| Drift of GTest/Qt/tree-sitter | versions pinned by commit; `test_syntax_tree.cpp` pins node shapes; goldens |
+| Corporate network without access to GitHub | `FETCHCONTENT_SOURCE_DIR_*` with commit verification |
+| Unbounded scope | declared subset; the rest `mt-unsupported`, never silence |
 
-## 19. Fuera de alcance (explícito)
+## 19. Out of scope (explicit)
 
-Inferir lógica de negocio; resolver sobrecargas por semántica; ejecutar el
-preprocesador real; metaprogramación; generar `CMakeLists.txt` del proyecto
-usuario; formatear con clang-format (la salida ya sigue un estilo fijo).
+Inferring business logic; resolving overloads by semantics; running the real
+preprocessor; metaprogramming; generating the user project's `CMakeLists.txt`;
+formatting with clang-format (the output already follows a fixed style).

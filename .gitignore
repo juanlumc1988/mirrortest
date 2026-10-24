@@ -123,3 +123,6 @@ ui_*.h
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ---- Local assistant instructions (kept out of the repository) ----
+CLAUDE.md

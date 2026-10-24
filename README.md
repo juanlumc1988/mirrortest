@@ -110,8 +110,12 @@ output with no RTTI and, on request, no exceptions.
 - [docs/design.md](docs/design.md) — the technical design: every decision,
   every inference rule, every diagnostic code. Authoritative.
 - [docs/plan.md](docs/plan.md) — implementation plan and progress.
-- [docs/analisis-tecnico.md](docs/analisis-tecnico.md) — the original analysis
-  the design was reviewed against.
+- [docs/development.md](docs/development.md) — building, testing, sanitizers
+  and the code conventions.
+- [docs/templates.md](docs/templates.md) — the output templates and their
+  variables.
+- [docs/technical-analysis.md](docs/technical-analysis.md) — the original
+  analysis the design was reviewed against.
 
 ## Licence
 
