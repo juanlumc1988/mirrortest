@@ -44,7 +44,7 @@ struct Env {
 };
 
 enum class Command { GenImpl, GenTests };
-enum class QtMain { Appless, GuiLess, Gui };
+using QtMain = core::QtMain;
 
 // Everything the command line said, validated.
 struct Options {

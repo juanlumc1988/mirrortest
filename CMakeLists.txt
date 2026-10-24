@@ -48,7 +48,9 @@ add_library(mt_core STATIC
     src/backend/gtest_backend.cpp
     src/backend/impl_backend.cpp
     src/backend/impl_merge.cpp
+    src/backend/qtest_backend.cpp
     src/backend/test_planner.cpp
+    src/backend/test_render.cpp
     src/cli/gen_impl.cpp
     src/cli/gen_tests.cpp
     src/cli/plan_collector.cpp
@@ -122,6 +124,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_merge.cpp
         tests/unit/test_naming.cpp
         tests/unit/test_pipeline.cpp
+        tests/unit/test_qtest_backend.cpp
         tests/unit/test_qtest_frontend.cpp
         tests/unit/test_preprocess.cpp
         tests/unit/test_regions.cpp

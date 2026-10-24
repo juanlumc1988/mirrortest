@@ -231,7 +231,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   (reversed order), framework detection (§7.1). Tests. (`gen-impl` accepts Qt
   Test files from here on, since its backend does not depend on the framework;
   the goldens and the compile-and-run round trip are 5.3. The details are §7.12.)
-- [ ] **5.2 QTest backend** — `backend/qtest_backend` + `qtest/test_file.inja`
+- [x] **5.2 QTest backend** — `backend/qtest_backend` + `qtest/test_file.inja`
   (§9.5–9.6): `.moc`, main, `--qt 5|6`, `QSignalSpy` for signals.
 - [ ] **5.3 QTest goldens and round trip** — both directions; expectations of
   §16.3 (R26). CI: a job with `qt6-base-dev`; a second job with `qtbase5-dev`.

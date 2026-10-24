@@ -308,4 +308,9 @@ std::vector<std::string> unique_test_names(const std::vector<TestNameInput>& inp
     return names;
 }
 
+bool is_qtest_special_name(std::string_view name) {
+    if (name == "init" || name == "cleanup" || name == "initTestCase" || name == "cleanupTestCase") return true;
+    return name.size() > 5 && name.compare(name.size() - 5, 5, "_data") == 0;
+}
+
 }  // namespace mt::core

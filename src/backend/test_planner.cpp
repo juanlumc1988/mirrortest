@@ -220,15 +220,19 @@ public:
     }
 
 private:
-    // Public, not deleted, not a signal (a signal has no body to call), not a template.
-    static std::vector<const ir::Method*> testable_methods(const ir::Class& c) {
+    // Public, not deleted, not a template. A signal has no body to call: GoogleTest has
+    // nothing to say about it, Qt Test listens to it with a QSignalSpy.
+    std::vector<const ir::Method*> testable_methods(const ir::Class& c) const {
         std::vector<const ir::Method*> out;
         for (const ir::Method& m : c.methods) {
-            if (m.access != ir::Access::Public || m.is_deleted || m.is_template || m.qt_role == ir::QtRole::Signal) continue;
+            if (m.access != ir::Access::Public || m.is_deleted || m.is_template) continue;
+            if (m.qt_role == ir::QtRole::Signal && !qtest()) continue;
             out.push_back(&m);
         }
         return out;
     }
+
+    bool qtest() const { return options_.framework == ir::Framework::QTest; }
 
     static bool is_abstract(const ir::Class& c) {
         return std::any_of(c.methods.begin(), c.methods.end(), [](const ir::Method& m) { return m.is_pure; });
@@ -342,6 +346,8 @@ private:
             plan_constructor(c, m, names, tc.body);
         } else if (m.kind == ir::MethodKind::Destructor) {
             plan_destructor(c, names, tc.body);
+        } else if (m.qt_role == ir::QtRole::Signal) {
+            plan_signal(c, m, names, tc.body);
         } else {
             plan_call(c, m, names, tc.body, tc.target);
         }
@@ -375,6 +381,32 @@ private:
         body.push_back(code("(void)sut", !sut.available));
         body.push_back(comment("Assert"));
         body.push_back(comment("TODO(mt): check what the destructor releases"));
+    }
+
+    // A signal is not called, it is listened to: a QSignalSpy on sut. What makes sut
+    // emit it is what the person writing the test knows and the tool does not.
+    void plan_signal(const ir::Class& c, const ir::Method& m, Names& names, std::vector<Stmt>& body) {
+        names.reserve("spy");
+        const Sut sut = make_sut(c, names, "sut");
+        add_locals(body, sut.setup, !sut.available);
+        if (!sut.available) body.push_back(comment("TODO(mt): " + sut.why));
+        body.push_back(code(sut.available ? sut.declaration : c.name + " sut", !sut.available));
+
+        std::string member = "&" + c.name + "::" + m.name;
+        const bool overloaded = std::count_if(c.methods.begin(), c.methods.end(), [&](const ir::Method& other) {
+                                    return other.qt_role == ir::QtRole::Signal && other.name == m.name;
+                                }) > 1;
+        if (overloaded) {
+            std::vector<std::string> types;
+            for (const ir::Param& p : m.params) types.push_back(qualify_nested(p.type.spelling, c));
+            member = "static_cast<void (" + c.name + "::*)(" + join(types, ", ") + ")>(" + member + ")";
+        }
+        body.push_back(code("QSignalSpy spy(&sut, " + member + ")", !sut.available));
+        body.push_back(code("(void)spy", !sut.available));
+        body.push_back(comment("Act"));
+        body.push_back(comment("TODO(mt): make sut emit the signal"));
+        body.push_back(comment("Assert"));
+        body.push_back(comment("TODO(mt): check spy.count() and the arguments of spy.takeFirst()"));
     }
 
     void plan_call(const ir::Class& c, const ir::Method& m, Names& names, std::vector<Stmt>& body, const std::string& target) {
@@ -420,6 +452,20 @@ private:
 
     // ---- one class ------------------------------------------------------------------------------------------------
 
+    // A slot called init() is run before every test (design 9.5): a method of that name is
+    // tested by a slot called init_call(), which Qt Test knows nothing about.
+    static std::vector<std::string> without_qtest_special_names(std::vector<std::string> names) {
+        std::set<std::string> taken(names.begin(), names.end());
+        for (std::string& name : names) {
+            if (!core::is_qtest_special_name(name)) continue;
+            std::string candidate = name + "_call";
+            for (unsigned n = 2; taken.count(candidate) != 0; ++n) candidate = name + "_call_" + std::to_string(n);
+            taken.insert(candidate);
+            name = candidate;
+        }
+        return names;
+    }
+
     ir::TestPlan plan_class(const ir::Class& c, const std::vector<const ir::Method*>& testable) {
         std::vector<core::TestNameInput> inputs;
         for (const ir::Method* m : testable) {
@@ -430,10 +476,12 @@ private:
             for (const ir::Param& p : m->params) in.param_types.push_back(p.type.spelling);
             inputs.push_back(std::move(in));
         }
-        const std::vector<std::string> names = core::unique_test_names(inputs);
+        std::vector<std::string> names = core::unique_test_names(inputs);
+        if (qtest()) names = without_qtest_special_names(std::move(names));
 
         ir::TestSuite suite;
-        suite.name = core::expand_pattern(options_.config.naming.suite, core::snake_case(c.name), c.name);
+        suite.name = core::expand_pattern(qtest() ? options_.config.naming.qtest_class : options_.config.naming.suite,
+                                          core::snake_case(c.name), c.name);
         suite.target_class = c.name;
         suite.ns = c.ns;
         bool moves = false;
@@ -443,8 +491,9 @@ private:
         }
 
         ir::TestPlan plan;
-        plan.file = core::expand_pattern(options_.config.naming.gtest_file, core::snake_case(c.name), c.name);
-        plan.includes.push_back({"gtest/gtest.h", true, {}});
+        plan.file = core::expand_pattern(qtest() ? options_.config.naming.qtest_file : options_.config.naming.gtest_file,
+                                         core::snake_case(c.name), c.name);
+        plan.includes.push_back({qtest() ? "QtTest" : "gtest/gtest.h", true, {}});
         plan.includes.push_back({options_.header_include, false, {}});
         if (moves) plan.includes.push_back({"utility", true, {}});
         plan.suites.push_back(std::move(suite));

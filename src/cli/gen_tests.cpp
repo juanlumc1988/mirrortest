@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "mirrortest/backend/gtest_backend.h"
+#include "mirrortest/backend/qtest_backend.h"
 #include "mirrortest/backend/test_planner.h"
 #include "mirrortest/cli/plan_collector.h"
 #include "mirrortest/cli/run.h"
@@ -70,11 +71,21 @@ std::vector<core::OutputFile> process_input(const Options& options, const Env& e
         diagnostics.add(std::move(note));
     }
 
+    const ir::Framework framework = options.framework.value_or(ir::Framework::GTest);
     backend::PlannerOptions planner;
     planner.config = config;
+    planner.framework = framework;
     planner.header_include = include;
     const std::vector<ir::TestPlan> plans = backend::plan_tests(model, planner, diagnostics);
 
+    if (framework == ir::Framework::QTest) {
+        backend::QtestOptions qtest;
+        qtest.config = config;
+        qtest.qt_main = options.qt_main;
+        qtest.source = input;
+        qtest.out_dir = options.out.value_or("");
+        return backend::generate_qtest(plans, qtest, templates, diagnostics).files;
+    }
     backend::GtestOptions gtest;
     gtest.config = config;
     gtest.source = input;
@@ -96,11 +107,6 @@ int run_gen_tests(const Options& options, const Env& env) {
         }
     }
     if (diagnostics.has_errors() || !templates.validate(diagnostics)) return finish_run(options, env, diagnostics, nullptr);
-
-    if (options.framework == ir::Framework::QTest) {
-        diagnostics.error(core::code::unsupported, "--framework qtest is not supported yet (see docs/plan.md, phase 5)");
-        return finish_run(options, env, diagnostics, nullptr);
-    }
 
     PlanCollector collector;
     for (const std::string& input : options.inputs) {

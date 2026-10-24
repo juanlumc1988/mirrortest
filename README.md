@@ -6,15 +6,13 @@ Bidirectional C++ test/code generator: derives class and function stubs from
 GoogleTest/QTest tests (TDD), and generates test skeletons from existing
 classes. The command it builds is `mirrortest`.
 
-**Status: `gen-impl` and `gen-tests` work for GoogleTest; `gen-impl` reads Qt
-Test files too; `gen-tests` for QTest is next.**
+**Status: `gen-impl` and `gen-tests` work for GoogleTest and Qt Test.**
 Both commands are complete end to end — parsing, inference or planning, output,
 `.new` files, `--dry-run`/`--check`, and for `gen-impl` merging into earlier
 output — and verified by unit tests, golden files, compile-and-run round trips
-and a syntax check of every generated stub as strict C++11. QTest skeletons from
-`gen-tests` are designed and not written yet; see [docs/plan.md](docs/plan.md)
-for what is done and what comes next. The QTest line under [Usage](#usage)
-describes the target behaviour.
+and a syntax check of every generated stub as strict C++11. The Qt Test side has
+its goldens and round trips still to come (see [docs/plan.md](docs/plan.md) for
+what is done and what comes next).
 
 ## What it does
 
@@ -53,7 +51,7 @@ created src/acme/foo.cpp
 $ mirrortest gen-tests include/acme/foo.h -I include --out tests/
 created tests/foo_test.cpp
 
-# The same for QTest (not written yet).
+# The same for Qt Test.
 $ mirrortest gen-tests include/acme/foo.h -I include --out tests/ --framework qtest
 created tests/tst_foo.cpp
 ```

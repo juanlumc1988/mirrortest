@@ -1319,10 +1319,34 @@ QTEST_GUILESS_MAIN(acme::TestFoo)
 #include "tst_foo.moc"
 ```
 
-- File `tst_{stem}.cpp`; class `Test{Class}` (configurable).
+`backend/qtest_backend` (`build_qtest_views`, `generate_qtest`; the template
+`qtest/test_file.inja`, variables in `templates.md`), with the statement
+spelling it shares with the GoogleTest backend in `backend/test_render`.
+
+- File `tst_{stem}.cpp` (`naming.qtest_file`); class `Test{Class}`
+  (`naming.qtest_class`); one class per file. The planner spells both, so the
+  GoogleTest patterns are not consulted.
 - `#include "<stem>.moc"` at the end, which **must match the file name**
-  (AUTOMOC). Documented in the output itself with a comment.
-- Main: `QTEST_GUILESS_MAIN` by default (`--qt-main appless|guiless|gui`).
+  (AUTOMOC), with a comment saying so in the output itself.
+- Main: `QTEST_GUILESS_MAIN` by default (`--qt-main appless|guiless|gui` choose
+  `QTEST_APPLESS_MAIN`, `QTEST_GUILESS_MAIN`, `QTEST_MAIN`), naming the class with
+  its namespace, since the macro stands outside it. A plan with several classes
+  gets one entry point, for the first, and an `mt-unsupported` warning.
+- Placeholder: `QFAIL("…")`, or `QSKIP("…")` with `--placeholder skip`. Both
+  return from the slot, so what follows is compiled and not run.
+- **Signals** are tests here (GoogleTest has nothing to say about them): the
+  body builds `sut`, listens with `QSignalSpy spy(&sut, &Foo::changed);
+  (void)spy;` and leaves two `TODO(mt)`: make `sut` emit it, check `spy`. An
+  overloaded signal takes its address through
+  `static_cast<void (Foo::*)(int)>(&Foo::changed)`.
+- **Names Qt Test gives a meaning.** A slot called `init`, `cleanup`,
+  `initTestCase` or `cleanupTestCase` runs around the tests, and `X_data`
+  feeds the slot `X`. A method of the class under test with one of those names
+  is tested by a slot with `_call` after it (`init_call`, `size_data_call`; a
+  number if that is taken too): otherwise its placeholder would run before every
+  other test.
+- Includes: `<QtTest>` (which has `QSignalSpy`), the header, `<utility>` if
+  needed.
 
 ### 9.6 Qt 5 / Qt 6 differences (`--qt 5|6`, default 6)
 

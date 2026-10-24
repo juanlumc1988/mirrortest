@@ -35,6 +35,10 @@ enum class GuardStyle { Ifndef, PragmaOnce };
 enum class StubPolicy { Throw, Abort, Default };
 enum class Placeholder { Fail, Skip };
 enum class AutoPolicy { Error, Todo };
+// How a generated Qt Test file starts its event loop: QTEST_APPLESS_MAIN (no
+// application object), QTEST_GUILESS_MAIN (a QCoreApplication) or QTEST_MAIN
+// (a QApplication).
+enum class QtMain { Appless, GuiLess, Gui };
 
 // The spellings used on the command line and in the configuration file.
 const char* to_string(CxxStd value);          // "c++11" .. "c++23"

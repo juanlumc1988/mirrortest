@@ -312,3 +312,13 @@ TEST(UniqueTestNames, EverythingIsAValidIdentifierAndDeterministic) {
 TEST(UniqueTestNames, Empty) {
     EXPECT_TRUE(unique_test_names({}).empty());
 }
+
+TEST(NamingQtest, TheNamesQtTestGivesAMeaning) {
+    for (const char* name : {"init", "cleanup", "initTestCase", "cleanupTestCase", "size_data", "initTestCase_data", "a_data", "x_y_data"}) {
+        EXPECT_TRUE(is_qtest_special_name(name)) << name;
+    }
+    for (const char* name : {"", "_data", "data", "size", "init_call", "Init", "initTest", "cleanupTest", "size_datum", "size_data_", "inits",
+                             "xdata", "size_Data"}) {
+        EXPECT_FALSE(is_qtest_special_name(name)) << name;
+    }
+}

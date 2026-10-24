@@ -148,5 +148,29 @@ The default puts a blank line after the file header, none between the
 includes, one around the namespace braces and one between tests; nothing inside
 the namespace is indented.
 
-More templates (`qtest/test_file.inja`) are documented here as the backends that
-use them land.
+### `qtest/test_file.inja`
+
+One generated Qt Test file (`gen-tests --framework qtest`). It starts with
+`{% include "common/file_header.inja" %}`, so it receives that template's
+variables too.
+
+| Variable | Type | Meaning |
+|---|---|---|
+| `file_header`, `source` | string | as for `common/file_header.inja` |
+| `includes` | array of string | whole `#include` lines, as for `gtest/test_file.inja` (`<QtTest>`, `<utility>`, then the header under test) |
+| `sections` | array | one per namespace, in order of first appearance |
+| `main` | array of string | what ends the file, outside every namespace: the entry-point macro (`QTEST_GUILESS_MAIN(acme::TestFoo)`), the comment about AUTOMOC and the `#include "tst_foo.moc"`; empty if there is no test class |
+
+A section has `open` and `close` (the namespace lines; empty for the global
+namespace) and `classes`: each `{name, head, tests}`. `head` is the whole
+declaration of the test class, complete and indented (`class TestFoo : public
+QObject {`, `    Q_OBJECT`, `private slots:`, one `    void size();` per test,
+`};`). `tests` is an array of `{name, lines}`; `lines` is one slot's
+definition, complete and indented (`void TestFoo::size() {`, `    QFAIL("...");`,
+`}`).
+
+The default puts a blank line after the file header, none between the includes,
+one around the namespace braces, between the class and each slot, and before
+the entry point; nothing inside a namespace is indented. A project that puts
+its slots in the class body instead overrides this template and builds them from
+`tests[].lines`.

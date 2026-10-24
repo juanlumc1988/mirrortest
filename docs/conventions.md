@@ -401,6 +401,17 @@ the configuration.
 How the test includes the header: `--include-as PATH`, else the path below the
 first `-I` directory that contains it, else the file name.
 
+With `--framework qtest` the file is `tst_foo.cpp` and holds a `QObject` called
+`TestFoo` whose private slots are the tests, an entry point (`--qt-main
+appless|guiless|gui`, `guiless` by default) and `#include "tst_foo.moc"` -- the
+name moc's output must have for AUTOMOC to find it, which is why the name of the
+file is not free. The placeholder is `QFAIL(...)`, or `QSKIP(...)` with
+`--placeholder skip`. A signal is a test here: `sut` and a `QSignalSpy` on it,
+and a `TODO(mt)` to make it emit and to look at the spy. A method called `init`,
+`cleanup`, `initTestCase` or `cleanupTestCase`, or one that ends in `_data`, would
+be a function Qt Test calls by itself, so its test is a slot with `_call` after
+the name (`init_call`).
+
 Not tested, and why: signals; deleted, protected and private members; member
 templates and class templates (they need instantiations); free functions (the
 run prints a note). A member declared under `#if` is tested as if it always
@@ -472,8 +483,6 @@ differences.
 
 Honest list of what it does not do (yet):
 
-- `gen-impl` reads GoogleTest and Qt Test; `gen-tests` writes GoogleTest only:
-  `--framework qtest` is rejected with `mt-unsupported`.
 - Merging adds members; it does not reconcile a changed one (a mismatch is
   reported) and never removes a member the tests no longer mention.
 - One test file per header, in practice: two files that would write the same

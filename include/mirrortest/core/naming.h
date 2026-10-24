@@ -85,6 +85,13 @@ struct TestNameInput {
 //     the plain name), also against names already taken by other inputs.
 std::vector<std::string> unique_test_names(const std::vector<TestNameInput>& inputs);
 
+// Names that Qt Test gives a meaning when they are slots of the test class:
+// init and cleanup run around every test, initTestCase and cleanupTestCase around
+// the whole class, and `X_data` feeds the slot `X` its rows. A method of the class
+// under test called `init()` must not become a slot called `init`, or its
+// placeholder would run before every other test.
+bool is_qtest_special_name(std::string_view name);
+
 }  // namespace mt::core
 
 #endif  // MT_CORE_NAMING_H

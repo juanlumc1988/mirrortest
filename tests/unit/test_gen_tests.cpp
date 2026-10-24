@@ -314,13 +314,59 @@ TEST(GenTestsOptions, TheIgnoreMacrosListReachesTheFrontend) {
     EXPECT_FALSE(contains(text, "MY_ATTR"));
 }
 
-TEST(GenTestsOptions, QTestIsNotSupportedYet) {
+// ---- Qt Test ------------------------------------------------------------------------------------------------
+
+TEST(GenTestsQt, WritesOneTestClassPerClassNamedAfterTheConfiguredPattern) {
     const TempDir dir;
     write_foo(dir);
     const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--framework", "qtest"});
-    EXPECT_EQ(r.code, 1);
-    EXPECT_TRUE(contains(r.err, "--framework qtest is not supported yet")) << r.err;
-    EXPECT_FALSE(exists(dir, "tests"));
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created tests/tst_foo.cpp\n");
+    const std::string text = read(dir, "tests/tst_foo.cpp");
+    EXPECT_TRUE(contains(text, "class TestFoo : public QObject {")) << text;
+    EXPECT_TRUE(contains(text, "void TestFoo::size() {"));
+    EXPECT_TRUE(contains(text, "QFAIL(\"TODO(mt): write the test for acme::Foo::size() const\");"));
+    EXPECT_TRUE(contains(text, "QTEST_GUILESS_MAIN(acme::TestFoo)\n// AUTOMOC: the name of the moc file must follow the name of this file.\n#include \"tst_foo.moc\"\n"));
+    EXPECT_FALSE(exists(dir, "tests/foo_test.cpp"));
+}
+
+TEST(GenTestsQt, TheEntryPointIsChosenWithQtMain) {
+    const TempDir dir;
+    write_foo(dir);
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "a", "--framework", "qtest", "--qt-main", "appless"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "a/tst_foo.cpp"), "QTEST_APPLESS_MAIN(acme::TestFoo)"));
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "b", "--framework", "qtest", "--qt-main", "gui"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "b/tst_foo.cpp"), "QTEST_MAIN(acme::TestFoo)"));
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "c", "--framework", "qtest", "--qt-main", "guiless"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "c/tst_foo.cpp"), "QTEST_GUILESS_MAIN(acme::TestFoo)"));
+}
+
+TEST(GenTestsQt, ASkipPlaceholderIsQSkip) {
+    const TempDir dir;
+    write_foo(dir);
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--framework", "qtest", "--placeholder", "skip"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "tests/tst_foo.cpp"), "QSKIP(\"TODO(mt)"));
+    EXPECT_FALSE(contains(read(dir, "tests/tst_foo.cpp"), "QFAIL"));
+}
+
+TEST(GenTestsQt, TheNamingConfigurationReachesTheClassAndTheFile) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "mt.json", R"({"naming": {"qtest_file": "{stem}_qt.cpp", "qtest_class": "{Class}Spec"}})");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--framework", "qtest", "--config", "mt.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    const std::string text = read(dir, "tests/foo_qt.cpp");
+    EXPECT_TRUE(contains(text, "class FooSpec : public QObject {")) << text;
+    EXPECT_TRUE(contains(text, "#include \"foo_qt.moc\"")) << "the moc file follows the file: " << text;
+}
+
+TEST(GenTestsQt, ASecondRunChangesNothing) {
+    const TempDir dir;
+    write_foo(dir);
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--framework", "qtest"}).code, 0);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--framework", "qtest"});
+    EXPECT_EQ(r.code, 0);
+    EXPECT_EQ(r.err, "unchanged tests/tst_foo.cpp\n");
 }
 
 // ---- what goes wrong -------------------------------------------------------------------------------------------

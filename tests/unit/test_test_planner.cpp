@@ -24,14 +24,20 @@ struct Planned {
     core::Diagnostics         diagnostics;
 };
 
-Planned plan(const std::string& header, core::Config config = {}, const std::string& include = "foo.h") {
+Planned plan(const std::string& header, core::Config config = {}, const std::string& include = "foo.h",
+             ir::Framework framework = ir::Framework::GTest) {
     Planned p;
     const ir::Model model = frontend::read_header({"foo.h", header}, include, {}, p.diagnostics);
     backend::PlannerOptions options;
     options.config = std::move(config);
+    options.framework = framework;
     options.header_include = include;
     p.plans = backend::plan_tests(model, options, p.diagnostics);
     return p;
+}
+
+Planned plan_qt(const std::string& header, core::Config config = {}) {
+    return plan(header, std::move(config), "foo.h", ir::Framework::QTest);
 }
 
 const ir::TestSuite& suite(const Planned& p, std::size_t plan_index = 0) {
@@ -652,6 +658,122 @@ TEST(TestPlannerHandMade, AConversionOperatorWithoutATypeDoesNotThrow) {
     const Planned p = plan_model(one_method(m));
     ASSERT_EQ(p.plans.size(), 1u);
     EXPECT_EQ(body(p, p.plans[0].suites[0].cases[0].name.c_str())[5], "auto result = sut.operator();");
+}
+
+// ---- Qt Test ------------------------------------------------------------------------------------------------------------
+
+TEST(TestPlannerQt, TheFileTheClassAndTheIncludeAreQtTests) {
+    const Planned p = plan_qt("namespace acme { class FooBar { public: void run(); }; }");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(p.plans[0].file, "tst_foo_bar.cpp");
+    EXPECT_EQ(suite(p).name, "TestFooBar");
+    EXPECT_EQ(suite(p).target_class, "FooBar");
+    EXPECT_EQ(suite(p).ns, std::vector<std::string>{"acme"});
+    ASSERT_EQ(p.plans[0].includes.size(), 2u);
+    EXPECT_EQ(p.plans[0].includes[0].path, "QtTest");
+    EXPECT_TRUE(p.plans[0].includes[0].is_system);
+    EXPECT_EQ(p.plans[0].includes[1].path, "foo.h");
+}
+
+TEST(TestPlannerQt, TheNamingPatternsDecideTheFileAndTheClass) {
+    core::Config config;
+    config.naming.qtest_file = "{stem}_qt.cpp";
+    config.naming.qtest_class = "{Class}Spec";
+    const Planned p = plan_qt("class HTTPServer { public: void run(); };", config);
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(p.plans[0].file, "http_server_qt.cpp");
+    EXPECT_EQ(suite(p).name, "HTTPServerSpec");
+}
+
+TEST(TestPlannerQt, TheGoogleTestPatternsAreNotUsed) {
+    core::Config config;
+    config.naming.gtest_file = "wrong_{stem}.cpp";
+    config.naming.suite = "Wrong{Class}";
+    const Planned p = plan_qt("class Foo { public: void run(); };", config);
+    EXPECT_EQ(p.plans[0].file, "tst_foo.cpp");
+    EXPECT_EQ(suite(p).name, "TestFoo");
+}
+
+TEST(TestPlannerQt, TheBodyOfAMethodIsTheSameAsForGoogleTest) {
+    const std::string header = "class Foo { public: int get(int i) const noexcept; };";
+    const Planned qt = plan_qt(header);
+    const Planned gt = plan(header);
+    EXPECT_EQ(body(qt, "get"), body(gt, "get"));
+}
+
+TEST(TestPlannerQt, ASignalIsListenedToWithAQSignalSpy) {
+    const Planned p = plan_qt("class W : public QObject { Q_OBJECT\npublic:\n  void run();\nsignals:\n  void changed(int value);\n};\n");
+    EXPECT_EQ(case_names(p), (Lines{"run", "changed"}));
+    EXPECT_EQ(body(p, "changed"), (Lines{
+        "placeholder: TODO(mt): write the test for W::changed(int)", "blank", "// Arrange", "W sut;",
+        "QSignalSpy spy(&sut, &W::changed);", "(void)spy;", "// Act", "// TODO(mt): make sut emit the signal",
+        "// Assert", "// TODO(mt): check spy.count() and the arguments of spy.takeFirst()"}));
+}
+
+TEST(TestPlannerQt, AnOverloadedSignalNeedsTheSignatureToTakeItsAddress) {
+    const Planned p = plan_qt(
+        "class W : public QObject { Q_OBJECT\npublic:\n  struct Item { int x; };\nsignals:\n"
+        "  void changed(int value);\n  void changed(const Item& item, const QString& why);\n  void other();\n};\n");
+    EXPECT_EQ(case_names(p), (Lines{"changed_int", "changed_item_q_string", "other"}));
+    EXPECT_EQ(body(p, "changed_int")[4], "QSignalSpy spy(&sut, static_cast<void (W::*)(int)>(&W::changed));");
+    EXPECT_EQ(body(p, "changed_item_q_string")[4],
+              "QSignalSpy spy(&sut, static_cast<void (W::*)(const W::Item&, const QString&)>(&W::changed));");
+    EXPECT_EQ(body(p, "other")[4], "QSignalSpy spy(&sut, &W::other);") << "a signal that is alone needs no cast";
+}
+
+TEST(TestPlannerQt, ASignalOfAClassThatCannotBeBuiltIsAComment) {
+    const Planned p = plan_qt("class W : public QObject { Q_OBJECT\npublic:\n  explicit W(Mystery m);\nsignals:\n  void changed();\n};\n");
+    EXPECT_EQ(body(p, "changed"), (Lines{
+        "placeholder: TODO(mt): write the test for W::changed()", "blank", "// Arrange",
+        "// TODO(mt): 'W' has no public constructor that can be called with default values: build sut by hand", "// W sut;",
+        "// QSignalSpy spy(&sut, &W::changed);", "// (void)spy;", "// Act", "// TODO(mt): make sut emit the signal",
+        "// Assert", "// TODO(mt): check spy.count() and the arguments of spy.takeFirst()"}));
+}
+
+TEST(TestPlannerQt, TheSpyDoesNotTakeTheNameOfAnArgument) {
+    const Planned p = plan_qt("class W : public QObject { Q_OBJECT\npublic:\n  explicit W(int spy);\nsignals:\n  void changed();\n};\n");
+    const std::vector<std::string> lines = body(p, "changed");
+    EXPECT_EQ(lines[3], "int spy2{};");
+    EXPECT_EQ(lines[4], "W sut(spy2);");
+}
+
+TEST(TestPlannerQt, GoogleTestStillHasNothingToSayAboutASignal) {
+    const Planned p = plan("class W : public QObject { Q_OBJECT\npublic:\n  void run();\nsignals:\n  void changed();\n};\n");
+    EXPECT_EQ(case_names(p), Lines{"run"});
+}
+
+TEST(TestPlannerQt, ASlotIsAnOrdinaryMethod) {
+    const Planned p = plan_qt("class W : public QObject { Q_OBJECT\npublic slots:\n  void apply(int n);\n};\n");
+    EXPECT_EQ(body(p, "apply")[4], "int n{};");
+    EXPECT_EQ(body(p, "apply")[6], "sut.apply(n);");
+}
+
+TEST(TestPlannerQt, ANameQtTestGivesAMeaningToIsNotUsedForASlot) {
+    const Planned p = plan_qt("class Foo { public: void init(); void cleanup(); void initTestCase(); void cleanupTestCase(); "
+                              "void size_data(); void size(); };");
+    EXPECT_EQ(case_names(p), (Lines{"init_call", "cleanup_call", "initTestCase_call", "cleanupTestCase_call", "size_data_call", "size"}));
+    EXPECT_EQ(the_case(p, "init_call").target, "Foo::init()") << "the message still names the method";
+}
+
+TEST(TestPlannerQt, TheRenamedSlotDoesNotTakeANameThatIsAlreadyThere) {
+    const Planned p = plan_qt("class Foo { public: void init(); void init_call(); };");
+    EXPECT_EQ(case_names(p), (Lines{"init_call_2", "init_call"}));
+}
+
+TEST(TestPlannerQt, AnOverloadSuffixThatEndsInDataIsRenamedToo) {
+    const Planned p = plan_qt("class Foo { public: void x(Data d); void x(int i); };");
+    EXPECT_EQ(case_names(p), (Lines{"x_data_call", "x_int"}));
+}
+
+TEST(TestPlannerQt, GoogleTestIsFreeToCallATestInit) {
+    const Planned p = plan("class Foo { public: void init(); void size_data(); };");
+    EXPECT_EQ(case_names(p), (Lines{"init", "size_data"}));
+}
+
+TEST(TestPlannerQt, AMovedArgumentStillNeedsUtility) {
+    const Planned p = plan_qt("class Foo { public: void take(std::string&& s); };");
+    ASSERT_EQ(p.plans[0].includes.size(), 3u);
+    EXPECT_EQ(p.plans[0].includes[2].path, "utility");
 }
 
 }  // namespace
