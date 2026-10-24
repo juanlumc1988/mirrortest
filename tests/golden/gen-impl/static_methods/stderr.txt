@@ -1,0 +1,4 @@
+in/registry_test.cpp:6:5: warning: the result of 'Registry::add' is never used, so the method is assumed to return void [mt-unused-result]
+in/registry_test.cpp:8:14: warning: the result of 'Registry::clear' is never used, so the method is assumed to return void [mt-unused-result]
+created out/registry.h
+created out/registry.cpp

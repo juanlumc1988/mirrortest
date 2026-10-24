@@ -1,0 +1,4 @@
+in/widgets_test.cpp:16:5: note: 'Button' is placed in the namespace 'acme::ui' because the file says 'using namespace acme::ui;' [mt-ambiguous-scope]
+in/widgets_test.cpp:19:11: warning: the result of 'acme::ui::Label::clear' is never used, so the method is assumed to return void [mt-unused-result]
+created out/acme/widgets.h
+created out/acme/widgets.cpp

@@ -6,11 +6,13 @@ Bidirectional C++ test/code generator: derives class and function stubs from
 GoogleTest/QTest tests (TDD), and generates test skeletons from existing
 classes. The command it builds is `mirrortest`.
 
-**Status: design complete, implementation starting.** The build, the pinned
-dependencies, the intermediate representation and the parser layer exist and
-are tested. The two commands are designed in detail and not written yet — see
-[docs/plan.md](docs/plan.md) for what is done and what comes next. Everything
-under [Usage](#usage) describes the target behaviour.
+**Status: `gen-impl` works for GoogleTest; `gen-tests` and QTest are next.**
+`gen-impl` is complete end to end — parsing, inference, headers and stubs,
+`.new` files, `--dry-run`/`--check` — and verified by unit tests, golden files,
+compile-and-run round trips and a syntax check of every generated stub as strict
+C++11. `gen-tests`, QTest and `--overwrite=merge` are designed and not written
+yet; see [docs/plan.md](docs/plan.md) for what is done and what comes next. The
+`gen-tests` lines under [Usage](#usage) describe the target behaviour.
 
 ## What it does
 
@@ -69,9 +71,27 @@ test calls them on a `const` object, `unsigned int` because of the `3u` — and
 a source file whose stubs throw `std::logic_error`. The test now compiles and
 fails, which is exactly where TDD wants you.
 
-The conventions that make tests readable by the tool (no `auto` on results of
+The conventions that make tests readable by the tool — no `auto` on results of
 the API under test, literal suffixes where the type matters, optional
-`// @mt:` annotations) will be documented in `docs/conventions.md`.
+`// @mt:` annotations — are in [docs/conventions.md](docs/conventions.md).
+
+### Options that matter first
+
+| Option | Effect |
+|---|---|
+| `--out DIR` | where to write; or `--out-include DIR` and `--out-src DIR` separately |
+| `-I DIR` | a directory with headers that already exist: they are your API, not something to generate |
+| `--stub-policy throw\|abort\|default` | what the stubs do (default `throw`); `--no-exceptions` makes `throw` behave as `abort` |
+| `--auto-policy error\|todo` | what to do when a type cannot be inferred (default: an error, nothing written) |
+| `--std c++11\|...\|c++23` | the standard the generated code must be valid in (default `c++17`) |
+| `--overwrite never\|force` | a differing file gets a `.new` beside it (default) or is replaced |
+| `--dry-run`, `--check` | show diffs without writing; exit 4 if anything would change |
+| `--config FILE.json`, `--templates DIR` | house style: [docs/conventions.md](docs/conventions.md#configuration), [docs/templates.md](docs/templates.md) |
+| `--strict`, `--quiet`, `--verbose` | warnings as errors; fewer lines; more lines |
+
+Exit codes: `0` success, `1` the input has errors (nothing is written), `2` usage,
+`3` I/O, `4` `--check` found differences. Diagnostics use the GCC format
+(`file:line:col: warning: message [mt-code]`), so editors and CI pick them up.
 
 ## Building
 
@@ -110,6 +130,8 @@ output with no RTTI and, on request, no exceptions.
 - [docs/design.md](docs/design.md) — the technical design: every decision,
   every inference rule, every diagnostic code. Authoritative.
 - [docs/plan.md](docs/plan.md) — implementation plan and progress.
+- [docs/conventions.md](docs/conventions.md) — how to write tests the tool
+  understands, annotations, stub policies, configuration, every diagnostic.
 - [docs/development.md](docs/development.md) — building, testing, sanitizers
   and the code conventions.
 - [docs/templates.md](docs/templates.md) — the output templates and their

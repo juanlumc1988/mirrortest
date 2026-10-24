@@ -485,7 +485,10 @@ by hand even though the next line says it.
 (`Foo foo_;`, `Baz c_{1, 2};`, `Qux d_ = Qux(2);`) is a `Construction` (a fixture
 that has it requires `Foo` to be default-constructible), and so are the
 constructor's initialisers (`F() : a_(3), b_{4} {}`, also when defined outside
-the class). Pointers, references and `static` members construct nothing.
+the class). Pointers, references and `static` members construct nothing. A
+member that a constructor defined *inside* the class initialises is not also
+default-constructed; one initialised only by a constructor defined outside the
+class still is (a spurious default constructor, harmless, in the generated class).
 
 ### 7.4 Scopes by kind of body
 
@@ -723,6 +726,10 @@ class through some other route; otherwise `mt-unknown-type` (warning).
   - result of another API call → the type that call was inferred to return,
     by value or `const T&` like a variable of that type; a functional cast
     `Foo(3)` → the class it constructs (§7.9, "Propagation and chains").
+  - a cast to a standard-library or Qt type (`std::string("x")`, `QString("x")`,
+    `std::size_t(3)`, `string("x")` under `using namespace std`) has that type: it
+    types the parameter it fills (`const std::string&`) and is evidence for the
+    return type of a call compared with it.
   - unknown → policy (D5): `error` (`mt-unknown-param`) or `todo`
     (`config.placeholder_type`, `int` by default, with a TODO).
   - parameter name: the variable's if the argument is an identifier; otherwise
@@ -847,11 +854,23 @@ call decided:
 ### 7.10 Existing headers
 
 Each `#include "…"` of the test is searched for in: the test's directory,
-`-I…` (in order), `--out-include`. If it exists, it is analysed with the code
-frontend (one level, no recursion in the MVP): its classes/functions/enums
-become **known externals** (typed: they contribute `Declared` signatures). If
-the header found is in `--out-include`, it is an **existing target** →
-merge/never (§10, §11).
+`-I…` (in order), `--out-include` (`core/include_search.h`). If it exists, it is
+analysed with the code frontend (one level, no recursion in the MVP): its
+classes/functions/enums become **known externals** (typed: they contribute
+`Declared` signatures, and a generated header that names one of its types
+includes it). If the header found is in `--out-include` — even when `-I` also
+leads there, as it must for the test to build — it is an **existing target** →
+merge/never (§10, §11), generated again like any other; otherwise a second run
+would take its own output for the user's API and generate nothing.
+
+Never looked for and never generated: the framework's and the standard
+library's headers, written in quotes or not (`gtest/…`, `gmock/…`, `QtTest`,
+`QtCore/…`, anything without an extension such as `vector` or `QString`). An
+`#include <…>` is searched on `-I` only (not in the test's directory) and is
+never a target: if nothing has it, it is somebody else's. Repeated includes
+count once. Several test files in one run are processed one by one; two that
+would write the same path with different content are an error (generating one
+header from several tests is not supported yet).
 
 ### 7.11 Annotations (`// @mt:`)
 
@@ -1008,8 +1027,15 @@ public:
   later one in a signature gets it forward-declared (`class B;`) before the
   first class. A cycle of by-value fields is left in source order.
 - Two generated headers that include each other cannot work (whichever is
-  included first meets a name the other has not declared): `mt-unsupported`
-  warning naming them, and the advice to put the classes in one header.
+  included first meets a name the other has not declared). The first include a
+  cycle runs through, in header order, that only needs the *name* (a parameter,
+  a return type, a pointer or a reference: legal with an incomplete type in a
+  declaration) becomes a forward declaration (`class B;`, in B's namespace,
+  before everything else in the header) and moves to the `.cpp`, which needs the
+  definition; this repeats until no cycle is left. Classes held by value cannot
+  be forward declared: if that is what keeps a cycle alive, `mt-unsupported`
+  warning naming the headers (put the classes in one header). Includes of
+  existing headers are never replaced.
 - Free functions: a `// <mt:begin functions>` region in the namespace; in a
   named namespace the label is `<ns>::functions`, so that two namespaces' regions
   in one header are told apart. A global class called `functions` or `includes`
@@ -1304,7 +1330,7 @@ warnings into errors.
 | `mt-unknown-type` | warning | a type used (e.g. in `EXPECT_THROW`) that is neither generated nor known |
 | `mt-no-include` | warning | class or function that no `#include` of the test claims, and no annotation places |
 | `mt-annotation` | error | malformed annotation, or one without a single target |
-| `mt-unsupported` | warning | construct outside the supported subset; also, from the backend: a header path outside the output directory, headers that include each other, region labels that collide, a `default` stub that cannot return `{}` |
+| `mt-unsupported` | warning | construct outside the supported subset; also, from the backend: a header path outside the output directory, headers that hold each other's classes by value, region labels that collide, a `default` stub that cannot return `{}`. An error: a QTest file (until phase 5), or two test files that would write the same file with different content |
 | `mt-conditional` | note | member under `#if` with different versions |
 | `mt-stub-may-pass` | warning | `default` policy |
 | `mt-merge-region` | error | malformed or duplicated regions |
@@ -1535,12 +1561,21 @@ Implemented in `core/templates.h` (`TemplateStore`) and
      and conventions. The files under `tests/golden/` are marked `-text` in
      `.gitattributes` so that git does not rewrite their line endings.
 3. **Round trip** (CTest + `cmake -P tests/roundtrip/run_case.cmake`):
-   - gen-impl: generate → configure a subproject that reuses the GoogleTest
-     sources already downloaded (no network) → compile the stubs with
-     `-std=c++11 -Wall -Wextra -Wpedantic -Werror` and the tests with
-     `-std=c++14 -Wall -Wextra -Werror` (R27) → run with `--gtest_output=json` →
-     require `tests > 0` and **`failures == tests`** (all red) → regenerate and
-     require `unchanged` (idempotence).
+   - gen-impl (`tests/roundtrip/run_case.cmake`, cases `basic_class`,
+     `fixture_members`, `namespaces`, `multi_class_includes`, `no_exceptions`,
+     whose test and arguments are those of the golden case): generate → compile
+     the stubs with `-std=c++11 -Wall -Wextra -Wpedantic -Werror` (plus
+     `-fno-exceptions -fno-rtti` for `abort`) and the test with
+     `-std=c++14 -Wall -Wextra -Werror` (R27) → link against the main build's
+     GoogleTest (compiler command lines, not a nested CMake project: no network
+     and a second per case) → run with `--gtest_output=json` → require
+     `tests > 0` and **`failures == tests`** (all red; with the `abort` policy
+     the process dies, so each test is run alone and must die) → run again with
+     `--check` and require exit 0 (idempotence: no file would change).
+   - Stubs of **every** gen-impl golden (`tests/roundtrip/syntax_case.cmake`,
+     CTest names `stubs.host.<case>`): `-fsyntax-only` with the flags above,
+     each source including its own header first, so headers must be
+     self-contained.
    - gen-tests: compile the example implementation + generated tests → require
      `failures == tests` (`fail`) or `skipped == tests` (`skip`).
    - QTest (if `find_package(Qt6|Qt5 COMPONENTS Test)` finds it; otherwise the
@@ -1551,7 +1586,8 @@ Implemented in `core/templates.h` (`TemplateStore`) and
      is); gen-impl → exit ≠ 0, at least one `FAIL!` and **no** `PASS` for a test
      slot (R26: after the first exception QTest aborts).
    - **ARM**: if `MT_ARM_CXX` is defined (CI installs
-     `g++-arm-linux-gnueabihf`), the generated stubs are compiled with
+     `g++-arm-linux-gnueabihf`), the same syntax checks run with the cross
+     compiler (`stubs.arm.<case>`): the generated stubs with
      `-std=c++11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only`, and with the
      `abort` policy also `-fno-exceptions -fno-rtti`.
 4. **Corpus of edge cases**: templates, nested namespaces,

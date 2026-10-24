@@ -234,9 +234,11 @@ public:
     }
 
     std::vector<ImplViews> run() {
+        const std::vector<Unit>& units = assignment_.units();
+        for (const Unit& unit : units) needs_.push_back(scan(unit));
+        break_cycles();
         std::vector<ImplViews> out;
-        for (const Unit& unit : assignment_.units()) out.push_back(views_for(unit));
-        warn_about_cycles();
+        for (std::size_t i = 0; i < units.size(); ++i) out.push_back(views_for(units[i], needs_[i]));
         if (policy_ == core::StubPolicy::Default && any_stub_) {
             diag_.warning(core::code::stub_may_pass,
                           "stub_policy 'default' makes the stubs return empty values: a test that expects such a value passes without "
@@ -246,9 +248,28 @@ public:
     }
 
 private:
-    struct Rendered {
-        json blocks = json::array();           // header blocks
-        json definitions = json::array();      // source blocks
+    // What a header takes from the rest of the world, worked out before any
+    // text is written, because a cycle between headers is only visible once every
+    // header's needs are known.
+    struct Needs {
+        std::set<std::string> system;     // <vector>
+        std::set<std::string> local;      // "other.h"
+        // The headers whose classes this one holds by value: an include that a
+        // forward declaration cannot stand in for.
+        std::set<std::string> complete;
+        // The generated classes of each local header that this one names, in the
+        // order it first does.
+        std::map<std::string, std::vector<const ir::Class*>> named;
+        // Includes replaced by forward declarations to break a cycle: the source
+        // file includes these instead.
+        std::set<std::string> deferred;
+        std::vector<const ir::Class*> forward;   // the classes of other headers it declares
+    };
+
+    // Where a name the test uses is declared.
+    struct Declaration {
+        std::string       header;
+        const ir::Class*  generated = nullptr;   // set when the header is one of ours
     };
 
     static json namespace_open(const std::vector<std::string>& ns) {
@@ -289,34 +310,57 @@ private:
 
     // ---- includes -------------------------------------------------------------------------------------------
 
-    void collect_includes(const std::vector<const ir::Type*>& types, const Unit& unit, std::set<std::string>& system,
-                          std::set<std::string>& local) const {
-        for (const ir::Type* t : types) {
-            for (const std::string& name : ir::mentioned_names(t->spelling)) {
-                const std::string sys = ir::system_include_for(name);
-                if (!sys.empty()) {
-                    system.insert(sys);
-                    continue;
-                }
-                const std::string header = header_declaring(name);
-                if (!header.empty() && header != unit.header) local.insert(header);
-            }
+    void note(const std::string& name, const Unit& unit, bool by_value, Needs& needs) const {
+        const std::string sys = ir::system_include_for(name);
+        if (!sys.empty()) {
+            needs.system.insert(sys);
+            return;
+        }
+        const Declaration d = declaration_of(name);
+        if (d.header.empty() || d.header == unit.header) return;
+        needs.local.insert(d.header);
+        if (by_value) needs.complete.insert(d.header);
+        if (d.generated != nullptr) {
+            std::vector<const ir::Class*>& classes = needs.named[d.header];
+            if (std::find(classes.begin(), classes.end(), d.generated) == classes.end()) classes.push_back(d.generated);
         }
     }
 
-    // The include path of the header that declares a name the test uses: one of
-    // the classes being generated, else a class or enum of a header that exists.
-    std::string header_declaring(const std::string& mention) const {
+    void note_types(const std::vector<const ir::Type*>& types, const Unit& unit, bool by_value, Needs& needs) const {
+        for (const ir::Type* t : types) {
+            for (const std::string& name : ir::mentioned_names(t->spelling)) note(name, unit, by_value, needs);
+        }
+    }
+
+    Needs scan(const Unit& unit) const {
+        Needs needs;
+        for (const ir::Class* c : unit.classes) {
+            for (const ir::Method& m : c->methods) {
+                if (!m.ret.empty()) note_types({&m.ret}, unit, false, needs);
+                for (const ir::Param& p : m.params) note_types({&p.type}, unit, false, needs);
+            }
+            for (const ir::Field& f : c->fields) {
+                const bool held = f.type.ref == ir::RefKind::None && f.type.pointer_depth == 0;
+                note_types({&f.type}, unit, held, needs);
+            }
+        }
+        for (const ir::Function* f : unit.functions) note_types(signature_types(*f), unit, false, needs);
+        return needs;
+    }
+
+    // The header that declares a name the test uses: one of the classes being
+    // generated, else a class or enum of a header that exists.
+    Declaration declaration_of(const std::string& mention) const {
         for (const Unit& u : assignment_.units()) {
-            if (find_class(u.classes, mention) != nullptr) return u.header;
+            if (const ir::Class* c = find_class(u.classes, mention)) return {u.header, c};
         }
         for (const ir::Model& k : options_.known) {
             for (const ir::Class& c : k.classes) {
-                if (written_as(mention, c) && !c.header.empty()) return c.header;
+                if (written_as(mention, c) && !c.header.empty()) return {c.header, nullptr};
             }
             for (const ir::Enum& e : k.enums) {
                 const std::string full = ir::qualified_name(e.ns, e.name);
-                if ((mention == e.name || mention == full) && !e.header.empty()) return e.header;
+                if ((mention == e.name || mention == full) && !e.header.empty()) return {e.header, nullptr};
             }
         }
         return {};
@@ -434,12 +478,42 @@ private:
         return block;
     }
 
-    ImplViews views_for(const Unit& unit) {
+    // The classes of other headers that a header declares instead of including,
+    // one section per namespace so that each lands in the right one. They come
+    // before everything else: the classes below name them.
+    static json foreign_sections(const std::vector<const ir::Class*>& classes) {
+        std::vector<Section> sections;
+        for (const ir::Class* c : classes) {
+            auto it = std::find_if(sections.begin(), sections.end(), [&](const Section& s) { return s.ns == c->ns; });
+            if (it == sections.end()) {
+                sections.push_back({});
+                sections.back().ns = c->ns;
+                it = sections.end() - 1;
+            }
+            it->classes.push_back(c);
+        }
+        json out = json::array();
+        for (const Section& s : sections) {
+            json lines = json::array();
+            for (const ir::Class* c : s.classes) lines.push_back(std::string(c->is_struct ? "struct " : "class ") + c->name + ";");
+            json block;
+            block["kind"] = "forward";
+            block["lines"] = lines;
+            json section;
+            section["open"] = namespace_open(s.ns);
+            section["close"] = namespace_close(s.ns);
+            section["blocks"] = json::array({block});
+            out.push_back(section);
+        }
+        return out;
+    }
+
+    ImplViews views_for(const Unit& unit, const Needs& needs) {
         ImplViews views;
         views.header_path = unit.header;
 
-        std::set<std::string> header_system, header_local, source_system;
-        json header_sections = json::array();
+        std::set<std::string> source_system;
+        json header_sections = foreign_sections(needs.forward);
         json source_sections = json::array();
         std::set<std::string> labels;
 
@@ -453,7 +527,6 @@ private:
 
             for (const ir::Class* c : ordered) {
                 claim(labels, core::class_label(c->ns, c->name), c->where);
-                collect_includes(signature_types(*c), unit, header_system, header_local);
                 blocks.push_back(class_block(*c));
                 json defs = class_definitions(*c, source_system);
                 if (!defs.empty()) {
@@ -469,10 +542,7 @@ private:
                 const std::string label = core::functions_label(s.ns);
                 claim(labels, label, s.functions.front()->where);
                 json members = json::array();
-                for (const ir::Function* f : s.functions) {
-                    collect_includes(signature_types(*f), unit, header_system, header_local);
-                    members.push_back(member(f->notes, function_declaration(*f)));
-                }
+                for (const ir::Function* f : s.functions) members.push_back(member(f->notes, function_declaration(*f)));
                 json block;
                 block["kind"] = "functions";
                 block["begin"] = core::region_begin(label);
@@ -502,12 +572,6 @@ private:
             }
         }
 
-        std::set<std::string> generated;   // the local includes that are headers of this run
-        for (const std::string& path : header_local) {
-            if (std::any_of(assignment_.units().begin(), assignment_.units().end(), [&](const Unit& u) { return u.header == path; })) generated.insert(path);
-        }
-        includes_of_[unit.header] = generated;
-
         const core::Config& cfg = options_.config;
         json h;
         h["file_header"] = cfg.file_header;
@@ -516,7 +580,7 @@ private:
         h["guard"] = core::include_guard(unit.header);
         h["includes_begin"] = core::region_begin(core::includes_label());
         h["includes_end"] = core::region_end(core::includes_label());
-        h["includes"] = include_lines(header_system, header_local);
+        h["includes"] = include_lines(needs.system, needs.local);
         h["sections"] = header_sections;
         views.header_view = h;
 
@@ -530,7 +594,7 @@ private:
             s["own_include"] = "#include \"" + unit.header + "\"";
             s["includes_begin"] = core::region_begin(core::includes_label());
             s["includes_end"] = core::region_end(core::includes_label());
-            s["includes"] = include_lines(source_system, {});
+            s["includes"] = include_lines(source_system, needs.deferred);
             s["sections"] = source_sections;
             views.source_view = s;
         }
@@ -538,39 +602,71 @@ private:
     }
 
     // A header that includes another which includes it back cannot work: whichever
-    // is included first meets a name the other has not declared yet. Forward
-    // declarations could break the loop, but across namespaces and with by-value
-    // uses in the sources that is more machinery than a rare case deserves; the
-    // user is told and puts the classes in one header.
-    void warn_about_cycles() {
+    // is included first meets a name the other has not declared yet. The way out
+    // is a forward declaration where the first only needs the *name* -- in a
+    // parameter, a return type, a pointer or a reference -- and the include moves
+    // to its source file, which needs the definition. An edge is replaced only
+    // while a cycle goes through it; what a forward declaration cannot replace (a
+    // class held by value) is reported.
+    void break_cycles() {
         const std::vector<Unit>& units = assignment_.units();
         const std::size_t n = units.size();
-        std::vector<std::vector<bool>> reach(n, std::vector<bool>(n, false));
-        for (std::size_t i = 0; i < n; ++i) {
-            for (std::size_t j = 0; j < n; ++j) {
-                if (includes_of_[units[i].header].count(units[j].header) != 0) reach[i][j] = true;
-            }
-        }
-        for (std::size_t k = 0; k < n; ++k) {
+        const auto index_of = [&](const std::string& header) {
             for (std::size_t i = 0; i < n; ++i) {
-                for (std::size_t j = 0; j < n; ++j) {
-                    if (reach[i][k] && reach[k][j]) reach[i][j] = true;
+                if (units[i].header == header) return i;
+            }
+            return n;
+        };
+
+        std::vector<bool> reported(n, false);
+        for (;;) {
+            std::vector<std::vector<bool>> reach(n, std::vector<bool>(n, false));
+            for (std::size_t i = 0; i < n; ++i) {
+                for (const std::string& h : needs_[i].local) {
+                    const std::size_t j = index_of(h);
+                    if (j != n) reach[i][j] = true;
                 }
             }
-        }
-        std::vector<bool> reported(n, false);
-        for (std::size_t i = 0; i < n; ++i) {
-            if (reported[i] || !reach[i][i]) continue;
+            for (std::size_t k = 0; k < n; ++k) {
+                for (std::size_t i = 0; i < n; ++i) {
+                    for (std::size_t j = 0; j < n; ++j) {
+                        if (reach[i][k] && reach[k][j]) reach[i][j] = true;
+                    }
+                }
+            }
+
+            std::size_t cyclic = n;
+            for (std::size_t i = 0; i < n && cyclic == n; ++i) {
+                if (reach[i][i] && !reported[i]) cyclic = i;
+            }
+            if (cyclic == n) return;
+
+            // The first include of the first header in a cycle that can be a forward declaration.
+            bool broken = false;
+            for (std::size_t i = cyclic; i < n && !broken; ++i) {
+                if (reported[i]) continue;
+                for (const std::string& h : needs_[i].local) {
+                    const std::size_t j = index_of(h);
+                    if (j == n || !reach[j][i] || needs_[i].complete.count(h) != 0) continue;
+                    needs_[i].deferred.insert(h);
+                    for (const ir::Class* c : needs_[i].named[h]) needs_[i].forward.push_back(c);
+                    needs_[i].local.erase(h);
+                    broken = true;
+                    break;
+                }
+            }
+            if (broken) continue;
+
             std::string names;
             for (std::size_t j = 0; j < n; ++j) {
-                if (!(reach[i][j] && reach[j][i])) continue;
+                if (!(reach[cyclic][j] && reach[j][cyclic])) continue;
                 reported[j] = true;
                 names += (names.empty() ? "'" : ", '") + units[j].header + "'";
             }
             diag_.warning(core::code::unsupported,
-                          "the generated headers " + names + " include each other, so a class in one cannot use one of the other; "
-                          "put the classes in one header with '// @mt: class NAME header \"" + units[i].header + "\"'",
-                          units[i].classes.empty() ? ir::SourceLoc() : units[i].classes.front()->where);
+                          "the generated headers " + names + " include each other and hold each other's classes by value, "
+                          "which no forward declaration can break",
+                          units[cyclic].classes.empty() ? ir::SourceLoc() : units[cyclic].classes.front()->where);
         }
     }
 
@@ -590,7 +686,7 @@ private:
     core::StubPolicy                policy_;
     std::vector<const ir::Model*>   models_;
     bool                            any_stub_ = false;
-    std::map<std::string, std::set<std::string>> includes_of_;   // header -> generated headers it includes
+    std::vector<Needs>              needs_;   // per unit, in the order of Assignment::units()
 };
 
 }  // namespace

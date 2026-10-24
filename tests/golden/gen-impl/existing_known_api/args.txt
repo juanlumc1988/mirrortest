@@ -1,0 +1,6 @@
+gen-impl
+${IN}/logger_test.cpp
+--out
+${OUT}
+-I
+${IN}/include

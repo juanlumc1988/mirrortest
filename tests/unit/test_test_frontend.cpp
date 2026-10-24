@@ -889,6 +889,36 @@ TEST(TestFrontendCalls, FunctionalCastsToBuiltinAndTypedefTypes) {
     EXPECT_EQ(arg_types(method(r).args), (std::vector<std::string>{"size_t", "uint8_t", "int", "long"}));
 }
 
+TEST(TestFrontendCalls, CastsToTheStandardLibraryAndQtHaveTheirType) {
+    const Read r = body(
+        "Foo foo;\n"
+        "foo.put(std::string(\"x\"), std::vector<int>(3), std::size_t(2), QString(\"q\"));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(arg_types(method(r).args), (std::vector<std::string>{"std::string", "std::vector<int>", "std::size_t", "QString"}));
+    EXPECT_EQ(arg(method(r).args, 0).type->origin, ir::Origin::Declared);
+}
+
+TEST(TestFrontendCalls, TheUnqualifiedSpellingIsTheStandardTypeOnlyUnderUsingNamespaceStd) {
+    const Read with = read("#include <gtest/gtest.h>\nusing namespace std;\nTEST(S, N) { Foo foo; foo.put(string(\"x\")); }\n");
+    EXPECT_EQ(arg_types(method(with).args), std::vector<std::string>{"std::string"});
+    const Read without = body("Foo foo;\nfoo.put(string(\"x\"));\n");
+    EXPECT_FALSE(arg(method(without).args, 0).type.has_value()) << "just a function called string";
+}
+
+TEST(TestFrontendCalls, OnlyTheStdNamespaceMakesAStandardType) {
+    const Read r = body("Foo foo;\nfoo.put(other::string(\"x\"), acme::vector(1), std::move_only(2));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    for (std::size_t i = 0; i < 3; ++i) EXPECT_FALSE(arg(method(r).args, i).type.has_value()) << i;
+}
+
+TEST(TestFrontendCalls, AClassOfTheFileThatLooksLikeQtOrStdIsNotCastToTheLibraryType) {
+    const Read r = read(
+        "#include <gtest/gtest.h>\n"
+        "class QThing { public: QThing(int); };\n"
+        "TEST(S, N) { Foo foo; foo.put(QThing(1)); }\n");
+    EXPECT_FALSE(arg(method(r).args, 0).type.has_value());
+}
+
 TEST(TestFrontendCalls, SizeofIsASizeT) {
     const Read r = body("Foo foo;\nfoo.reserve(sizeof(int));\n");
     EXPECT_EQ(arg_types(method(r).args), std::vector<std::string>{"std::size_t"});
@@ -1318,6 +1348,42 @@ TEST(TestFrontendFixture, ConstructorInitialisersConstructTheirMembers) {
     EXPECT_EQ(r.facts.free_calls[0].name, "compute");
     EXPECT_EQ(r.facts.free_calls[0].use.kind, UseKind::Assigned);
     EXPECT_EQ(hint(r.facts.free_calls[0].use), "int");
+}
+
+TEST(TestFrontendFixture, AMemberTheConstructorInitialisesIsNotAlsoDefaultConstructed) {
+    const Read r = read(
+        "class F : public ::testing::Test {\n"
+        "public:\n"
+        "    F() : a_(1), b_{2} {}\n"
+        "    Foo a_;\n"
+        "    Bar b_;\n"
+        "    Baz c_;\n"
+        "    Qux d_ = Qux(2);\n"
+        "};\n");
+    std::vector<std::string> made;
+    for (const Construction& c : r.facts.constructions) {
+        made.push_back(c.type.name + ":" + (c.form == Construction::Form::Default ? "default" : "other"));
+    }
+    // a_ and b_ are built by the constructor; c_ by nobody, so by default.
+    EXPECT_EQ(made, (std::vector<std::string>{"Foo:other", "Bar:other", "Baz:default", "Qux:other"}));
+}
+
+TEST(TestFrontendFixture, TheInitialisersOfOneClassDoNotLeakIntoTheNext) {
+    const Read r = read(
+        "class A : public ::testing::Test {\n"
+        "public:\n"
+        "    A() : x_(1) {}\n"
+        "    Foo x_;\n"
+        "};\n"
+        "class B : public ::testing::Test {\n"
+        "public:\n"
+        "    Foo x_;\n"
+        "};\n");
+    std::vector<std::string> made;
+    for (const Construction& c : r.facts.constructions) {
+        made.push_back(c.type.name + ":" + (c.form == Construction::Form::Default ? "default" : "other"));
+    }
+    EXPECT_EQ(made, (std::vector<std::string>{"Foo:other", "Foo:default"}));
 }
 
 TEST(TestFrontendFixture, ConstructorParametersAreVisibleToTheInitialisers) {

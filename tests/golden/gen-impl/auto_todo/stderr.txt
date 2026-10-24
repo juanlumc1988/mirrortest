@@ -1,0 +1,3 @@
+in/repo_test.cpp:6:22: warning: the result of 'Repo::find' is stored in an 'auto' variable, so its type is not known; declare the variable's type, or annotate the call: '// @mt: returns TYPE'; assuming 'int' [mt-auto]
+created out/repo.h
+created out/repo.cpp

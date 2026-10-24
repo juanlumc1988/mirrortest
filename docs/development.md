@@ -44,6 +44,20 @@ Golden files are updated only through the mechanism (`MT_UPDATE_GOLDEN=1`, or
 the `update-golden` target), never by hand, and the resulting diff is reviewed
 before committing.
 
+### The layers of tests
+
+| CTest name | What it checks |
+|---|---|
+| `<Suite>.<Test>` | unit tests of every module (`tests/unit/`), C++ fragments as strings |
+| `golden.*` | the real command line against the files in `tests/golden/` (output, stderr, exit code, determinism) |
+| `roundtrip.<case>` | generates from the test of a golden case, compiles the stubs as strict C++11 and the test as C++14, links, runs, requires every test red, and requires a second run to change nothing (`tests/roundtrip/run_case.cmake`) |
+| `stubs.host.<case>` | the stubs of *every* gen-impl golden compile with `-fsyntax-only` as strict C++11 (`tests/roundtrip/syntax_case.cmake`) |
+| `stubs.arm.<case>` | the same with a cross compiler, if `-DMT_ARM_CXX=arm-linux-gnueabihf-g++` is given (CI does) |
+
+A new gen-impl golden case is a new `stubs.host.*` test the next time CMake
+configures; add it to the `roundtrip.*` list in `CMakeLists.txt` when it should be
+compiled, linked and run.
+
 ## Conventions
 
 - Every source, CMake and workflow file starts with

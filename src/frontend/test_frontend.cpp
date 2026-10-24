@@ -10,6 +10,7 @@
 #include <sstream>
 
 #include "mirrortest/frontend/code_frontend.h"
+#include "mirrortest/frontend/known_names.h"
 #include "mirrortest/ir/type.h"
 #include "mirrortest/syntax/extract.h"
 
@@ -272,6 +273,19 @@ private:
         const Node body = spec.child_by_field("body");
         if (name.is_null() || body.is_null()) return;
         const ir::Class* cls = local_class(std::string(name.text()));
+
+        // `Fixture() : foo_(3) {}` constructs foo_ itself; the declaration
+        // `Foo foo_;` must not also ask for a default constructor.
+        ctor_initialised_.clear();
+        for (const Node& member : body.named_children()) {
+            if (member.type() != "function_definition") continue;
+            for (const Node& init : initialiser_list(member).named_children()) {
+                if (init.type() == "field_initializer" && init.named_child_count() >= 1) {
+                    ctor_initialised_.insert(std::string(init.named_child(0).text()));
+                }
+            }
+        }
+
         for (const Node& member : body.named_children()) {
             if (member.type() == "function_definition") {
                 const syntax::Declarator d = syntax::parse_declarator(member.child_by_field("declarator"));
@@ -311,7 +325,7 @@ private:
 
             const Node init = n.child_by_field("default_value");
             if (init.is_null()) {
-                add_construction(*object, Construction::Form::Default, {}, n);
+                if (ctor_initialised_.count(d.name) == 0) add_construction(*object, Construction::Form::Default, {}, n);
             } else if (init.type() == "initializer_list") {
                 add_construction(*object, Construction::Form::Brace, arguments(init), init);
             } else {
@@ -1207,7 +1221,7 @@ private:
             if (left.from.kind == FactRef::Kind::FieldAccess && right.type) {
                 apply_use(left, use_of(Use::Assigned, right.type));
             } else if (right.is_string_literal && left.from.kind == FactRef::Kind::FieldAccess) {
-                apply_use(left, use_of(Use::Assigned, inferred_type("std::string", "assigned a string literal")));
+                apply_use(left, use_of(Use::Assigned, inferred_type("std::string", "a string literal assigned to it")));
             }
             if (left.type) apply_use(right, use_of(Use::Assigned, left.type));
         }
@@ -1343,7 +1357,23 @@ private:
         call.owner = owner_ != nullptr ? owner_->name : std::string();
         facts_.free_calls.push_back(std::move(call));
         v.from = {FactRef::Kind::FreeCall, facts_.free_calls.size() - 1};
+
+        // `QString("x")`, or `string("x")` under `using namespace std`: the call is
+        // somebody else's type, and the value has that type for whatever compares
+        // it or passes it on.
+        if (local_class(name) == nullptr) {
+            if (is_qt_class(name)) v.type = declared_cast_type(name, fn);
+            else if (using_std_ && is_std_type(name)) v.type = declared_cast_type("std::" + name, fn);
+        }
         return v;
+    }
+
+    ir::Type declared_cast_type(const std::string& spelling, const Node& at) const {
+        ir::Type t = ir::make_type(spelling);
+        t.origin = ir::Origin::Declared;
+        t.reason = "the cast " + spelling + "(...)";
+        t.where = loc(at);
+        return t;
     }
 
     ValueInfo scoped_call(const Node& n, const Node& fn, const Node& arg_list) {
@@ -1373,6 +1403,12 @@ private:
         call.ns = ns_;
         facts_.scoped_calls.push_back(std::move(call));
         v.from = {FactRef::Kind::ScopedCall, facts_.scoped_calls.size() - 1};
+
+        // `std::string("x")`, `std::size_t(3)`: a cast to the standard library's
+        // type, which is what the value is.
+        if (std_scope && (is_std_type(name.name) || is_standard_c_type(name.name))) {
+            v.type = declared_cast_type("std::" + name.name + (name.template_args.empty() ? "" : "<" + name.template_args + ">"), fn);
+        }
         return v;
     }
 
@@ -1511,6 +1547,7 @@ private:
     std::string                  expected_constructor_;
     std::vector<std::string>     template_params_;   // names of the template parameters in scope
     bool                         using_std_ = false; // `using namespace std;` somewhere
+    std::set<std::string>        ctor_initialised_;  // members of the class being read that a constructor initialises
 };
 
 }  // namespace

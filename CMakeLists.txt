@@ -47,10 +47,12 @@ add_library(mt_core STATIC
     src/backend/cxx_format.cpp
     src/backend/impl_backend.cpp
     src/cli/commands.cpp
+    src/cli/gen_impl.cpp
     src/cli/run.cpp
     src/core/config.cpp
     src/core/diagnostics.cpp
     src/core/diff.cpp
+    src/core/include_search.cpp
     src/core/naming.cpp
     src/core/regions.cpp
     src/core/source.cpp
@@ -100,6 +102,8 @@ if(MT_BUILD_TESTS)
         tests/unit/test_cxx_format.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_extract.cpp
+        tests/unit/test_gen_impl.cpp
+        tests/unit/test_include_search.cpp
         tests/unit/test_impl_backend.cpp
         tests/unit/test_inference.cpp
         tests/unit/test_ir_classify.cpp
@@ -159,6 +163,66 @@ if(MT_BUILD_TESTS)
     endforeach()
     set_tests_properties(cmake.embed_ok PROPERTIES PASS_REGULAR_EXPRESSION "embedding checks passed")
     set_tests_properties(cmake.embed_clash PROPERTIES PASS_REGULAR_EXPRESSION "raw-string terminator")
+
+    # gen-impl round trips (docs/design.md 16.3): generate from the test of a
+    # golden case, compile the stubs as strict embedded C++11, compile and run
+    # the test, require every test red, and require that a second run changes
+    # nothing. Driven by compiler command lines, not a nested CMake project, so
+    # the cases are fast and need no network; GoogleTest is the main build's.
+    if(NOT MSVC)
+        foreach(case basic_class fixture_members namespaces multi_class_includes no_exceptions)
+            set(mode throw)
+            if(case STREQUAL "no_exceptions")
+                set(mode abort)
+            endif()
+            add_test(NAME roundtrip.${case}
+                COMMAND "${CMAKE_COMMAND}"
+                    -DMT_BIN=$<TARGET_FILE:mirrortest>
+                    -DMT_CASE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl/${case}
+                    -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/roundtrip/${case}
+                    -DMT_MODE=${mode}
+                    -DMT_CXX=${CMAKE_CXX_COMPILER}
+                    "-DMT_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+                    "-DMT_GTEST_INCLUDE=$<TARGET_PROPERTY:GTest::gtest,INTERFACE_INCLUDE_DIRECTORIES>"
+                    "-DMT_GTEST_LIBS=$<TARGET_FILE:GTest::gtest_main>$<SEMICOLON>$<TARGET_FILE:GTest::gtest>"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/run_case.cmake")
+            set_tests_properties(roundtrip.${case} PROPERTIES TIMEOUT 300)
+        endforeach()
+    endif()
+
+    # Do the stubs of *every* gen-impl golden compile as strict C++11? With the
+    # host compiler always, and with MT_ARM_CXX (a cross compiler, e.g.
+    # arm-linux-gnueabihf-g++, which CI installs) for the target they are for.
+    # Syntax only: nothing is linked or run.
+    set(MT_ARM_CXX "" CACHE STRING "Cross compiler for the stub syntax checks (empty: skip them)")
+    file(GLOB mt_golden_impl_cases LIST_DIRECTORIES true RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl"
+         "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl/*")
+    list(SORT mt_golden_impl_cases)
+    foreach(case IN LISTS mt_golden_impl_cases)
+        set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl/${case}")
+        # Only the cases that succeed and write a source file have stubs to check.
+        file(GLOB_RECURSE case_sources "${case_dir}/expected/*.cpp")
+        if(EXISTS "${case_dir}/exit_code.txt" OR NOT case_sources)
+            continue()
+        endif()
+        foreach(kind host arm)
+            if(kind STREQUAL "host")
+                set(compiler "${CMAKE_CXX_COMPILER}")
+            else()
+                set(compiler "${MT_ARM_CXX}")
+            endif()
+            if(compiler)
+                add_test(NAME stubs.${kind}.${case}
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DMT_BIN=$<TARGET_FILE:mirrortest>
+                        -DMT_CASE_DIR=${case_dir}
+                        -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/stubs-${kind}/${case}
+                        -DMT_CXX=${compiler}
+                        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/syntax_case.cmake")
+                set_tests_properties(stubs.${kind}.${case} PROPERTIES TIMEOUT 120)
+            endif()
+        endforeach()
+    endforeach()
 
     # The CLI exists and answers. Behavioural CLI coverage lives in the golden
     # and round-trip suites, which drive the real binary.

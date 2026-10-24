@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Part of mirrortest -- bidirectional C++ test/code generator.
 //
-// The two commands. Until their frontends and backends exist (docs/plan.md,
-// phases 2 and 4) each one reports that, as an error with a diagnostic code,
-// so scripts see a failure rather than a silent "nothing to do".
+// gen-tests. Until its frontend and backend exist (docs/plan.md, phase 4) it
+// reports that, as an error with a diagnostic code, so scripts see a failure
+// rather than a silent "nothing to do". gen-impl is in gen_impl.cpp.
 
 #include "mirrortest/cli/run.h"
 
@@ -19,10 +19,6 @@ int not_implemented(const Options& options, const Env& env, const char* command)
 }
 
 }  // namespace
-
-int run_gen_impl(const Options& options, const Env& env) {
-    return not_implemented(options, env, "gen-impl");
-}
 
 int run_gen_tests(const Options& options, const Env& env) {
     return not_implemented(options, env, "gen-tests");

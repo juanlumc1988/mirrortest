@@ -509,24 +509,139 @@ TEST(ImplBackendIncludes, AbortNeedsCstdlibAndDefaultNeedsNothingUnlessItFallsBa
     EXPECT_TRUE(includes_of(build(model, def).views[0].source_view).empty());
 }
 
-TEST(ImplBackendIncludes, TwoHeadersThatIncludeEachOtherAreReportedOnce) {
+// Headers that need each other's names: the first one a cycle runs through gets a
+// forward declaration instead of the include, and its source file the include.
+
+Strings forward_lines(const nlohmann::json& header_view) {
+    Strings out;
+    for (const auto& section : header_view["sections"]) {
+        for (const auto& block : section["blocks"]) {
+            if (block["kind"] != "forward") continue;
+            for (const auto& line : block["lines"]) out.push_back(line.get<std::string>());
+        }
+    }
+    return out;
+}
+
+TEST(ImplBackendCycles, TwoHeadersThatNeedEachOthersNamesBreakTheLoopWithAForwardDeclaration) {
     ir::Model model;
     model.classes = {klass("A", {}, {method("b", "B")}), klass("B", {}, {method("a", "A")})};
     const Generated g = build(model, with_headers({"a.h", "b.h"}));
-    ASSERT_EQ(codes(g), Strings{"mt-unsupported"});
-    const std::string message = g.diagnostics.sorted()[0].message;
-    EXPECT_NE(message.find("'a.h', 'b.h'"), std::string::npos) << message;
-    EXPECT_NE(message.find("include each other"), std::string::npos) << message;
+    EXPECT_TRUE(g.diagnostics.empty()) << codes(g).size();
+
+    const backend::ImplViews& a = *view_of(g, "a.h");
+    const backend::ImplViews& b = *view_of(g, "b.h");
+    EXPECT_TRUE(includes_of(a.header_view).empty()) << "a.h no longer includes b.h";
+    EXPECT_EQ(forward_lines(a.header_view), Strings{"class B;"});
+    EXPECT_EQ(includes_of(b.header_view), Strings{"#include \"a.h\""}) << "the second one keeps its include";
+    EXPECT_TRUE(forward_lines(b.header_view).empty());
+    EXPECT_EQ(includes_of(a.source_view), (Strings{"#include <stdexcept>", "#include \"b.h\""})) << "the definitions need the whole class";
+    EXPECT_EQ(includes_of(b.source_view), Strings{"#include <stdexcept>"});
 }
 
-TEST(ImplBackendIncludes, ALongerCycleIsOneWarningNamingEveryHeader) {
+TEST(ImplBackendCycles, TheForwardDeclarationIsInTheNamespaceOfTheClassAndComesFirst) {
+    ir::Model model;
+    model.classes = {klass("A", {"one"}, {method("b", "two::B")}), klass("B", {"two"}, {method("a", "one::A")})};
+    const Generated g = build(model, with_headers({"a.h", "b.h"}));
+    EXPECT_TRUE(g.diagnostics.empty());
+    const auto& sections = view_of(g, "a.h")->header_view["sections"];
+    ASSERT_EQ(sections.size(), 2u);
+    EXPECT_EQ(sections[0]["open"], (nlohmann::json{"namespace two {"}));
+    EXPECT_EQ(sections[0]["blocks"][0]["lines"], (nlohmann::json{"class B;"}));
+    EXPECT_EQ(sections[1]["open"], (nlohmann::json{"namespace one {"}));
+}
+
+TEST(ImplBackendCycles, AStructKeepsItsKeywordInTheForwardDeclaration) {
+    ir::Model model;
+    ir::Class b = klass("B", {}, {method("a", "A")});
+    b.is_struct = true;
+    model.classes = {klass("A", {}, {method("b", "B")}), b};
+    const Generated g = build(model, with_headers({"a.h", "b.h"}));
+    EXPECT_EQ(forward_lines(view_of(g, "a.h")->header_view), Strings{"struct B;"});
+}
+
+TEST(ImplBackendCycles, ALongerCycleIsBrokenOnceAndTheClassesOutsideItAreUntouched) {
     ir::Model model;
     model.classes = {klass("A", {}, {method("b", "B")}), klass("B", {}, {method("c", "C")}), klass("C", {}, {method("a", "A")}),
                      klass("D", {}, {method("a", "A")})};
     const Generated g = build(model, with_headers({"a.h", "b.h", "c.h", "d.h"}));
+    EXPECT_TRUE(g.diagnostics.empty());
+    EXPECT_EQ(forward_lines(view_of(g, "a.h")->header_view), Strings{"class B;"}) << "the first edge of the first header in the cycle";
+    EXPECT_EQ(includes_of(view_of(g, "b.h")->header_view), Strings{"#include \"c.h\""});
+    EXPECT_EQ(includes_of(view_of(g, "c.h")->header_view), Strings{"#include \"a.h\""});
+    EXPECT_EQ(includes_of(view_of(g, "d.h")->header_view), Strings{"#include \"a.h\""});
+}
+
+TEST(ImplBackendCycles, OnlyTheIncludesOnACycleAreReplaced) {
+    // a.h includes ax.h (no way back) and b.h (and b.h includes a.h): ax.h sorts first but is innocent.
+    ir::Model model;
+    model.classes = {klass("A", {}, {method("x", "AX"), method("b", "B")}), klass("B", {}, {method("a", "A")}), klass("AX")};
+    const Generated g = build(model, with_headers({"a.h", "b.h", "ax.h"}));
+    EXPECT_TRUE(g.diagnostics.empty());
+    EXPECT_EQ(includes_of(view_of(g, "a.h")->header_view), Strings{"#include \"ax.h\""});
+    EXPECT_EQ(forward_lines(view_of(g, "a.h")->header_view), Strings{"class B;"});
+}
+
+TEST(ImplBackendCycles, TwoCyclesAreBothBroken) {
+    ir::Model model;
+    model.classes = {klass("A", {}, {method("b", "B")}), klass("B", {}, {method("a", "A")}), klass("C", {}, {method("d", "D")}),
+                     klass("D", {}, {method("c", "C")})};
+    const Generated g = build(model, with_headers({"a.h", "b.h", "c.h", "d.h"}));
+    EXPECT_TRUE(g.diagnostics.empty());
+    EXPECT_EQ(forward_lines(view_of(g, "a.h")->header_view), Strings{"class B;"});
+    EXPECT_EQ(forward_lines(view_of(g, "c.h")->header_view), Strings{"class D;"});
+}
+
+TEST(ImplBackendCycles, AClassHeldByValueCannotBeForwardDeclaredSoTheOtherEdgeIsUsed) {
+    ir::Class a = klass("A", {}, {method("b", "B")});
+    a.fields = {field("B", "held")};   // A needs B complete
+    ir::Model model;
+    model.classes = {a, klass("B", {}, {method("a", "A")})};
+    const Generated g = build(model, with_headers({"a.h", "b.h"}));
+    EXPECT_TRUE(g.diagnostics.empty());
+    EXPECT_EQ(includes_of(view_of(g, "a.h")->header_view), Strings{"#include \"b.h\""});
+    EXPECT_TRUE(forward_lines(view_of(g, "a.h")->header_view).empty());
+    EXPECT_EQ(forward_lines(view_of(g, "b.h")->header_view), Strings{"class A;"});
+    EXPECT_EQ(includes_of(view_of(g, "b.h")->source_view), (Strings{"#include <stdexcept>", "#include \"a.h\""}));
+}
+
+TEST(ImplBackendCycles, ClassesHoldingEachOtherByValueAreReportedBecauseNothingCanBreakThat) {
+    ir::Class a = klass("A");
+    a.fields = {field("B", "b")};
+    ir::Class b = klass("B");
+    b.fields = {field("A", "a")};
+    ir::Model model;
+    model.classes = {a, b};
+    const Generated g = build(model, with_headers({"a.h", "b.h"}));
     ASSERT_EQ(codes(g), Strings{"mt-unsupported"});
-    EXPECT_NE(g.diagnostics.sorted()[0].message.find("'a.h', 'b.h', 'c.h'"), std::string::npos);
-    EXPECT_EQ(g.diagnostics.sorted()[0].message.find("d.h"), std::string::npos);   // D depends on the cycle, it is not in it
+    const std::string message = g.diagnostics.sorted()[0].message;
+    EXPECT_NE(message.find("'a.h', 'b.h'"), std::string::npos) << message;
+    EXPECT_NE(message.find("by value"), std::string::npos) << message;
+}
+
+TEST(ImplBackendCycles, APointerFieldIsNotHeldByValue) {
+    ir::Class a = klass("A");
+    a.fields = {field("B*", "b")};
+    ir::Class b = klass("B");
+    b.fields = {field("A&", "a")};
+    ir::Model model;
+    model.classes = {a, b};
+    const Generated g = build(model, with_headers({"a.h", "b.h"}));
+    EXPECT_TRUE(g.diagnostics.empty());
+}
+
+TEST(ImplBackendCycles, AHeaderOfAnExistingClassIsNeverReplacedByAForwardDeclaration) {
+    ir::Model known;
+    ir::Class item = klass("Item");
+    item.header = "item.h";
+    known.classes = {item};
+    ir::Model model;
+    model.classes = {klass("A", {}, {method("get", "Item")})};
+    backend::ImplOptions o = with_headers({"a.h"});
+    o.known = {known};
+    const Generated g = build(model, o);
+    EXPECT_EQ(includes_of(g.views[0].header_view), Strings{"#include \"item.h\""});
+    EXPECT_TRUE(forward_lines(g.views[0].header_view).empty());
 }
 
 TEST(ImplBackendIncludes, AChainOrADiamondIsNotACycle) {

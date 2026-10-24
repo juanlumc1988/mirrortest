@@ -390,15 +390,11 @@ TEST(CliConfig, ABadConfigFileIsAConfigErrorNamingTheFile) {
 
 // ---- running ---------------------------------------------------------------------------------------
 
-TEST(CliRun, TheCommandsReportThatTheyAreNotImplementedYet) {
-    const Invocation impl = invoke({"gen-impl", "t.cpp", "--out", "o"});
-    EXPECT_EQ(impl.code, 1);
-    EXPECT_EQ(impl.err, "mirrortest: error: gen-impl is not implemented yet (see docs/plan.md) [mt-unsupported]\n");
-    EXPECT_EQ(impl.out, "");
-
+TEST(CliRun, GenTestsReportsThatItIsNotImplementedYet) {
     const Invocation tests = invoke({"gen-tests", "h.h", "--out", "o"});
     EXPECT_EQ(tests.code, 1);
-    EXPECT_TRUE(contains(tests.err, "gen-tests is not implemented yet"));
+    EXPECT_EQ(tests.err, "mirrortest: error: gen-tests is not implemented yet (see docs/plan.md) [mt-unsupported]\n");
+    EXPECT_EQ(tests.out, "");
 }
 
 // ---- finishing a run ----------------------------------------------------------------------------------

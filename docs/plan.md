@@ -137,7 +137,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   `impl/header.inja`, `impl/source.inja` (§8): file assignment, includes by
   type (`ir/classify`), regions, TODOs, stub policies, commented parameter
   names, `file_header`, guards. Unit tests of the view model.
-- [ ] **2.10 The `gen-impl` subcommand** — full wiring frontend → inference →
+- [x] **2.10 The `gen-impl` subcommand** — full wiring frontend → inference →
   backend → writer (`never`/`force` modes). Goldens (`tests/golden/gen-impl/`):
   1. `basic_class` (ctor with literals, EQ/TRUE/FALSE/STREQ, `void`)
   2. `literals` (every form of 2.3 with its effect on the signature)
@@ -148,8 +148,8 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   7. `static_methods`
   8. `fixture_members` (`TEST_F`, `SetUp`)
   9. `namespaces` (`ns::Foo`, `using namespace`, test inside a namespace)
-  10. `multi_class_includes` (two includes, a class without a pair,
-      `mt-no-include`)
+  10. `multi_class_includes` (two includes, a class without a pair, a cycle
+      broken by a forward declaration)
   11. `free_functions` (+ macros and libc ignored)
   12. `annotations`
   13. `conflicts`
@@ -163,15 +163,23 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
       class is not regenerated)
   21. `no_exceptions` (`--no-exceptions` → `std::abort()`, `<cstdlib>`)
   22. `stub_default` (`mt-stub-may-pass` warning)
-- [ ] **2.11 gen-impl/GTest round trip** — `tests/roundtrip/run_case.cmake` +
-  generic subproject (§16.3): cases `basic_class`, `fixture_members`,
-  `namespaces`, `multi_class_includes`, `no_exceptions`. Require compilation
-  with the flags of §16.3, `failures == tests`, and idempotence.
-- [ ] **2.12 CI: ARM and round trip** — a job that installs
+  Added along the way: `no_include` (nothing claims the classes: files named
+  from them and `mt-no-include`), `using_namespace_std`, `fields`, `chains`,
+  `qualified_cast`.
+- [x] **2.11 gen-impl/GTest round trip** — `tests/roundtrip/run_case.cmake`
+  (§16.3; compiler command lines rather than a generic subproject: no network,
+  a second per case): cases `basic_class`, `fixture_members`, `namespaces`,
+  `multi_class_includes`, `no_exceptions`. Require compilation with the flags of
+  §16.3, `failures == tests`, and idempotence. Also `stubs.host.<case>`: the
+  stubs of every gen-impl golden compile as strict C++11.
+- [x] **2.12 CI: ARM and round trip** — a job that installs
   `g++-arm-linux-gnueabihf` and defines `MT_ARM_CXX` (stubs with `-std=c++11
   -Wall -Wextra -Wpedantic -Werror -fsyntax-only`; `no_exceptions` additionally
-  with `-fno-exceptions -fno-rtti`).
-- [ ] **2.13 User documentation** — `docs/conventions.md`: how to write tests
+  with `-fno-exceptions -fno-rtti`): `stubs.arm.<case>` for every gen-impl
+  golden. The round trips themselves run in the host and sanitizer jobs. (The
+  ARM job could not be run where this was written, which has no cross
+  compiler; the same script runs with GCC and Clang.)
+- [x] **2.13 User documentation** — `docs/conventions.md`: how to write tests
   the tool understands (the rules of §7 in user language, with examples),
   annotations, policies, diagnostic codes. README: a real *Usage* section.
 

@@ -1,0 +1,2 @@
+wrote out/foo.h.new (out/foo.h exists and differs)
+created out/foo.cpp

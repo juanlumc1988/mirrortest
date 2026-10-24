@@ -1,0 +1,5 @@
+in/repo_test.cpp:17:11: warning: the result of 'Cache::drop' is never used, so the method is assumed to return void [mt-unused-result]
+created out/repo.h
+created out/repo.cpp
+created out/cache.h
+created out/cache.cpp

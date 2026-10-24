@@ -802,6 +802,18 @@ TEST(InferenceStd, TypeMapStillWinsAndIsWrittenVerbatim) {
     EXPECT_EQ(method(o, "Foo", "total").ret.spelling, "vector<Money>");
 }
 
+TEST(InferenceCasts, AComparisonWithACastToAStandardTypeSaysWhatTheResultIs) {
+    const Outcome o = body("Foo foo;\nEXPECT_EQ(foo.name(), std::string(\"x\"));\nEXPECT_EQ(foo.label(), QString(\"y\"));\n");
+    EXPECT_EQ(method(o, "Foo", "name").ret.spelling, "std::string");
+    EXPECT_EQ(method(o, "Foo", "label").ret.spelling, "QString");
+    EXPECT_TRUE(errors(o).empty()) << ::testing::PrintToString(errors(o));
+}
+
+TEST(InferenceCasts, ACastToAClassIsTakenByConstReferenceWhateverItsOrigin) {
+    const Outcome o = body("Foo foo;\nfoo.put(std::string(\"x\"), std::size_t(2), QString(\"q\"));\n");
+    EXPECT_EQ(param_types(method(o, "Foo", "put", 3)), (std::vector<std::string>{"const std::string&", "std::size_t", "const QString&"}));
+}
+
 TEST(InferenceWhole, NothingToInferIsAnEmptyModel) {
     const Outcome o = infer_text("");
     EXPECT_TRUE(o.model.classes.empty());

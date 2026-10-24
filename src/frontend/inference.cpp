@@ -286,11 +286,13 @@ private:
         } else if (v.is_moved) {
             e.type = value_type(t);              // handed over: taken by value
             e.moved = true;
-        } else if (v.is_lvalue && !v.var_name.empty()) {
+        } else if ((v.is_lvalue && !v.var_name.empty()) || t.origin == ir::Origin::Declared) {
+            // A variable, or a temporary whose type the test spelled out (a cast):
+            // a class is taken by const reference, a by-value type by value.
             const ir::Type plain = value_type(t);
             e.type = is_by_value(plain) ? plain : with_shape(plain, true, ir::RefKind::LValue, 0);
         } else {
-            e.type = value_type(t);
+            e.type = value_type(t);   // a literal: its type, by value
         }
         if (e.reason.empty()) e.reason = "'" + v.text + "'";
         if (e.type.reason.empty()) e.type.reason = e.reason;

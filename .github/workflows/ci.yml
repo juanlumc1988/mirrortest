@@ -71,3 +71,29 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1
           ASAN_OPTIONS: detect_leaks=1
         run: ctest --test-dir build-san --output-on-failure
+
+  arm:
+    name: arm stubs (cross syntax check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools and the ARM cross compiler
+        run: sudo apt-get update && sudo apt-get install -y ninja-build g++-arm-linux-gnueabihf
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DMT_WERROR=ON \
+                -DMT_ARM_CXX=arm-linux-gnueabihf-g++
+
+      - name: Build
+        run: cmake --build build -j
+
+      # Every generated stub, as C++11 with -Wall -Wextra -Wpedantic -Werror (and
+      # -fno-exceptions -fno-rtti under --no-exceptions), by the compiler for the
+      # target the stubs are written for. The host jobs run the same checks with
+      # the host compiler and also link and run the round trips.
+      - name: Compile the generated stubs for ARM
+        run: ctest --test-dir build -R '^stubs\.arm\.' --output-on-failure

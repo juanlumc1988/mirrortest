@@ -1,0 +1,4 @@
+gen-impl
+${IN}/math_test.cpp
+--out
+${OUT}
