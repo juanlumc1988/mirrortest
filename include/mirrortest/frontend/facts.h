@@ -23,6 +23,7 @@
 #include <string_view>
 #include <vector>
 
+#include "mirrortest/frontend/annotations.h"
 #include "mirrortest/frontend/literals.h"
 #include "mirrortest/ir/model.h"
 
@@ -113,6 +114,7 @@ struct MethodCall {
     bool        on_const = false;           // called through a const object, reference or pointer
     bool        via_arrow = false;
     ResultUse   use;
+    CallAnnotation annotation;              // `// @mt:` on the statement (7.11)
     ir::SourceLoc where;                    // the method name
     std::vector<std::string> ns;            // namespaces enclosing the test
 };
@@ -124,6 +126,7 @@ struct ScopedCall {
     std::string name;
     std::vector<ValueInfo> args;
     ResultUse   use;
+    CallAnnotation annotation;
     ir::SourceLoc where;
     std::vector<std::string> ns;
 };
@@ -134,6 +137,7 @@ struct FreeCall {
     std::string name;
     std::vector<ValueInfo> args;
     ResultUse   use;
+    CallAnnotation annotation;
     ir::SourceLoc where;
     std::vector<std::string> ns;
 
@@ -148,6 +152,7 @@ struct FieldAccess {
     bool        on_const = false;
     bool        via_arrow = false;
     ResultUse   use;                        // Assigned: `obj.x = 5;` says what x is
+    CallAnnotation annotation;
     ir::SourceLoc where;
     std::vector<std::string> ns;
 };
@@ -232,6 +237,8 @@ struct TestFileFacts {
     std::vector<Construction> constructions;
     std::vector<TypeUse>      type_uses;
     std::vector<Unresolved>   unresolved;
+
+    Annotations               annotations;       // every `// @mt:` comment of the file (7.11)
 };
 
 // Which test frameworks the file uses, from its includes and test macros.

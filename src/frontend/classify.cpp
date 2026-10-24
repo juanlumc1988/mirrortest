@@ -96,13 +96,30 @@ public:
         std::stable_sort(functions_.begin(), functions_.end(), by_first_use);
 
         Classified out;
+        out.overrides = merged_overrides();
         out.facts = std::move(facts_);
         out.classes = std::move(classes_);
         out.functions = std::move(functions_);
+        apply_call_annotations(out, diag_);
         return out;
     }
 
 private:
+    std::map<std::string, core::MemberOverride> merged_overrides() const {
+        std::map<std::string, core::MemberOverride> merged = options_.config.overrides;
+        for (const auto& entry : facts_.annotations.overrides) {
+            core::MemberOverride& m = merged[entry.first];
+            const core::MemberOverride& a = entry.second;
+            if (a.returns) m.returns = a.returns;
+            for (const auto& p : a.params) m.params[p.first] = p.second;
+            if (a.is_const) m.is_const = a.is_const;
+            if (a.is_static) m.is_static = a.is_static;
+            if (a.is_virtual) m.is_virtual = a.is_virtual;
+            if (a.is_noexcept) m.is_noexcept = a.is_noexcept;
+        }
+        return merged;
+    }
+
     // ---- what is already provided -------------------------------------------------------------------
 
     void index_environment() {
@@ -247,8 +264,8 @@ private:
     // namespace the test sits in, the one `using namespace`, the configuration.
     Ns resolve_namespace(const std::string& entity, const Ns& test_ns, const ir::SourceLoc& where, bool is_class) {
         if (is_class) {
-            const auto annotated = options_.class_namespace.find(entity);
-            if (annotated != options_.class_namespace.end()) return split_scope(annotated->second);
+            const auto annotated = facts_.annotations.class_namespace.find(entity);
+            if (annotated != facts_.annotations.class_namespace.end()) return split_scope(annotated->second);
         }
         if (!test_ns.empty()) return test_ns;
         if (usings_.size() == 1) {
@@ -286,6 +303,8 @@ private:
         c.name = name;
         c.ns = std::move(ns);
         c.first_use = where;
+        const auto header = facts_.annotations.class_header.find(name);
+        if (header != facts_.annotations.class_header.end()) c.header = header->second;
         classes_.push_back(std::move(c));
         return classes_.size() - 1;
     }

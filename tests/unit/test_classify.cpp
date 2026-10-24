@@ -248,10 +248,9 @@ TEST(ClassifyNamespaces, TheConfiguredDefaultIsTheLastResort) {
 }
 
 TEST(ClassifyNamespaces, AnnotationDecidesAnUnqualifiedClassButNotAQualifiedOne) {
-    frontend::ClassifyOptions options;
-    options.class_namespace["Foo"] = "ann::ns";
-    options.class_namespace["Bar"] = "ann::ns";
-    const Outcome r = classify("using namespace acme;\nTEST(S, N) { Foo f; code::Bar b; }\n", options);
+    const Outcome r = classify(
+        "// @mt: class Foo namespace ann::ns; class Bar namespace ann::ns\n"
+        "using namespace acme;\nTEST(S, N) { Foo f; code::Bar b; }\n");
     EXPECT_EQ(class_names(r), (std::vector<std::string>{"ann::ns::Foo", "code::Bar"}));
     EXPECT_TRUE(notes(r).empty()) << "the annotation settled it; the using was not consulted";
 }

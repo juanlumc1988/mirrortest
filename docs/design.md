@@ -429,7 +429,7 @@ for the inference (§7.9), not for the frontend.
 
 Differences from the initial sketch of this section: `is_const` disappears from
 `ValueInfo` (constness goes in `ir::Type`); `is_static` is not a field (it is a
-`ScopedCall`); annotations are added in 2.6; `CtorFact` becomes `Construction`
+`ScopedCall`); the annotations of a call live on its fact (`CallAnnotation`, §7.11); `CtorFact` becomes `Construction`
 with explicit forms; `ResultUse.where` is redundant (the call carries it);
 `Receiver` is added.
 
@@ -767,6 +767,53 @@ MEMBER     := [NS "::"] CLASS "::" METHOD
 - `TYPE` = the rest of the text up to `;` or the end, normalised.
 - Annotations are `Origin::Annotated`. `config.overrides` accepts the long forms
   with the same meaning.
+
+Implemented in `frontend/annotations.h`. Reading happens with the rest of the
+test file (`read_test_file` fills `TestFileFacts::annotations`); applying the
+short forms is the last step of `classify()`, because only then is it known
+which calls are the code under test. Details settled while implementing it:
+
+- **Which comments.** Line comments whose text starts with `@mt:` after the
+  `//` and any spaces. `// @mt returns int` (no colon) and `/* @mt: … */` are
+  `mt-annotation` errors rather than ordinary comments: an annotation that is
+  silently ignored is worse than none. Anything else, including the text
+  `// @mt:` inside a string, is not an annotation.
+- **Which statement.** A comment that follows a statement on its own line
+  applies to that statement; a comment on a line of its own, to the next
+  statement (other comments in between are skipped); a comment in the middle of
+  a statement that spans lines, to that statement. At file scope the "statement"
+  is the whole next declaration, which will almost always hold more than one
+  call and so be an error: use the long form. No statement after it (the end of
+  the block) is an error.
+- **Which call.** The API calls inside the statement's span are the method,
+  static, free and namespaced calls and the field reads that classification
+  attached to a class or function to generate (§7.7): `std::max(…)` or `strlen(…)`
+  in the same statement do not count, and neither does a call classification
+  found to belong to somebody else. A call found by classification itself
+  (`Foo(3).size()`) does. Exactly one is required; with several the message
+  names them and suggests the long form.
+- **What it does.** `returns T` goes to `CallAnnotation::returns`
+  (`Origin::Annotated`, `reason = "annotation"`, `where` = the comment, which is
+  what the TODO cites), `overload` and `ignore` to flags of the same struct, all
+  on the call's fact. The fact's `ResultUse` is left as the code said it:
+  inference (§7.9) reads both and the annotation wins. A call already carrying a
+  `returns` rejects a second one. `ignore` means "not code under test": the
+  inference generates nothing for that call.
+- **Long forms** are collected in `Annotations::overrides`, with the shape and
+  meaning of `config.overrides`; `classify()` lays them over the configuration's
+  own, attribute by attribute (the annotation, being nearer the code, wins), into
+  `Classified::overrides`. `param N` takes N from 1 to 9999 without a leading
+  zero. Operator members (`Foo::operator==`) are allowed; conversion operators
+  with a space (`operator bool`) are not, because the directive is split at
+  spaces.
+- **`class Foo namespace NS`** decides the namespace of an unqualified class
+  (§7.7, rule 2); **`class Foo header "path"`** is kept in
+  `ClassTarget::header` for the file assignment of §8.1. Naming a class nobody
+  uses is harmless.
+- **Repeats.** Each long directive may appear once per member and attribute
+  (`Foo::f returns`, `Foo::f param 1`, `Foo::f const`, `class Foo namespace`,
+  …); a second one is an error that cites the line of the first, and the first
+  stands. A bad directive does not stop the good ones in the same comment.
 
 ---
 

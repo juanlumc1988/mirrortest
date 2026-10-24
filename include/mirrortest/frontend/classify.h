@@ -33,6 +33,7 @@
 
 #include "mirrortest/core/config.h"
 #include "mirrortest/core/diagnostics.h"
+#include "mirrortest/frontend/annotations.h"
 #include "mirrortest/frontend/facts.h"
 #include "mirrortest/ir/model.h"
 
@@ -45,10 +46,6 @@ struct ClassifyOptions {
     // The headers the test includes, already read (design 7.10). Their classes,
     // enums and functions are never generated.
     std::vector<ir::Model> known;
-
-    // `// @mt: class Foo namespace acme` (7.11), keyed by the class's simple
-    // name. It decides where an otherwise unqualified class goes.
-    std::map<std::string, std::string> class_namespace;
 };
 
 // A class the tests need and nobody provides.
@@ -57,6 +54,7 @@ struct ClassTarget {
     std::string              name;
     std::vector<std::string> instantiations;   // `Box<int>`: "int"; distinct, in order of appearance
     ir::SourceLoc            first_use;
+    std::string              header;           // `// @mt: class Foo header "acme/foo.h"`, or empty
 
     // Indices into Classified::facts.
     std::vector<std::size_t> method_calls;     // obj.m(), including the pending calls found to be its own
@@ -88,6 +86,11 @@ struct Classified {
     // Both in order of first use in the source.
     std::vector<ClassTarget>    classes;
     std::vector<FunctionTarget> functions;
+
+    // config.overrides with the file's long-form annotations laid over them,
+    // attribute by attribute: the annotation, being nearer the code, wins. Keyed
+    // "Class::member" or "ns::Class::member" as written.
+    std::map<std::string, core::MemberOverride> overrides;
 };
 
 Classified classify(TestFileFacts facts, const ClassifyOptions& options, core::Diagnostics& diagnostics);

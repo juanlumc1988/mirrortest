@@ -121,7 +121,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 - [x] **2.5 Name classification and namespaces** — (§7.7, §7.8). Tests:
   externals (std, Q*, fixtures, existing headers), `X::m()` in its three
   branches, `using namespace`, free functions vs. macros vs. libc.
-- [ ] **2.6 Annotations** — `frontend/annotations` (§7.11). Tests: every
+- [x] **2.6 Annotations** — `frontend/annotations` (§7.11). Tests: every
   directive, short and long form, errors (`mt-annotation`: no target, more than
   one call, syntax), `config.overrides`.
 - [ ] **2.7 Inference** — `frontend/inference` (§7.9). *Facts → model* tests:

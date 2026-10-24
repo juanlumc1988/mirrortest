@@ -1581,6 +1581,7 @@ TestFileFacts read_test_file(const core::SourceFile& source, const TestFrontendO
         return model;
     }();
     facts.includes = facts.local.includes;
+    facts.annotations = read_annotations(tree, source.path, diagnostics);
 
     Collector(tree, source.path, options, facts, diagnostics).run();
     return facts;

@@ -53,6 +53,7 @@ add_library(mt_core STATIC
     src/core/source.cpp
     src/core/templates.cpp
     src/core/writer.cpp
+    src/frontend/annotations.cpp
     src/frontend/classify.cpp
     src/frontend/code_frontend.cpp
     src/frontend/facts.cpp
@@ -85,6 +86,7 @@ if(MT_BUILD_TESTS)
     include(GoogleTest)
 
     add_executable(mt_unit_tests
+        tests/unit/test_annotations.cpp
         tests/unit/test_classify.cpp
         tests/unit/test_cli.cpp
         tests/unit/test_code_frontend.cpp
