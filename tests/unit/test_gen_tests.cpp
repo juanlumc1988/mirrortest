@@ -314,6 +314,50 @@ TEST(GenTestsOptions, TheIgnoreMacrosListReachesTheFrontend) {
     EXPECT_FALSE(contains(text, "MY_ATTR"));
 }
 
+// ---- a fixture ----------------------------------------------------------------------------------------------
+
+TEST(GenTestsFixture, TheConfigurationAsksForOne) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "mt.json", R"({"gtest": {"fixture": true}})");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--config", "mt.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    const std::string text = read(dir, "tests/foo_test.cpp");
+    EXPECT_TRUE(contains(text, "class FooTest : public ::testing::Test {")) << text;
+    EXPECT_TRUE(contains(text, "    Foo sut;\n};")) << text;
+    EXPECT_TRUE(contains(text, "TEST_F(FooTest, size) {"));
+    EXPECT_FALSE(contains(text, "TEST(FooTest"));
+}
+
+TEST(GenTestsFixture, WithoutItNothingChanges) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "mt.json", R"({"gtest": {"fixture": false}})");
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--config", "mt.json"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "tests/foo_test.cpp"), "TEST(FooTest, size) {"));
+    EXPECT_FALSE(contains(read(dir, "tests/foo_test.cpp"), "TEST_F"));
+}
+
+TEST(GenTestsFixture, QtTestHasNoneYetAndSaysNothingAboutIt) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "mt.json", R"({"gtest": {"fixture": true}})");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--config", "mt.json", "--framework", "qtest"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created tests/tst_foo.cpp\n");
+    EXPECT_FALSE(contains(read(dir, "tests/tst_foo.cpp"), "::testing::Test"));
+}
+
+TEST(GenTestsFixture, ABadKeyIsAConfigurationError) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "mt.json", R"({"gtest": {"fixtures": true}})");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--config", "mt.json"});
+    EXPECT_EQ(r.code, 1);
+    EXPECT_TRUE(contains(r.err, "unknown configuration key 'gtest.fixtures'")) << r.err;
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
 // ---- Qt Test ------------------------------------------------------------------------------------------------
 
 TEST(GenTestsQt, WritesOneTestClassPerClassNamedAfterTheConfiguredPattern) {
@@ -323,6 +367,7 @@ TEST(GenTestsQt, WritesOneTestClassPerClassNamedAfterTheConfiguredPattern) {
     EXPECT_EQ(r.code, 0) << r.err;
     EXPECT_EQ(r.err, "created tests/tst_foo.cpp\n");
     const std::string text = read(dir, "tests/tst_foo.cpp");
+    EXPECT_TRUE(contains(text, "from include/acme/foo.h.")) << "the header comment names the source: " << text;
     EXPECT_TRUE(contains(text, "class TestFoo : public QObject {")) << text;
     EXPECT_TRUE(contains(text, "void TestFoo::size() {"));
     EXPECT_TRUE(contains(text, "QFAIL(\"TODO(mt): write the test for acme::Foo::size() const\");"));

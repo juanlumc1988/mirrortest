@@ -136,7 +136,9 @@ variables too.
 | `sections` | array | one per namespace, in order of first appearance |
 
 A section has `open` and `close` (the `namespace x {` and `}  // namespace x`
-lines; empty for the global namespace) and `tests`: an array of
+lines; empty for the global namespace), `fixtures` (an array of `{name, lines}`:
+the whole fixture class, complete and indented, for the suites that have one
+with `gtest.fixture`; empty otherwise) and `tests`: an array of
 `{suite, name, lines}`. `lines` is the whole test, complete and indented
 (`TEST(FooTest, size) {`, `    FAIL() << "...";`, `}`), because how a statement is
 spelt -- the placeholder as `FAIL()` or `GTEST_SKIP()`, a statement that could
@@ -145,8 +147,9 @@ there. `suite` and `name` are for a template that wants to lay tests out
 differently (a header comment per test, say).
 
 The default puts a blank line after the file header, none between the
-includes, one around the namespace braces and one between tests; nothing inside
-the namespace is indented.
+includes, one around the namespace braces, one after each fixture and one between
+tests; nothing inside the namespace is indented. With a fixture, `lines` begins
+with `TEST_F(` instead of `TEST(`.
 
 ### `qtest/test_file.inja`
 

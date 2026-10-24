@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -170,6 +171,7 @@ ir::Type converted_type(const ir::Method& m) {
 // test only has to replace the line of the one that is missing.
 struct Args {
     std::vector<Stmt>        locals;
+    std::vector<std::string> names;         // of the locals, in the same order
     std::vector<std::string> expressions;
     bool                     ok = true;
     bool                     uses_move = false;   // meaningful only if ok: a commented-out call needs no <utility>
@@ -181,10 +183,12 @@ struct Args {
 // and in the constructor's own case, which every public constructor gets: that
 // case is what asks for <utility>, so no flag is kept for it here.
 struct Sut {
-    bool              available = false;
-    std::vector<Stmt> setup;           // locals for the constructor's arguments; empty unless available
-    std::string       declaration;     // "Foo sut" or "Foo sut(arg1, arg2)"
-    std::string       why;             // when !available
+    bool                     available = false;
+    std::vector<Stmt>        setup;         // locals for the constructor's arguments; empty unless available
+    std::vector<std::string> names;         // of those locals
+    std::string              declaration;   // "Foo sut" or "Foo sut(arg1, arg2)"
+    std::string              initialiser;   // "sut(arg1, arg2)" for a fixture's constructor; empty if Foo is default constructed
+    std::string              why;           // when !available
 };
 
 class Planner {
@@ -234,6 +238,9 @@ private:
 
     bool qtest() const { return options_.framework == ir::Framework::QTest; }
 
+    // A fixture is a GoogleTest idea; Qt Test's counterpart (init(), cleanup()) is not planned yet.
+    bool fixture() const { return options_.config.gtest.fixture && !qtest(); }
+
     static bool is_abstract(const ir::Class& c) {
         return std::any_of(c.methods.begin(), c.methods.end(), [](const ir::Method& m) { return m.is_pure; });
     }
@@ -263,6 +270,7 @@ private:
             }
             const std::string name = names.reserve(p.name.empty() ? "arg" + std::to_string(i + 1) : p.name);
             args.locals.push_back(code(local_type(type) + " " + name + "{}"));
+            args.names.push_back(name);
             if (type.ref == ir::RefKind::RValue) {
                 args.expressions.push_back("std::move(" + name + ")");
                 args.uses_move = true;
@@ -312,7 +320,9 @@ private:
         const Args args = make_args(c, best->params, names);
         sut.available = true;
         sut.setup = args.locals;
+        sut.names = args.names;
         sut.declaration = c.name + " " + sut_name + "(" + join(args.expressions, ", ") + ")";
+        sut.initialiser = sut_name + "(" + join(args.expressions, ", ") + ")";
         return sut;
     }
 
@@ -336,6 +346,11 @@ private:
         names.reserve("sut");
         names.reserve("const_sut");
         names.reserve("result");
+        if (fixture_sut_) {
+            // The fixture's members are in scope in the body: a local of the same name would shadow one.
+            names.reserve("object");
+            for (const std::string& member : fixture_sut_->names) names.reserve(member);
+        }
         uses_move_ = false;
 
         tc.body.push_back(placeholder("TODO(mt): write the test for " + tc.target));
@@ -363,14 +378,24 @@ private:
         uses_move_ = uses_move_ || (buildable && args.uses_move);
         if (!args.left_out.empty()) body.push_back(comment("TODO(mt): " + args.left_out));
         body.push_back(comment("Act"));
-        const std::string declaration = args.expressions.empty() ? c.name + " sut" : c.name + " sut(" + join(args.expressions, ", ") + ")";
+        // In a fixture sut is a member that already exists; what this test builds is another object.
+        const std::string var = fixture_sut_ ? "object" : "sut";
+        const std::string declaration = args.expressions.empty() ? c.name + " " + var : c.name + " " + var + "(" + join(args.expressions, ", ") + ")";
         body.push_back(code(declaration, !buildable));
-        body.push_back(code("(void)sut", !buildable));
+        body.push_back(code("(void)" + var, !buildable));
         body.push_back(comment("Assert"));
-        body.push_back(comment("TODO(mt): check the state of sut"));
+        body.push_back(comment("TODO(mt): check the state of " + var));
     }
 
     void plan_destructor(const ir::Class& c, Names& names, std::vector<Stmt>& body) {
+        if (fixture_sut_) {
+            // The fixture builds sut before the test and destroys it after: nothing to arrange or to do.
+            body.push_back(comment("Act"));
+            body.push_back(comment("the fixture destroys sut when the test ends"));
+            body.push_back(comment("Assert"));
+            body.push_back(comment("TODO(mt): check what the destructor releases"));
+            return;
+        }
         const Sut sut = make_sut(c, names, "sut");
         add_locals(body, sut.setup, false);
         if (!sut.available) body.push_back(comment("TODO(mt): " + sut.why));
@@ -388,14 +413,14 @@ private:
     void plan_signal(const ir::Class& c, const ir::Method& m, Names& names, std::vector<Stmt>& body) {
         names.reserve("spy");
         const Sut sut = make_sut(c, names, "sut");
-        add_locals(body, sut.setup, !sut.available);
+        add_locals(body, sut.setup, false);   // empty unless sut is available
         if (!sut.available) body.push_back(comment("TODO(mt): " + sut.why));
         body.push_back(code(sut.available ? sut.declaration : c.name + " sut", !sut.available));
 
         std::string member = "&" + c.name + "::" + m.name;
-        const bool overloaded = std::count_if(c.methods.begin(), c.methods.end(), [&](const ir::Method& other) {
-                                    return other.qt_role == ir::QtRole::Signal && other.name == m.name;
-                                }) > 1;
+        // Any method of the same name makes &Class::name ambiguous: a slot with other parameters too.
+        const bool overloaded = std::count_if(c.methods.begin(), c.methods.end(),
+                                              [&](const ir::Method& other) { return other.name == m.name; }) > 1;
         if (overloaded) {
             std::vector<std::string> types;
             for (const ir::Param& p : m.params) types.push_back(qualify_nested(p.type.spelling, c));
@@ -412,11 +437,11 @@ private:
     void plan_call(const ir::Class& c, const ir::Method& m, Names& names, std::vector<Stmt>& body, const std::string& target) {
         Sut sut;
         sut.available = true;
-        if (!m.is_static) sut = make_sut(c, names, "sut");
+        if (!m.is_static) sut = fixture_sut_ ? *fixture_sut_ : make_sut(c, names, "sut");
         const Args args = make_args(c, m.params, names);
         const bool buildable = sut.available && args.ok;
 
-        if (!m.is_static) {
+        if (!m.is_static && !fixture_sut_) {
             add_locals(body, sut.setup, !buildable);
             if (!sut.available) body.push_back(comment("TODO(mt): " + sut.why));
             body.push_back(code(sut.available ? sut.declaration : c.name + " sut", !buildable));
@@ -466,6 +491,30 @@ private:
         return names;
     }
 
+    // The fixture that owns sut: the arguments its constructor needs as members, then sut, built
+    // by the fixture's constructor so that the argument members are there when it runs (members are
+    // initialised in the order they are declared). Where sut cannot be built the members are
+    // comments and every case that needs sut is a comment too.
+    ir::Fixture plan_fixture(const ir::Class& c, const std::string& name) {
+        Names reserved;
+        for (const char* used : {"sut", "const_sut", "result", "object"}) reserved.reserve(used);
+        Sut sut = make_sut(c, reserved, "sut");
+
+        ir::Fixture fixture;
+        fixture.name = name;
+        if (sut.available) {
+            fixture.members = sut.setup;
+            fixture.members.push_back(code(c.name + " sut"));
+            if (!sut.initialiser.empty()) fixture.initialisers.push_back(sut.initialiser);
+        } else {
+            fixture.members.push_back(comment("TODO(mt): " + sut.why));
+            fixture.members.push_back(code(c.name + " sut", true));
+        }
+        fixture.set_up.push_back(comment("TODO(mt): bring sut to the state every test starts from"));
+        fixture_sut_ = std::move(sut);
+        return fixture;
+    }
+
     ir::TestPlan plan_class(const ir::Class& c, const std::vector<const ir::Method*>& testable) {
         std::vector<core::TestNameInput> inputs;
         for (const ir::Method* m : testable) {
@@ -485,10 +534,12 @@ private:
         suite.target_class = c.name;
         suite.ns = c.ns;
         bool moves = false;
+        if (fixture()) suite.fixture = plan_fixture(c, suite.name);
         for (std::size_t i = 0; i < testable.size(); ++i) {
             suite.cases.push_back(plan_case(c, *testable[i], names[i]));
             moves = moves || uses_move_;
         }
+        fixture_sut_.reset();
 
         ir::TestPlan plan;
         plan.file = core::expand_pattern(qtest() ? options_.config.naming.qtest_file : options_.config.naming.gtest_file,
@@ -505,6 +556,7 @@ private:
     core::Diagnostics&            diag_;
     std::vector<const ir::Model*> models_;
     bool                          uses_move_ = false;
+    std::optional<Sut>            fixture_sut_;   // set while the cases of a class with a fixture are planned
 };
 
 }  // namespace

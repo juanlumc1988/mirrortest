@@ -245,11 +245,19 @@ struct TestCase {
     std::vector<Stmt> body;
 };
 
+// The class a TEST_F test runs in: it owns the object under test and whatever
+// that object is built from. Written for GoogleTest; Qt Test has init() and
+// cleanup() for the same job and a plan for it is still to come.
 struct Fixture {
-    std::string        name;         // "FooTest"
-    std::vector<Field> members;
-    std::vector<Stmt>  set_up;       // SetUp() / init()
-    std::vector<Stmt>  tear_down;    // TearDown() / cleanup()
+    std::string              name;         // "FooTest": the suite's name, as TEST_F wants it
+    // Data members in declaration order, as declarations without the ';':
+    // `int initial{}`, `Foo sut`. A declaration the tool could not make is a
+    // Code statement with commented_out, and a Comment before it says why.
+    std::vector<Stmt>        members;
+    // The constructor's initialiser list, `sut(initial)`; no constructor if empty.
+    std::vector<std::string> initialisers;
+    std::vector<Stmt>        set_up;       // SetUp(); no override if empty
+    std::vector<Stmt>        tear_down;    // TearDown(); no override if empty
 };
 
 struct TestSuite {

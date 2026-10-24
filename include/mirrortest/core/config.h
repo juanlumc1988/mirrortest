@@ -88,10 +88,20 @@ struct MemberOverride {
     std::optional<bool>             is_noexcept;
 };
 
+// What a configuration file may say about the GoogleTest skeletons of gen-tests.
+struct GtestConfig {
+    // TEST_F with a fixture class that owns the object under test, instead of a TEST
+    // that builds it. The fixture builds the object *before* the test body, so unlike
+    // the plain skeleton it runs the class's constructor even while the placeholder
+    // keeps the test red: that is why it is opt-in (design 9.4).
+    bool fixture = false;
+};
+
 struct Config {
     CxxStd      cxx_std           = CxxStd::Cxx17;
     std::string default_namespace;                  // "" = global, else "a::b"
     Naming      naming;
+    GtestConfig gtest;
     GuardStyle  guard             = GuardStyle::Ifndef;
     std::string file_header;                        // comment text, "" = none
 

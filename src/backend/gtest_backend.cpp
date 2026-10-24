@@ -22,9 +22,45 @@ PlaceholderStyle placeholder_style(core::Placeholder placeholder) {
                                                   : PlaceholderStyle{"FAIL() << \"", "\";"};
 }
 
+// One line deeper: the statements of a method of the fixture sit inside the class.
+std::string deeper(const std::string& line) { return line.empty() ? line : "    " + line; }
+
+// The fixture as the class a TEST_F runs in. Each part is there only if it has something to say.
+json fixture_view(const ir::Fixture& fixture, core::Placeholder placeholder) {
+    const PlaceholderStyle style = placeholder_style(placeholder);
+    json lines = json::array();
+    lines.push_back("class " + fixture.name + " : public ::testing::Test {");
+    lines.push_back("protected:");
+
+    bool separate = false;
+    const auto section = [&](const std::string& head, const std::vector<ir::Stmt>& body) {
+        if (separate) lines.push_back("");
+        lines.push_back("    " + head + " {");
+        for (const ir::Stmt& s : body) lines.push_back(deeper(statement_line(s, style)));
+        lines.push_back("    }");
+        separate = true;
+    };
+    if (!fixture.initialisers.empty()) {
+        std::string list;
+        for (const std::string& init : fixture.initialisers) list += (list.empty() ? "" : ", ") + init;
+        lines.push_back("    " + fixture.name + "() : " + list + " {}");
+        separate = true;
+    }
+    if (!fixture.set_up.empty()) section("void SetUp() override", fixture.set_up);
+    if (!fixture.tear_down.empty()) section("void TearDown() override", fixture.tear_down);
+    if (separate && !fixture.members.empty()) lines.push_back("");
+    for (const ir::Stmt& s : fixture.members) lines.push_back(statement_line(s, style));
+    lines.push_back("};");
+
+    json view;
+    view["name"] = fixture.name;
+    view["lines"] = lines;
+    return view;
+}
+
 json test_view(const ir::TestSuite& suite, const ir::TestCase& test, core::Placeholder placeholder) {
     json lines = json::array();
-    lines.push_back("TEST(" + suite.name + ", " + test.name + ") {");
+    lines.push_back(std::string(suite.fixture ? "TEST_F(" : "TEST(") + suite.name + ", " + test.name + ") {");
     for (const ir::Stmt& s : test.body) lines.push_back(statement_line(s, placeholder_style(placeholder)));
     lines.push_back("}");
 
@@ -35,21 +71,20 @@ json test_view(const ir::TestSuite& suite, const ir::TestCase& test, core::Place
     return view;
 }
 
-json view_of(const ir::TestPlan& plan, const GtestOptions& options, core::Diagnostics& diagnostics) {
+json view_of(const ir::TestPlan& plan, const GtestOptions& options) {
     // One section per namespace, in the order the namespaces first appear.
     std::vector<std::vector<std::string>> namespaces;
+    std::vector<json>                     fixtures_of;
     std::vector<json>                     tests_of;
     for (const ir::TestSuite& suite : plan.suites) {
-        if (suite.fixture) {
-            diagnostics.warning(core::code::unsupported,
-                                "the fixture of '" + suite.name + "' is not generated yet (phase 6): its cases are written as plain TESTs");
-        }
         std::size_t at = 0;
         while (at < namespaces.size() && namespaces[at] != suite.ns) ++at;
         if (at == namespaces.size()) {
             namespaces.push_back(suite.ns);
+            fixtures_of.push_back(json::array());
             tests_of.push_back(json::array());
         }
+        if (suite.fixture) fixtures_of[at].push_back(fixture_view(*suite.fixture, options.config.placeholder));
         for (const ir::TestCase& test : suite.cases) tests_of[at].push_back(test_view(suite, test, options.config.placeholder));
     }
 
@@ -58,6 +93,7 @@ json view_of(const ir::TestPlan& plan, const GtestOptions& options, core::Diagno
         json section;
         section["open"] = namespace_open(namespaces[i]);
         section["close"] = namespace_close(namespaces[i]);
+        section["fixtures"] = fixtures_of[i];
         section["tests"] = tests_of[i];
         sections.push_back(std::move(section));
     }
@@ -72,17 +108,16 @@ json view_of(const ir::TestPlan& plan, const GtestOptions& options, core::Diagno
 
 }  // namespace
 
-std::vector<GtestViews> build_gtest_views(const std::vector<ir::TestPlan>& plans, const GtestOptions& options,
-                                          core::Diagnostics& diagnostics) {
+std::vector<GtestViews> build_gtest_views(const std::vector<ir::TestPlan>& plans, const GtestOptions& options) {
     std::vector<GtestViews> out;
-    for (const ir::TestPlan& plan : plans) out.push_back({plan.file, view_of(plan, options, diagnostics)});
+    for (const ir::TestPlan& plan : plans) out.push_back({plan.file, view_of(plan, options)});
     return out;
 }
 
 core::OutputPlan generate_gtest(const std::vector<ir::TestPlan>& plans, const GtestOptions& options,
                                 const core::TemplateStore& templates, core::Diagnostics& diagnostics) {
     core::OutputPlan out;
-    for (const GtestViews& v : build_gtest_views(plans, options, diagnostics)) {
+    for (const GtestViews& v : build_gtest_views(plans, options)) {
         if (auto text = templates.render("gtest/test_file.inja", v.view, diagnostics)) {
             out.files.push_back({core::output_path(options.out_dir, v.path), *text});
         }

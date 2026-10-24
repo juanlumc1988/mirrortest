@@ -49,11 +49,10 @@ struct GtestViews {
     nlohmann::json view;   // for gtest/test_file.inja
 };
 
-// Pure: no rendering, no file system. Reports through `diagnostics`
-// mt-unsupported for a suite with a fixture (they are generated from phase 6;
-// until then its cases are written as plain TESTs).
-std::vector<GtestViews> build_gtest_views(const std::vector<ir::TestPlan>& plans, const GtestOptions& options,
-                                          core::Diagnostics& diagnostics);
+// Pure: no rendering, no file system, and nothing to report: whatever a plan
+// holds, GoogleTest can say it. A suite with a fixture is a fixture class and
+// TEST_F tests; one without, TESTs.
+std::vector<GtestViews> build_gtest_views(const std::vector<ir::TestPlan>& plans, const GtestOptions& options);
 
 // Views rendered through the template. A template that fails records an error
 // and the file is left out of the plan; the caller refuses to write anything

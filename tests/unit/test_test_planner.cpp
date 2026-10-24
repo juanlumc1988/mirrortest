@@ -721,6 +721,17 @@ TEST(TestPlannerQt, AnOverloadedSignalNeedsTheSignatureToTakeItsAddress) {
     EXPECT_EQ(body(p, "other")[4], "QSignalSpy spy(&sut, &W::other);") << "a signal that is alone needs no cast";
 }
 
+TEST(TestPlannerQt, ASlotOfTheSameNameMakesTheSignalAmbiguousToo) {
+    const Planned p = plan_qt("class W : public QObject { Q_OBJECT\npublic slots:\n  void changed(int value);\nsignals:\n  void changed(const QString& text);\n};\n");
+    EXPECT_EQ(case_names(p), (Lines{"changed_int", "changed_q_string"}));
+    EXPECT_EQ(body(p, "changed_q_string")[4], "QSignalSpy spy(&sut, static_cast<void (W::*)(const QString&)>(&W::changed));");
+}
+
+TEST(TestPlannerQt, ASignalOfAnotherNameThanTheOthersNeedsNoCast) {
+    const Planned p = plan_qt("class W : public QObject { Q_OBJECT\npublic slots:\n  void apply(int value);\nsignals:\n  void changed(int value);\n};\n");
+    EXPECT_EQ(body(p, "changed")[4], "QSignalSpy spy(&sut, &W::changed);");
+}
+
 TEST(TestPlannerQt, ASignalOfAClassThatCannotBeBuiltIsAComment) {
     const Planned p = plan_qt("class W : public QObject { Q_OBJECT\npublic:\n  explicit W(Mystery m);\nsignals:\n  void changed();\n};\n");
     EXPECT_EQ(body(p, "changed"), (Lines{
@@ -774,6 +785,149 @@ TEST(TestPlannerQt, AMovedArgumentStillNeedsUtility) {
     const Planned p = plan_qt("class Foo { public: void take(std::string&& s); };");
     ASSERT_EQ(p.plans[0].includes.size(), 3u);
     EXPECT_EQ(p.plans[0].includes[2].path, "utility");
+}
+
+// ---- a fixture (gtest.fixture) -------------------------------------------------------------------------------------------
+
+Planned plan_fixture(const std::string& header, core::Config config = {}) {
+    config.gtest.fixture = true;
+    return plan(header, std::move(config));
+}
+
+const ir::Fixture& fixture_of_suite(const Planned& p, std::size_t plan_index = 0) {
+    static const ir::Fixture none;
+    const ir::TestSuite& s = suite(p, plan_index);
+    EXPECT_TRUE(s.fixture.has_value());
+    return s.fixture ? *s.fixture : none;
+}
+
+Lines fixture_members(const ir::Fixture& f) {
+    Lines out;
+    for (const Stmt& s : f.members) out.push_back(show(s));
+    return out;
+}
+
+TEST(TestPlannerFixture, ThereIsNoneUnlessAskedFor) {
+    EXPECT_FALSE(suite(plan("class Foo { public: void run(); };")).fixture.has_value());
+    EXPECT_TRUE(suite(plan_fixture("class Foo { public: void run(); };")).fixture.has_value());
+}
+
+TEST(TestPlannerFixture, ItIsNamedLikeTheSuiteAndOwnsADefaultConstructedSut) {
+    core::Config config;
+    config.naming.suite = "{Class}Spec";
+    const Planned p = plan_fixture("class Foo { public: void run(); };", config);
+    const ir::Fixture& f = fixture_of_suite(p);
+    EXPECT_EQ(f.name, "FooSpec");
+    EXPECT_EQ(f.name, suite(p).name) << "TEST_F wants the suite and the fixture to be one name";
+    EXPECT_EQ(fixture_members(f), Lines{"Foo sut;"});
+    EXPECT_TRUE(f.initialisers.empty());
+    ASSERT_EQ(f.set_up.size(), 1u);
+    EXPECT_EQ(show(f.set_up[0]), "// TODO(mt): bring sut to the state every test starts from");
+    EXPECT_TRUE(f.tear_down.empty());
+}
+
+TEST(TestPlannerFixture, ASutThatNeedsArgumentsGetsThemAsMembersAndAnInitialiser) {
+    const Planned p = plan_fixture("class Account { public: Account(int id, const std::string& owner); explicit Account(int id); void deposit(long amount); };");
+    const ir::Fixture& f = fixture_of_suite(p);
+    EXPECT_EQ(fixture_members(f), (Lines{"int id{};", "Account sut;"}));
+    EXPECT_EQ(f.initialisers, Lines{"sut(id)"});
+}
+
+TEST(TestPlannerFixture, TheBodyOfAMethodHasNoSutOfItsOwn) {
+    const Planned p = plan_fixture("class Foo { public: unsigned int size() const; void take(int n); };");
+    EXPECT_EQ(body(p, "size"), (Lines{
+        "placeholder: TODO(mt): write the test for Foo::size() const", "blank", "// Arrange", "// Act",
+        "const Foo& const_sut = sut;", "const unsigned int result = const_sut.size();", "(void)result;", "// Assert",
+        "// TODO(mt): compare result with the expected value"}));
+    EXPECT_EQ(body(p, "take"), (Lines{
+        "placeholder: TODO(mt): write the test for Foo::take(int)", "blank", "// Arrange", "int n{};", "// Act", "sut.take(n);",
+        "// Assert", "// TODO(mt): check the effect of the call"}));
+}
+
+TEST(TestPlannerFixture, ANameTheFixtureTakesIsNotTakenAgainByABody) {
+    const Planned p = plan_fixture("class Account { public: explicit Account(int id); void deposit(int id, int object, int sut); };");
+    EXPECT_EQ(fixture_members(fixture_of_suite(p)), (Lines{"int id{};", "Account sut;"}));
+    EXPECT_EQ(body(p, "deposit")[3], "int id2{};") << "a local called id would shadow the member";
+    EXPECT_EQ(body(p, "deposit")[4], "int object2{};");
+    EXPECT_EQ(body(p, "deposit")[5], "int sut2{};");
+}
+
+TEST(TestPlannerFixture, TheFixtureDoesNotTakeTheNamesABodyIntroduces) {
+    const Planned p = plan_fixture("class Foo { public: explicit Foo(int result, int sut, int object, int const_sut); void run(); };");
+    EXPECT_EQ(fixture_members(fixture_of_suite(p)), (Lines{"int result2{};", "int sut2{};", "int object2{};", "int const_sut2{};", "Foo sut;"}));
+    EXPECT_EQ(fixture_of_suite(p).initialisers, Lines{"sut(result2, sut2, object2, const_sut2)"});
+}
+
+TEST(TestPlannerFixture, ConstructorCasesBuildAnotherObjectCalledObject) {
+    const Planned p = plan_fixture("class Foo { public: Foo(); explicit Foo(int n); };");
+    EXPECT_EQ(body(p, "Constructs"), (Lines{
+        "placeholder: TODO(mt): write the test for Foo::Foo()", "blank", "// Arrange", "// Act", "Foo object;", "(void)object;",
+        "// Assert", "// TODO(mt): check the state of object"}));
+    EXPECT_EQ(body(p, "Constructs_int"), (Lines{
+        "placeholder: TODO(mt): write the test for Foo::Foo(int)", "blank", "// Arrange", "int n{};", "// Act", "Foo object(n);",
+        "(void)object;", "// Assert", "// TODO(mt): check the state of object"}));
+}
+
+TEST(TestPlannerFixture, TheDestructorIsRunByTheFixture) {
+    const Planned p = plan_fixture("class Foo { public: ~Foo(); };");
+    EXPECT_EQ(body(p, "Destructs"), (Lines{
+        "placeholder: TODO(mt): write the test for Foo::~Foo()", "blank", "// Arrange", "// Act",
+        "// the fixture destroys sut when the test ends", "// Assert", "// TODO(mt): check what the destructor releases"}));
+}
+
+TEST(TestPlannerFixture, AStaticMethodNeedsNoSutAndIsStillATestF) {
+    const Planned p = plan_fixture("class Util { public: static int clamp(int v); };");
+    EXPECT_EQ(body(p, "clamp")[3], "int v{};");
+    EXPECT_EQ(body(p, "clamp")[5], "const int result = Util::clamp(v);");
+}
+
+TEST(TestPlannerFixture, WhereSutCannotBeBuiltTheMembersAreCommentsAndSoIsEveryCallOnIt) {
+    const Planned p = plan_fixture("class Handle { public: explicit Handle(Mystery m); void close(); };");
+    const ir::Fixture& f = fixture_of_suite(p);
+    EXPECT_EQ(fixture_members(f), (Lines{"// TODO(mt): 'Handle' has no public constructor that can be called with default values: build sut by hand",
+                                         "// Handle sut;"}));
+    EXPECT_TRUE(f.initialisers.empty());
+    EXPECT_EQ(body(p, "close"), (Lines{
+        "placeholder: TODO(mt): write the test for Handle::close()", "blank", "// Arrange", "// Act", "// sut.close();", "// Assert",
+        "// TODO(mt): check the effect of the call"}));
+}
+
+TEST(TestPlannerFixture, AnAbstractClassIsTheSame) {
+    const Planned p = plan_fixture("class Shape { public: virtual double area() const = 0; };");
+    EXPECT_EQ(fixture_members(fixture_of_suite(p)), (Lines{"// TODO(mt): 'Shape' is abstract: derive a test double and build that", "// Shape sut;"}));
+    EXPECT_EQ(body(p, "area")[4], "// const Shape& const_sut = sut;");
+}
+
+TEST(TestPlannerFixture, AnArgumentThatCannotBeBuiltCommentsOutTheCallButNotTheFixture) {
+    const Planned p = plan_fixture("class Foo { public: void f(int ok, Mystery bad); };");
+    EXPECT_EQ(fixture_members(fixture_of_suite(p)), Lines{"Foo sut;"});
+    EXPECT_EQ(body(p, "f"), (Lines{
+        "placeholder: TODO(mt): write the test for Foo::f(int, Mystery)", "blank", "// Arrange",
+        "// TODO(mt): an argument of type 'Mystery' cannot be built here", "// int ok{};", "// Mystery bad{};", "// Act", "// sut.f(ok, bad);",
+        "// Assert", "// TODO(mt): check the effect of the call"}));
+}
+
+TEST(TestPlannerFixture, AMoveInTheFixtureStillAsksForUtility) {
+    const Planned p = plan_fixture("class Foo { public: explicit Foo(std::string&& s); void run(); };");
+    EXPECT_EQ(fixture_of_suite(p).initialisers, Lines{"sut(std::move(s))"});
+    ASSERT_EQ(p.plans[0].includes.size(), 3u);
+    EXPECT_EQ(p.plans[0].includes[2].path, "utility");
+}
+
+TEST(TestPlannerFixture, EveryClassHasItsOwnAndTheyDoNotLeak) {
+    const Planned p = plan_fixture("class A { public: explicit A(int a); void go(); };\nclass B { public: void go(); };");
+    ASSERT_EQ(p.plans.size(), 2u);
+    EXPECT_EQ(fixture_members(fixture_of_suite(p, 0)), (Lines{"int a{};", "A sut;"}));
+    EXPECT_EQ(fixture_members(fixture_of_suite(p, 1)), Lines{"B sut;"});
+    EXPECT_EQ(body(p, "go", 1)[3], "// Act") << "B's cases do not see A's members";
+}
+
+TEST(TestPlannerFixture, QtTestHasNoFixtureYetWhateverTheConfigurationSays) {
+    core::Config config;
+    config.gtest.fixture = true;
+    const Planned p = plan_qt("class Foo { public: void run(); };", config);
+    EXPECT_FALSE(suite(p).fixture.has_value());
+    EXPECT_EQ(body(p, "run")[3], "Foo sut;");
 }
 
 }  // namespace

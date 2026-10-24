@@ -1,0 +1,6 @@
+gen-tests
+${IN}/stack.h
+--out
+${OUT}
+--config
+${IN}/mt.json

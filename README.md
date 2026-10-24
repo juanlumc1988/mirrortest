@@ -10,9 +10,9 @@ classes. The command it builds is `mirrortest`.
 Both commands are complete end to end — parsing, inference or planning, output,
 `.new` files, `--dry-run`/`--check`, and for `gen-impl` merging into earlier
 output — and verified by unit tests, golden files, compile-and-run round trips
-and a syntax check of every generated stub as strict C++11. The Qt Test side has
-its goldens and round trips still to come (see [docs/plan.md](docs/plan.md) for
-what is done and what comes next).
+and a syntax check of every generated stub as strict C++11 (C++17 where Qt's
+headers are involved; the Qt Test round trips run against a real Qt, with moc).
+See [docs/plan.md](docs/plan.md) for what is done and what comes next.
 
 ## What it does
 

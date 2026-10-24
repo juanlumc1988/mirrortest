@@ -1,0 +1,6 @@
+gen-tests
+${IN}/owner.h
+--out
+${OUT}
+--config
+${IN}/mt.json

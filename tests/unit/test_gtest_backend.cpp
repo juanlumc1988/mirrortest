@@ -49,12 +49,11 @@ ir::TestPlan plan_of(std::vector<ir::TestCase> cases, std::vector<std::string> n
 
 struct Built {
     std::vector<backend::GtestViews> views;
-    core::Diagnostics                diagnostics;
 };
 
 Built build(const std::vector<ir::TestPlan>& plans, backend::GtestOptions options = {}) {
     Built b;
-    b.views = backend::build_gtest_views(plans, options, b.diagnostics);
+    b.views = backend::build_gtest_views(plans, options);
     return b;
 }
 
@@ -220,15 +219,131 @@ TEST(GtestBackendView, OneViewPerPlanInOrder) {
     EXPECT_TRUE(build({}).views.empty());
 }
 
-TEST(GtestBackendView, AFixtureIsReportedAndItsCasesAreWrittenAsPlainTests) {
-    ir::TestPlan plan = plan_of({test_case("t", {})});
-    plan.suites[0].fixture = ir::Fixture{};
+// ---- fixtures -----------------------------------------------------------------------------------------------
+
+ir::Fixture fixture_of(std::string name) {
+    ir::Fixture f;
+    f.name = std::move(name);
+    return f;
+}
+
+Lines fixture_lines(const Built& b, std::size_t fixture = 0) {
+    Lines out;
+    for (const auto& l : b.views.at(0).view["sections"].at(0)["fixtures"].at(fixture)["lines"]) out.push_back(l.get<std::string>());
+    return out;
+}
+
+TEST(GtestBackendFixture, ItIsAClassAndItsTestsAreTestF) {
+    ir::TestPlan plan = plan_of({test_case("size", {stmt(Stmt::Kind::Code, "int x")})});
+    ir::Fixture f = fixture_of("FooTest");
+    f.members = {stmt(Stmt::Kind::Code, "int initial{}"), stmt(Stmt::Kind::Code, "Foo sut")};
+    f.initialisers = {"sut(initial)"};
+    f.set_up = {stmt(Stmt::Kind::Comment, "TODO(mt): bring sut to the state every test starts from")};
+    plan.suites[0].fixture = f;
     const Built b = build({plan});
-    ASSERT_EQ(b.diagnostics.sorted().size(), 1u);
-    EXPECT_EQ(b.diagnostics.sorted()[0].code, "mt-unsupported");
-    EXPECT_EQ(b.diagnostics.sorted()[0].severity, core::Severity::Warning);
+    EXPECT_EQ(fixture_lines(b), (Lines{
+        "class FooTest : public ::testing::Test {",
+        "protected:",
+        "    FooTest() : sut(initial) {}",
+        "",
+        "    void SetUp() override {",
+        "        // TODO(mt): bring sut to the state every test starts from",
+        "    }",
+        "",
+        "    int initial{};",
+        "    Foo sut;",
+        "};"}));
+    EXPECT_EQ(body_lines(b)[0], "TEST_F(FooTest, size) {");
+}
+
+TEST(GtestBackendFixture, EachPartIsThereOnlyIfItHasSomethingToSay) {
+    ir::TestPlan plan = plan_of({test_case("t", {})});
+    ir::Fixture f = fixture_of("FooTest");
+    f.members = {stmt(Stmt::Kind::Code, "Foo sut")};
+    plan.suites[0].fixture = f;
+    EXPECT_EQ(fixture_lines(build({plan})), (Lines{"class FooTest : public ::testing::Test {", "protected:", "    Foo sut;", "};"}));
+
+    f.tear_down = {stmt(Stmt::Kind::Code, "sut.stop()")};
+    plan.suites[0].fixture = f;
+    EXPECT_EQ(fixture_lines(build({plan})), (Lines{
+        "class FooTest : public ::testing::Test {", "protected:", "    void TearDown() override {", "        sut.stop();", "    }", "",
+        "    Foo sut;", "};"}));
+
+    f.members.clear();
+    f.tear_down.clear();
+    plan.suites[0].fixture = f;
+    EXPECT_EQ(fixture_lines(build({plan})), (Lines{"class FooTest : public ::testing::Test {", "protected:", "};"}));
+}
+
+TEST(GtestBackendFixture, SeveralInitialisersAreOneList) {
+    ir::TestPlan plan = plan_of({test_case("t", {})});
+    ir::Fixture f = fixture_of("FooTest");
+    f.initialisers = {"a(1)", "sut(a)"};
+    plan.suites[0].fixture = f;
+    EXPECT_EQ(fixture_lines(build({plan}))[2], "    FooTest() : a(1), sut(a) {}");
+}
+
+TEST(GtestBackendFixture, AMemberThatCouldNotBeMadeIsAComment) {
+    ir::TestPlan plan = plan_of({test_case("t", {})});
+    ir::Fixture f = fixture_of("FooTest");
+    f.members = {stmt(Stmt::Kind::Comment, "TODO(mt): 'Foo' is abstract"), stmt(Stmt::Kind::Code, "Foo sut", {}, true)};
+    plan.suites[0].fixture = f;
+    EXPECT_EQ(fixture_lines(build({plan})), (Lines{
+        "class FooTest : public ::testing::Test {", "protected:", "    // TODO(mt): 'Foo' is abstract", "    // Foo sut;", "};"}));
+}
+
+TEST(GtestBackendFixture, ItSitsInTheNamespaceOfItsSuiteBeforeTheTests) {
+    ir::TestPlan plan = plan_of({test_case("t", {})}, {"acme"});
+    ir::Fixture f = fixture_of("FooTest");
+    f.members = {stmt(Stmt::Kind::Code, "Foo sut")};
+    plan.suites[0].fixture = f;
+    const Built b = build({plan});
+    ASSERT_EQ(b.views.at(0).view["sections"].size(), 1u);
+    EXPECT_EQ(b.views.at(0).view["sections"][0]["fixtures"].size(), 1u);
+    EXPECT_EQ(b.views.at(0).view["sections"][0]["open"][0], "namespace acme {");
+}
+
+TEST(GtestBackendFixture, ASuiteWithoutOneHasNone) {
+    const Built b = build({plan_of({test_case("t", {})})});
+    EXPECT_TRUE(b.views.at(0).view["sections"][0]["fixtures"].empty());
     EXPECT_EQ(body_lines(b)[0], "TEST(FooTest, t) {");
-    EXPECT_TRUE(build({plan_of({test_case("t", {})})}).diagnostics.sorted().empty());
+}
+
+TEST(GtestBackendFixture, TheFileHasTheClassFirstThenTheTests) {
+    ir::TestPlan plan = plan_of({test_case("a", {stmt(Stmt::Kind::Placeholder, "TODO(mt): a")}), test_case("b", {})}, {"acme"});
+    ir::Fixture f = fixture_of("FooTest");
+    f.members = {stmt(Stmt::Kind::Code, "Foo sut")};
+    f.set_up = {stmt(Stmt::Kind::Comment, "TODO(mt): set up")};
+    plan.suites[0].fixture = f;
+    backend::GtestOptions options;
+    options.source = "foo.h";
+    const Rendered r = render({plan}, options);
+    ASSERT_EQ(r.plan.files.size(), 1u);
+    EXPECT_EQ(r.plan.files[0].content,
+              "// Generated by mirrortest from foo.h. Review every TODO(mt).\n"
+              "\n"
+              "#include <gtest/gtest.h>\n"
+              "#include \"foo.h\"\n"
+              "\n"
+              "namespace acme {\n"
+              "\n"
+              "class FooTest : public ::testing::Test {\n"
+              "protected:\n"
+              "    void SetUp() override {\n"
+              "        // TODO(mt): set up\n"
+              "    }\n"
+              "\n"
+              "    Foo sut;\n"
+              "};\n"
+              "\n"
+              "TEST_F(FooTest, a) {\n"
+              "    FAIL() << \"TODO(mt): a\";\n"
+              "}\n"
+              "\n"
+              "TEST_F(FooTest, b) {\n"
+              "}\n"
+              "\n"
+              "}  // namespace acme\n");
 }
 
 // ---- the file ------------------------------------------------------------------------------------------------------

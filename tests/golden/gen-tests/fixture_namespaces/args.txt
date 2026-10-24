@@ -1,0 +1,6 @@
+gen-tests
+${IN}/net.h
+--out
+${OUT}
+--config
+${IN}/mt.json

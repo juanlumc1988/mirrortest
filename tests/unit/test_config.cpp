@@ -59,6 +59,7 @@ TEST(ConfigDefaults, MatchTheDesignDocument) {
     EXPECT_EQ(c.placeholder_type, "int");
     EXPECT_EQ(c.string_literal_param, "const char*");
     EXPECT_EQ(c.qt, 6);
+    EXPECT_FALSE(c.gtest.fixture);
     EXPECT_TRUE(c.type_map.empty());
     EXPECT_TRUE(c.by_value_types.empty());
     EXPECT_TRUE(c.overrides.empty());
@@ -81,6 +82,7 @@ TEST(ConfigKeys, EveryKeyIsRead) {
         "naming": { "header": "include/{stem}.h", "source": "src/{stem}.cpp",
                     "gtest_file": "{stem}_tests.cpp", "qtest_file": "qt_{stem}.cpp",
                     "suite": "Test{Class}", "qtest_class": "{Class}Spec" },
+        "gtest": { "fixture": true },
         "guard": "pragma-once",
         "file_header": "// Copyright ACME\n// All rights reserved\n",
         "stub_policy": "default",
@@ -112,6 +114,7 @@ TEST(ConfigKeys, EveryKeyIsRead) {
     EXPECT_EQ(c.naming.qtest_file, "qt_{stem}.cpp");
     EXPECT_EQ(c.naming.suite, "Test{Class}");
     EXPECT_EQ(c.naming.qtest_class, "{Class}Spec");
+    EXPECT_TRUE(c.gtest.fixture);
     EXPECT_EQ(c.guard, GuardStyle::PragmaOnce);
     EXPECT_EQ(c.file_header, "// Copyright ACME\n// All rights reserved");
     EXPECT_EQ(c.stub_policy, StubPolicy::Default);
@@ -250,6 +253,9 @@ TEST(ConfigErrors, UnknownKeysAreNamedWithTheirPath) {
     EXPECT_EQ(only_error(apply(R"({"colour":"red"})")), "unknown configuration key 'colour'");
     EXPECT_EQ(only_error(apply(R"({"naming":{"colour":"red"}})")),
               "unknown configuration key 'naming.colour'");
+    EXPECT_EQ(only_error(apply(R"({"gtest":{"fixtur":true}})")), "unknown configuration key 'gtest.fixtur'");
+    EXPECT_EQ(only_error(apply(R"({"gtest":{"fixture":1}})")), "configuration key 'gtest.fixture' must be true or false");
+    EXPECT_EQ(only_error(apply(R"({"gtest":true})")), "configuration key 'gtest' must be an object");
     EXPECT_EQ(only_error(apply(R"({"overrides":{"A::f":{"retuns":"int"}}})")),
               "unknown configuration key 'overrides.A::f.retuns'");
 }

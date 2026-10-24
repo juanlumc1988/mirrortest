@@ -240,7 +240,8 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 
 ## Phase 6 — Fixtures, parameterised tests, mocks
 
-- [ ] **6.1** gen-tests with a fixture (`TEST_F`, `sut` member, `SetUp`).
+- [x] **6.1** gen-tests with a fixture (`TEST_F`, `sut` member, `SetUp`). Opt-in
+  with `gtest.fixture`; GoogleTest only (design 9.4).
 - [ ] **6.2** gen-impl from `MOCK_METHOD` in the test: generates the interface
   with pure virtual methods (`Declared` signatures).
 - [ ] **6.3** gen-tests: gmock mocks for interfaces (all pure virtual

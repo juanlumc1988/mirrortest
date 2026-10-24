@@ -1289,10 +1289,61 @@ TEST(FooTest, size) {
 - Includes: system ones alphabetically, then the local ones, each once. One
   section per namespace, in order of first appearance; the global namespace has no
   braces. Nothing inside a namespace is indented, as in the `gen-impl` output.
-- `TEST` by default; `TEST_F` with a generated fixture (`Foo sut;` as a member)
-  when `config.gtest.fixture = true` (phase 6). Until then a plan with a fixture
-  is written as plain `TEST`s with an `mt-unsupported` warning. gmock: mocks of
-  interfaces (phase 6). Entry point: `gtest_main`, no extra code.
+- `TEST` by default. With `gtest.fixture: true`, one fixture per class and
+  `TEST_F` for every case (GoogleTest does not let a suite mix the two):
+
+  ```cpp
+  class AccountTest : public ::testing::Test {
+  protected:
+      AccountTest() : sut(id) {}
+
+      void SetUp() override {
+          // TODO(mt): bring sut to the state every test starts from
+      }
+
+      int id{};
+      Account sut;
+  };
+
+  TEST_F(AccountTest, deposit) {
+      FAIL() << "TODO(mt): write the test for Account::deposit(long)";
+
+      // Arrange
+      long amount{};
+      // Act
+      sut.deposit(amount);
+      ...
+  }
+  ```
+
+  - The fixture owns `sut` (planned by `Planner::plan_fixture`, rendered by the
+    GoogleTest backend). A class that is default-constructible gets `Foo sut;`;
+    otherwise the arguments of the simplest constructor become members **declared
+    before** `sut` and the fixture's constructor passes them (`sut(id)`; a member
+    cannot be initialised with parentheses in place, and braces would pick an
+    `initializer_list` constructor). The body of a case has no `sut` of its own.
+  - Names: the members' names are taken out of the bodies' (a parameter called
+    `id` becomes `id2` there, since a local of that name would shadow the member),
+    and a member does not take the names the bodies introduce (`sut`, `const_sut`,
+    `result`, `object`).
+  - A constructor case builds **another** object, called `object`, since `sut`
+    exists already. The destructor case has nothing to do: the fixture destroys
+    `sut` when the test ends.
+  - Where `sut` cannot be built (abstract class, no usable constructor) the
+    members are comments with the reason, and so is every call on `sut`; the
+    cases stay, red, for somebody to fill in.
+  - `SetUp()` holds one `TODO(mt)`: it is where the state every test starts from
+    goes. `TearDown()` is written only when something needs it, which nothing does
+    yet.
+  - **It is opt-in because it changes what a red test does.** The plain skeleton
+    never touches the class: the placeholder returns before any line of it runs
+    (R19). A fixture builds `sut` *before* the test body, so the constructor of the
+    class runs (and its destructor) for every test, with default-valued arguments,
+    while the test is still red. That is what a fixture is for, and why it is not
+    the default for legacy code. Qt Test has no fixture yet; the option is ignored
+    there.
+
+  gmock: mocks of interfaces (phase 6). Entry point: `gtest_main`, no extra code.
 
 ### 9.5 QTest
 
@@ -1336,9 +1387,11 @@ spelling it shares with the GoogleTest backend in `backend/test_render`.
   return from the slot, so what follows is compiled and not run.
 - **Signals** are tests here (GoogleTest has nothing to say about them): the
   body builds `sut`, listens with `QSignalSpy spy(&sut, &Foo::changed);
-  (void)spy;` and leaves two `TODO(mt)`: make `sut` emit it, check `spy`. An
-  overloaded signal takes its address through
-  `static_cast<void (Foo::*)(int)>(&Foo::changed)`.
+  (void)spy;` and leaves two `TODO(mt)`: make `sut` emit it, check `spy`. A
+  signal that shares its name with another member -- an overload, or a slot with
+  other parameters -- takes its address through
+  `static_cast<void (Foo::*)(int)>(&Foo::changed)`, since `&Foo::changed` alone
+  would be ambiguous.
 - **Names Qt Test gives a meaning.** A slot called `init`, `cleanup`,
   `initTestCase` or `cleanupTestCase` runs around the tests, and `X_data`
   feeds the slot `X`. A method of the class under test with one of those names
@@ -1582,6 +1635,7 @@ diagnostics); an error suppresses diffs and summary.
   "naming": { "header": "{stem}.h", "source": "{stem}.cpp",
               "gtest_file": "{stem}_test.cpp", "qtest_file": "tst_{stem}.cpp",
               "suite": "{Class}Test", "qtest_class": "Test{Class}" },
+  "gtest": { "fixture": false },
   "guard": "ifndef",
   "file_header": "",
   "stub_policy": "throw",
@@ -1615,6 +1669,8 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
   `Config` stays **intact** (the work is done on a copy).
 - The JSON allows `//` and `/* */` comments. Invalid JSON is an error with the
   position nlohmann/json gives.
+- `gtest.fixture` (default `false`): gen-tests writes a fixture class and `TEST_F`
+  tests instead of `TEST`s (§9.4). Only the GoogleTest side reads it.
 - `naming.*`: each pattern accepts a single placeholder and must contain it
   (`{stem}` in the file ones, `{Class}` in the name ones); otherwise all the
   classes would go to the same file or suite.

@@ -401,6 +401,15 @@ the configuration.
 How the test includes the header: `--include-as PATH`, else the path below the
 first `-I` directory that contains it, else the file name.
 
+By default the object under test is built inside each test. With `{"gtest":
+{"fixture": true}}` in the configuration the file has one fixture class that owns
+it, and the tests are `TEST_F`: the arguments its constructor needs are members of
+the fixture, `SetUp()` is there for the state every test starts from, and a
+constructor test builds a second object called `object`. Mind the price: the
+fixture builds `sut` before the test body, so the class's constructor runs even
+though the test is still red, which the plain skeleton never does. Use it for
+classes whose construction is safe.
+
 With `--framework qtest` the file is `tst_foo.cpp` and holds a `QObject` called
 `TestFoo` whose private slots are the tests, an entry point (`--qt-main
 appless|guiless|gui`, `guiless` by default) and `#include "tst_foo.moc"` -- the

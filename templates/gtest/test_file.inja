@@ -11,6 +11,12 @@
 {% endfor %}
 
 {% endif %}
+{% for fixture in section.fixtures %}
+{% for line in fixture.lines %}
+{{ line }}
+{% endfor %}
+
+{% endfor %}
 {% for test in section.tests %}
 {% for line in test.lines %}
 {{ line }}
