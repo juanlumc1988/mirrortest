@@ -58,6 +58,7 @@ add_library(mt_core STATIC
     src/frontend/code_frontend.cpp
     src/frontend/facts.cpp
     src/frontend/known_names.cpp
+    src/frontend/inference.cpp
     src/frontend/literals.cpp
     src/frontend/test_frontend.cpp
     src/ir/type.cpp
@@ -93,6 +94,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_config.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_extract.cpp
+        tests/unit/test_inference.cpp
         tests/unit/test_known_names.cpp
         tests/unit/test_literals.cpp
         tests/unit/test_diagnostics.cpp

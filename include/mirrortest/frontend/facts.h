@@ -80,6 +80,10 @@ enum class UseKind {
 struct ResultUse {
     UseKind                 kind = UseKind::Unknown;
     std::optional<ir::Type> hint;
+
+    // The warnings of the literal the hint was taken from (`EXPECT_EQ(f(),
+    // 5000000000)`): reported only if the hint ends up being used.
+    std::vector<LiteralWarning> hint_warnings;
 };
 
 // One argument of a call or construction.

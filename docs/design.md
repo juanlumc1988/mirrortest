@@ -738,6 +738,67 @@ class through some other route; otherwise `mt-unknown-type` (warning).
   known enums, `std::string_view`, `QStringView`, `std::chrono::*`, and
   `config.by_value_types`. Everything else → `const T&`.
 
+Implemented in `frontend/inference.h` (`infer(classified, config, known,
+diagnostics)`, a pure function). Details settled while implementing it:
+
+- **Choosing among uses** (parameters, return types, fields, alike). The
+  evidence with the highest `Origin` wins; among equals, the first in source
+  order. If the others differ, `mt-conflict` lists them all and says which was
+  used. "Differ" is judged on the *type*, not its spelling: `unsigned` and
+  `unsigned int`, `long int` and `long`, `std::size_t` and `size_t` are one type
+  and do not conflict. The winner's literal warnings (`mt-literal-range`, …) are
+  reported then, and only then: a literal whose type nobody used says nothing.
+- **Return type from a hint**: the type the context implied with the top-level
+  `const` and reference removed (`const std::string& s = f();` → `std::string`),
+  except a non-const lvalue reference, which stays (`std::string& s = f();` →
+  `std::string&`, because a temporary would not bind). A `// @mt: returns T` on
+  the very statement replaces that statement's own hint without a conflict
+  report: the user has just said what they meant.
+- **Nothing says** → by this precedence: a call made on the result
+  (`mt-chained-call`), an `auto` variable with no later hint (`mt-auto`), anything
+  else (`mt-unknown-return`). Parameters: `mt-unknown-param`. All are errors
+  under `auto_policy: error`; under `todo` they are warnings, the type becomes
+  `placeholder_type` with `Origin::Defaulted`, and a note says it is a guess.
+  The result is `void` (`Origin::Defaulted`, `mt-unused-result`) only when
+  **every** use discards it: one use that needs a value outweighs any number of
+  discarded ones, and a result passed on as an argument is not "unused".
+- **Parameters**: a literal gives its type; an ordinary string literal gives
+  `config.string_literal_param`; `nullptr` gives nothing (a pointer of unknown
+  type); a named variable gives its declared type without top-level `const` and
+  reference — by value if it is a by-value type, else `const T&`; `&x` gives the
+  pointer; `std::move(x)` gives `T` by value, with a note; a cast gives its
+  target; an array variable gives nothing (it may be a pointer or a reference to
+  the array and the text does not say); the result of another call gives its
+  type only if that call was annotated (propagating inferred results is task
+  2.8). A parameter takes its name from the first call that passes a variable,
+  else `argN`; repeated names get a numeric suffix.
+- **Constructors**: one per arity used, in order of first use. A one-argument
+  construction whose argument is a `Foo` is a copy or move and generates
+  nothing. `explicit` for one parameter unless some `Foo f = 5;` was seen. The
+  override key for their parameters is `Foo::Foo` (`ns::Foo::Foo`).
+- **Methods** are keyed by (name, arity); a call annotated `overload` is keyed by
+  its argument types as well, so it can sit next to an unannotated one of the same
+  arity. `ignore`d calls contribute nothing. `Operator` for names starting with
+  `operator`. A non-const method with no parameters whose result is compared gets
+  the note "consider making this const" unless `const` was stated.
+- **Fields** are public, typed like a return value but always as a value; a class
+  with fields and nothing else is emitted as a `struct`.
+- **Overrides** (`Classified::overrides`, §7.11) win over inference for the
+  attribute they state, including `const: false` from the configuration.
+  Looked up by `Class::member`, then by the namespace-qualified key laid over it.
+- **`type_map`** is applied last, to types of `Origin::Inferred`/`Defaulted`
+  only; its keys are compared as types too (`unsigned` addresses `unsigned int`).
+  Pointers, `const` and references around the mapped type are kept.
+- **A class used with template arguments** (`Box<int>`) gets `mt-unsupported`
+  and a plain class: class templates are not generated in the MVP (§19).
+- **`--std`**: `std::optional`, `std::variant`, `std::string_view` and
+  `std::byte` in a generated signature warn with `mt-std` when `--std` is below
+  17 (§13.3).
+- **Notes** (the `TODO(mt):` of §8.2) are written for every type that was
+  inferred or defaulted — "return type inferred from literal 3u (t.cpp:12)",
+  "parameter 1 of 'Foo::f' inferred from …" — and for none that the user
+  declared or annotated.
+
 ### 7.10 Existing headers
 
 Each `#include "…"` of the test is searched for in: the test's directory,

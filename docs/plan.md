@@ -124,7 +124,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 - [x] **2.6 Annotations** — `frontend/annotations` (§7.11). Tests: every
   directive, short and long form, errors (`mt-annotation`: no target, more than
   one call, syntax), `config.overrides`.
-- [ ] **2.7 Inference** — `frontend/inference` (§7.9). *Facts → model* tests:
+- [x] **2.7 Inference** — `frontend/inference` (§7.9). *Facts → model* tests:
   unification by arity, `Origin` priorities, deterministic `mt-conflict`,
   `const`, `static`, ctors (default only when needed, `explicit`), fields,
   by-value vs `const&`, parameter names, `auto`/unknown policies (`error` and

@@ -580,8 +580,12 @@ private:
     }
 
     void compare(const ValueInfo& a, const ValueInfo& b, const std::string& assertion) {
-        apply_use(a, use_of(Use::Compared, hint_from(b, assertion)));
-        apply_use(b, use_of(Use::Compared, hint_from(a, assertion)));
+        ResultUse for_a = use_of(Use::Compared, hint_from(b, assertion));
+        for_a.hint_warnings = b.warnings;
+        ResultUse for_b = use_of(Use::Compared, hint_from(a, assertion));
+        for_b.hint_warnings = a.warnings;
+        apply_use(a, for_a);
+        apply_use(b, for_b);
     }
 
     // ---- type uses ----------------------------------------------------------------------------------
