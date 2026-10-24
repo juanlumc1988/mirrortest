@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <deque>
+#include <map>
 #include <set>
 #include <sstream>
 #include <tuple>
@@ -130,6 +132,12 @@ struct Call {
     bool                           on_const = false;
 };
 
+struct Returned {
+    ir::Type                 type;
+    std::vector<std::string> notes;
+    bool                     had_evidence = false;
+};
+
 class Inference {
 public:
     Inference(const Classified& classified, const core::Config& config, const std::vector<ir::Model>& known,
@@ -143,11 +151,13 @@ public:
         for (const auto& entry : config_.type_map) type_map_[canonical_base(entry.first)] = entry.second;
     }
 
-    ir::Model run() {
+    ir::Model run(ResultTypes* results) {
+        plan();
         ir::Model model;
-        for (const ClassTarget& target : c_.classes) model.classes.push_back(build_class(target));
-        for (const FunctionTarget& target : c_.functions) build_functions(target, model);
+        for (const ClassPlan& plan : class_plans_) model.classes.push_back(build_class(plan));
+        for (const FunctionPlan& plan : function_plans_) build_functions(plan, model);
         check_standard(model);
+        if (results != nullptr) publish(*results);
         return model;
     }
 
@@ -196,14 +206,14 @@ private:
     }
 
     // The type of a parameter that receives this argument (design 7.9).
-    std::optional<Evidence> param_evidence(const ValueInfo& v) const {
+    std::optional<Evidence> param_evidence(const ValueInfo& v, bool propagate = true) {
         if (v.is_null_pointer) return std::nullopt;   // a pointer of unknown type
         Evidence e;
         e.where = v.where;
         e.warnings = v.warnings;
 
         if (v.is_string_literal) {
-            e.type = ir::make_type(config_.string_literal_param);
+            e.type = ir::type_from_spelling(config_.string_literal_param);
             e.type.origin = ir::Origin::Inferred;
             e.type.reason = "string literal " + v.text;
             e.type.where = v.where;
@@ -211,13 +221,32 @@ private:
             return e;
         }
         if (!v.type) {
-            // The result of another call of the API: known only if it was annotated
-            // (propagating inferred results is task 2.8).
-            if (const std::optional<ir::Type> returned = annotated_result(v.from)) {
-                e.type = return_type_for(*returned);
-                e.reason = "the annotated result of " + v.text;
-                e.type.reason = e.reason;
-                return e;
+            if (!propagate) return std::nullopt;
+
+            // A functional cast: the class it constructs.
+            if (v.from.kind == FactRef::Kind::FreeCall) {
+                const auto cast = c_.casts.find(v.from.index);
+                if (cast != c_.casts.end()) {
+                    ir::Type t = ir::make_type(cast->second.qualified());
+                    t.origin = ir::Origin::Declared;
+                    t.reason = "the cast " + v.text;
+                    t.where = v.where;
+                    e.reason = t.reason;
+                    e.type = is_by_value(t) ? t : with_shape(t, true, ir::RefKind::LValue, 0);
+                    return e;
+                }
+            }
+            // The result of another call of the API, if something said what it is.
+            if (const Slot* slot = result_of(v.from)) {
+                if (slot->memo.had_evidence) {
+                    const ir::Type plain = value_type(slot->memo.type);
+                    e.type = is_by_value(plain) ? plain : with_shape(plain, true, ir::RefKind::LValue, 0);
+                    e.reason = "the result of '" + slot->subject + "'";
+                    e.type.origin = ir::Origin::Inferred;
+                    e.type.reason = e.reason;
+                    e.type.where = v.where;
+                    return e;
+                }
             }
             return std::nullopt;
         }
@@ -240,25 +269,6 @@ private:
         if (e.reason.empty()) e.reason = "'" + v.text + "'";
         if (e.type.reason.empty()) e.type.reason = e.reason;
         return e;
-    }
-
-    std::optional<ir::Type> annotated_result(const FactRef& ref) const {
-        const CallAnnotation* a = annotation_at(ref);
-        if (a != nullptr && a->returns) return a->returns;
-        return std::nullopt;
-    }
-
-    const CallAnnotation* annotation_at(const FactRef& ref) const {
-        const TestFileFacts& f = c_.facts;
-        switch (ref.kind) {
-            case FactRef::Kind::MethodCall:  return &f.method_calls[ref.index].annotation;
-            case FactRef::Kind::ScopedCall:  return &f.scoped_calls[ref.index].annotation;
-            case FactRef::Kind::FreeCall:    return &f.free_calls[ref.index].annotation;
-            case FactRef::Kind::FieldAccess: return &f.field_accesses[ref.index].annotation;
-            case FactRef::Kind::Unresolved:  return &f.unresolved[ref.index].call.annotation;
-            case FactRef::Kind::None:        break;
-        }
-        return nullptr;
     }
 
     // ---- choosing among uses -------------------------------------------------------------------------------------------
@@ -290,7 +300,7 @@ private:
     // ---- what nobody says (D5) ------------------------------------------------------------------------------------------------
 
     ir::Type placeholder(const std::string& reason, const ir::SourceLoc& where) const {
-        ir::Type t = ir::make_type(config_.placeholder_type);
+        ir::Type t = ir::type_from_spelling(config_.placeholder_type);
         t.origin = ir::Origin::Defaulted;
         t.reason = reason;
         t.where = where;
@@ -368,7 +378,7 @@ private:
 
     static Evidence annotated(const std::string& type_text, const ir::SourceLoc& where, const char* what) {
         Evidence e;
-        e.type = ir::make_type(type_text);
+        e.type = ir::type_from_spelling(type_text);
         e.type.origin = ir::Origin::Annotated;
         e.type.reason = what;
         e.type.where = where;
@@ -433,12 +443,6 @@ private:
     }
 
     // ---- return types ----------------------------------------------------------------------------------------------------------------------
-
-    struct Returned {
-        ir::Type                 type;
-        std::vector<std::string> notes;
-        bool                     had_evidence = false;
-    };
 
     Returned infer_return(const std::string& subject, const std::vector<const Call*>& calls,
                           const core::MemberOverride& over, bool is_function_like) {
@@ -512,26 +516,193 @@ private:
         return out;
     }
 
-    // ---- classes -------------------------------------------------------------------------------------------------------------------------------
+    // ---- planning: what each use belongs to ---------------------------------------------------------------------------------------
+
+    // Everything the uses of one method, function or field say about its
+    // result. The result is worked out on first request and kept: an argument
+    // elsewhere may need it before its own class is built.
+    struct Slot {
+        std::string               subject;
+        std::vector<const Call*>  calls;
+        core::MemberOverride      over;
+        bool                      function_like = false;
+        bool                      done = false;
+        Returned                  memo;
+    };
 
     struct Group {
         std::string               name;
         std::size_t               arity = 0;
         std::string               overload_key;     // the argument types, for calls annotated `overload`
         std::vector<const Call*>  calls;
+        Slot*                     slot = nullptr;
     };
 
-    // The type of each argument as it would be a parameter, as one string.
-    std::string signature_of(const Call& call) const {
+    struct FieldGroup {
+        std::string                       name;
+        std::vector<const FieldAccess*>   accesses;
+        Slot*                             slot = nullptr;
+    };
+
+    struct ClassPlan {
+        const ClassTarget*       target = nullptr;
+        std::vector<Group>       methods;
+        std::vector<FieldGroup>  fields;
+    };
+
+    struct FunctionPlan {
+        const FunctionTarget*    target = nullptr;
+        std::vector<Group>       groups;
+    };
+
+    // The type of each argument as it would be a parameter, as one string. Only
+    // what the syntax says: it is used to tell overloads apart before anything
+    // has been planned.
+    std::string signature_of(const Call& call) {
         std::string out;
         for (const ValueInfo& a : *call.args) {
-            const std::optional<Evidence> e = param_evidence(a);
+            const std::optional<Evidence> e = param_evidence(a, false);
             out += (e ? canonical_key(e->type) : std::string("?")) + ",";
         }
         return out;
     }
 
-    ir::Class build_class(const ClassTarget& target) {
+    // The calls, minus the ignored ones, in source order, at addresses that stay put.
+    std::vector<const Call*> keep(std::vector<Call> views) {
+        views.erase(std::remove_if(views.begin(), views.end(), [](const Call& c) { return c.annotation->ignore; }), views.end());
+        sort_by_position(views);
+        std::vector<const Call*> out;
+        for (Call& v : views) {
+            call_store_.push_back(std::move(v));
+            out.push_back(&call_store_.back());
+        }
+        return out;
+    }
+
+    std::vector<Group> group(const std::vector<const Call*>& calls) {
+        std::vector<Group> groups;
+        for (const Call* call : calls) {
+            const std::string key = call->annotation->overload ? signature_of(*call) : std::string();
+            auto found = std::find_if(groups.begin(), groups.end(), [&](const Group& g) {
+                return g.name == call->name && g.arity == call->args->size() && g.overload_key == key;
+            });
+            if (found == groups.end()) {
+                Group g;
+                g.name = call->name;
+                g.arity = call->args->size();
+                g.overload_key = key;
+                groups.push_back(std::move(g));
+                found = groups.end() - 1;
+            }
+            found->calls.push_back(call);
+        }
+        return groups;
+    }
+
+    Slot* new_slot(const std::string& subject, const std::vector<const Call*>& calls, core::MemberOverride over,
+                   bool function_like) {
+        slots_.push_back(Slot{subject, calls, std::move(over), function_like, false, {}});
+        Slot* slot = &slots_.back();
+        for (const Call* call : slot->calls) slot_of_[{static_cast<int>(call->ref.kind), call->ref.index}] = slot;
+        return slot;
+    }
+
+    void plan() {
+        for (const ClassTarget& target : c_.classes) class_plans_.push_back(plan_class(target));
+        for (const FunctionTarget& target : c_.functions) function_plans_.push_back(plan_function(target));
+    }
+
+    ClassPlan plan_class(const ClassTarget& target) {
+        ClassPlan plan;
+        plan.target = &target;
+
+        std::vector<Call> views;
+        for (std::size_t i : target.method_calls) views.push_back(view_method(i, false));
+        for (std::size_t i : target.static_calls) views.push_back(view_scoped(i, true));
+        plan.methods = group(keep(std::move(views)));
+        for (Group& g : plan.methods) {
+            g.slot = new_slot(target.qualified() + "::" + g.name, g.calls, override_for(target.ns, target.name, g.name), false);
+        }
+
+        std::vector<const FieldAccess*> accesses;
+        for (std::size_t i : target.field_accesses) accesses.push_back(&c_.facts.field_accesses[i]);
+        std::stable_sort(accesses.begin(), accesses.end(),
+                         [](const FieldAccess* a, const FieldAccess* b) { return before(a->where, b->where); });
+        for (const FieldAccess* a : accesses) {
+            if (a->annotation.ignore) continue;
+            auto found = std::find_if(plan.fields.begin(), plan.fields.end(), [&](const FieldGroup& f) { return f.name == a->field; });
+            if (found == plan.fields.end()) {
+                plan.fields.push_back({a->field, {}, nullptr});
+                found = plan.fields.end() - 1;
+            }
+            found->accesses.push_back(a);
+        }
+        for (FieldGroup& f : plan.fields) {
+            std::vector<const Call*> calls;
+            for (const FieldAccess* a : f.accesses) {
+                Call call;
+                call.ref = {FactRef::Kind::FieldAccess, static_cast<std::size_t>(a - c_.facts.field_accesses.data())};
+                call.use = &a->use;
+                call.annotation = &a->annotation;
+                call.where = a->where;
+                call.name = f.name;
+                call_store_.push_back(call);
+                calls.push_back(&call_store_.back());
+            }
+            f.slot = new_slot(target.qualified() + "::" + f.name, calls, override_for(target.ns, target.name, f.name), false);
+        }
+        return plan;
+    }
+
+    FunctionPlan plan_function(const FunctionTarget& target) {
+        FunctionPlan plan;
+        plan.target = &target;
+        std::vector<Call> views;
+        for (std::size_t i : target.free_calls) views.push_back(view_free(i));
+        for (std::size_t i : target.scoped_calls) views.push_back(view_scoped(i, false));
+        plan.groups = group(keep(std::move(views)));
+        for (Group& g : plan.groups) {
+            g.slot = new_slot(target.qualified(), g.calls, override_for(target.ns, std::string(), target.name), true);
+        }
+        return plan;
+    }
+
+    // ---- results, on demand -------------------------------------------------------------------------------------------------------------
+
+    Returned& returned(Slot& slot) {
+        if (!slot.done) {
+            slot.done = true;
+            slot.memo = infer_return(slot.subject, slot.calls, slot.over, slot.function_like);
+        }
+        return slot.memo;
+    }
+
+    // The slot a fact belongs to, with its result worked out. A chain link that
+    // has been resolved is the method call it became.
+    const Slot* result_of(FactRef ref) {
+        if (ref.kind == FactRef::Kind::Unresolved) {
+            const Unresolved& u = c_.facts.unresolved[ref.index];
+            if (!u.resolved || u.method_call >= c_.facts.method_calls.size()) return nullptr;
+            ref = {FactRef::Kind::MethodCall, u.method_call};
+        }
+        const auto found = slot_of_.find({static_cast<int>(ref.kind), ref.index});
+        if (found == slot_of_.end()) return nullptr;
+        returned(*found->second);
+        return found->second;
+    }
+
+    void publish(ResultTypes& results) {
+        for (Slot& slot : slots_) {
+            const Returned& r = returned(slot);
+            if (!r.had_evidence) continue;
+            for (const Call* call : slot.calls) results.set(call->ref, r.type);
+        }
+    }
+
+    // ---- classes -------------------------------------------------------------------------------------------------------------------------------
+
+    ir::Class build_class(const ClassPlan& plan) {
+        const ClassTarget& target = *plan.target;
         ir::Class cls;
         cls.name = target.name;
         cls.ns = target.ns;
@@ -548,8 +719,8 @@ private:
         }
 
         build_constructors(target, cls);
-        build_methods(target, cls);
-        build_fields(target, cls);
+        build_methods(plan, cls);
+        build_fields(plan, cls);
 
         cls.is_struct = cls.methods.empty() && !cls.fields.empty();
         return cls;
@@ -618,46 +789,26 @@ private:
         return base == target.name;
     }
 
-    void build_methods(const ClassTarget& target, ir::Class& cls) {
-        std::vector<Call> calls;
-        for (std::size_t i : target.method_calls) calls.push_back(view_method(i, false));
-        for (std::size_t i : target.static_calls) calls.push_back(view_scoped(i, true));
-        calls.erase(std::remove_if(calls.begin(), calls.end(), [](const Call& c) { return c.annotation->ignore; }), calls.end());
-        sort_by_position(calls);
-
-        std::vector<Group> groups;
-        for (const Call& call : calls) {
-            const std::string key = call.annotation->overload ? signature_of(call) : std::string();
-            auto found = std::find_if(groups.begin(), groups.end(), [&](const Group& g) {
-                return g.name == call.name && g.arity == call.args->size() && g.overload_key == key;
-            });
-            if (found == groups.end()) {
-                groups.push_back({call.name, call.args->size(), key, {}});
-                found = groups.end() - 1;
-            }
-            found->calls.push_back(&call);
-        }
-
-        for (const Group& g : groups) {
-            const std::string subject = target.qualified() + "::" + g.name;
-            const core::MemberOverride over = override_for(target.ns, target.name, g.name);
-
+    void build_methods(const ClassPlan& plan, ir::Class& cls) {
+        for (const Group& g : plan.methods) {
+            const Slot& slot = *g.slot;
             ir::Method m;
             m.name = g.name;
             m.kind = starts_with(g.name, "operator") ? ir::MethodKind::Operator : ir::MethodKind::Normal;
             m.origin = ir::Origin::Inferred;
             m.where = g.calls.front()->where;
 
+            const core::MemberOverride& over = slot.over;
             m.is_static = over.is_static.value_or(std::any_of(g.calls.begin(), g.calls.end(), [](const Call* c) { return c->is_static; }));
             const bool used_on_const = std::any_of(g.calls.begin(), g.calls.end(), [](const Call* c) { return !c->is_static && c->on_const; });
             m.is_const = !m.is_static && over.is_const.value_or(used_on_const);
             m.is_virtual = over.is_virtual.value_or(false);
             m.is_noexcept = over.is_noexcept.value_or(false);
 
-            m.params = infer_params(subject, g.arity, g.calls, over, m.notes);
-            Returned r = infer_return(subject, g.calls, over, false);
+            m.params = infer_params(slot.subject, g.arity, g.calls, over, m.notes);
+            const Returned& r = returned(*g.slot);
             m.ret = r.type;
-            for (std::string& n : r.notes) m.notes.push_back(std::move(n));
+            for (const std::string& n : r.notes) m.notes.push_back(n);
 
             // Nothing is invented, but a getter that is only ever called through
             // a non-const object is worth a second look.
@@ -671,87 +822,33 @@ private:
         }
     }
 
-    void build_fields(const ClassTarget& target, ir::Class& cls) {
-        struct FieldUses {
-            std::string                   name;
-            std::vector<const FieldAccess*> accesses;
-        };
-        std::vector<FieldUses> fields;
-        std::vector<const FieldAccess*> all;
-        for (std::size_t i : target.field_accesses) all.push_back(&c_.facts.field_accesses[i]);
-        std::stable_sort(all.begin(), all.end(),
-                         [](const FieldAccess* a, const FieldAccess* b) { return before(a->where, b->where); });
-        for (const FieldAccess* a : all) {
-            if (a->annotation.ignore) continue;
-            auto found = std::find_if(fields.begin(), fields.end(), [&](const FieldUses& f) { return f.name == a->field; });
-            if (found == fields.end()) {
-                fields.push_back({a->field, {}});
-                found = fields.end() - 1;
-            }
-            found->accesses.push_back(a);
-        }
-
-        for (const FieldUses& f : fields) {
-            const std::string subject = target.qualified() + "::" + f.name;
-            const core::MemberOverride over = override_for(target.ns, target.name, f.name);
-
-            std::vector<Call> views;
-            for (const FieldAccess* a : f.accesses) {
-                Call call;
-                call.use = &a->use;
-                call.annotation = &a->annotation;
-                call.where = a->where;
-                call.name = f.name;
-                views.push_back(call);
-            }
-            std::vector<const Call*> calls;
-            for (const Call& v : views) calls.push_back(&v);
-
+    void build_fields(const ClassPlan& plan, ir::Class& cls) {
+        for (const FieldGroup& f : plan.fields) {
             ir::Field field;
             field.name = f.name;
             field.origin = ir::Origin::Inferred;
-            field.where = calls.front()->where;
-            Returned r = infer_return(subject, calls, over, false);
-            field.type = value_type(r.type);
+            field.where = f.accesses.front()->where;
+            field.type = value_type(returned(*f.slot).type);
             cls.fields.push_back(std::move(field));
         }
     }
 
     // ---- free functions -----------------------------------------------------------------------------------------------------------------
 
-    void build_functions(const FunctionTarget& target, ir::Model& model) {
-        std::vector<Call> calls;
-        for (std::size_t i : target.free_calls) calls.push_back(view_free(i));
-        for (std::size_t i : target.scoped_calls) calls.push_back(view_scoped(i, false));
-        calls.erase(std::remove_if(calls.begin(), calls.end(), [](const Call& c) { return c.annotation->ignore; }), calls.end());
-        sort_by_position(calls);
-
-        std::vector<Group> groups;
-        for (const Call& call : calls) {
-            const std::string key = call.annotation->overload ? signature_of(call) : std::string();
-            auto found = std::find_if(groups.begin(), groups.end(),
-                                      [&](const Group& g) { return g.arity == call.args->size() && g.overload_key == key; });
-            if (found == groups.end()) {
-                groups.push_back({target.name, call.args->size(), key, {}});
-                found = groups.end() - 1;
-            }
-            found->calls.push_back(&call);
-        }
-
-        for (const Group& g : groups) {
-            const std::string subject = target.qualified();
-            const core::MemberOverride over = override_for(target.ns, std::string(), target.name);
-
+    void build_functions(const FunctionPlan& plan, ir::Model& model) {
+        const FunctionTarget& target = *plan.target;
+        for (const Group& g : plan.groups) {
+            const Slot& slot = *g.slot;
             ir::Function fn;
             fn.name = target.name;
             fn.ns = target.ns;
             fn.origin = ir::Origin::Inferred;
             fn.where = g.calls.front()->where;
-            fn.is_noexcept = over.is_noexcept.value_or(false);
-            fn.params = infer_params(subject, g.arity, g.calls, over, fn.notes);
-            Returned r = infer_return(subject, g.calls, over, true);
+            fn.is_noexcept = slot.over.is_noexcept.value_or(false);
+            fn.params = infer_params(slot.subject, g.arity, g.calls, slot.over, fn.notes);
+            const Returned& r = returned(*g.slot);
             fn.ret = r.type;
-            for (std::string& n : r.notes) fn.notes.push_back(std::move(n));
+            for (const std::string& n : r.notes) fn.notes.push_back(n);
             model.functions.push_back(std::move(fn));
         }
     }
@@ -786,6 +883,11 @@ private:
     const Classified&              c_;
     const core::Config&            config_;
     core::Diagnostics&             diag_;
+    std::deque<Call>               call_store_;     // stable addresses: groups point into it
+    std::deque<Slot>               slots_;
+    std::map<std::pair<int, std::size_t>, Slot*> slot_of_;
+    std::vector<ClassPlan>         class_plans_;
+    std::vector<FunctionPlan>      function_plans_;
     std::set<std::string>          enums_;
     std::set<std::string>          by_value_;
     std::map<std::string, std::string> type_map_;
@@ -793,9 +895,18 @@ private:
 
 }  // namespace
 
+const ir::Type* ResultTypes::find(const FactRef& ref) const {
+    const auto found = types_.find({static_cast<int>(ref.kind), ref.index});
+    return found == types_.end() ? nullptr : &found->second;
+}
+
+void ResultTypes::set(const FactRef& ref, const ir::Type& type) {
+    types_[{static_cast<int>(ref.kind), ref.index}] = type;
+}
+
 ir::Model infer(const Classified& classified, const core::Config& config, const std::vector<ir::Model>& known,
-                core::Diagnostics& diagnostics) {
-    return Inference(classified, config, known, diagnostics).run();
+                core::Diagnostics& diagnostics, ResultTypes* results) {
+    return Inference(classified, config, known, diagnostics).run(results);
 }
 
 }  // namespace mt::frontend

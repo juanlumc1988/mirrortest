@@ -11,6 +11,8 @@ using mt::ir::make_type;
 using mt::ir::normalize_spelling;
 using mt::ir::qualified_name;
 using mt::ir::RefKind;
+using mt::ir::Type;
+using mt::ir::type_from_spelling;
 
 TEST(NormalizeSpelling, CollapsesWhitespaceAroundQualifiers) {
     EXPECT_EQ(normalize_spelling("const  std::string &"), "const std::string&");
@@ -72,4 +74,72 @@ TEST(QualifiedName, JoinsNamespaces) {
     EXPECT_EQ(qualified_name({}, "Foo"), "Foo");
     EXPECT_EQ(qualified_name({"acme"}, "Foo"), "acme::Foo");
     EXPECT_EQ(qualified_name({"acme", "core"}, "Widget"), "acme::core::Widget");
+}
+
+// ---- type_from_spelling ---------------------------------------------------------------------------------------
+
+namespace {
+
+struct SpellingCase {
+    const char* text;
+    const char* spelling;
+    const char* base;
+    bool        is_const;
+    RefKind     ref;
+    unsigned    depth;
+};
+
+}  // namespace
+
+TEST(TypeFromSpelling, ReadsTheShapeFromTheEnd) {
+    const SpellingCase cases[] = {
+        {"int", "int", "int", false, RefKind::None, 0},
+        {"unsigned   int", "unsigned int", "unsigned int", false, RefKind::None, 0},
+        {"const Item*", "const Item*", "Item", true, RefKind::None, 1},
+        {"Item const*", "Item const*", "Item", true, RefKind::None, 1},
+        {"Item const &", "Item const&", "Item", true, RefKind::LValue, 0},
+        {"const std::string &", "const std::string&", "std::string", true, RefKind::LValue, 0},
+        {"Item&&", "Item&&", "Item", false, RefKind::RValue, 0},
+        {"std::vector< int >", "std::vector<int>", "std::vector<int>", false, RefKind::None, 0},
+        {"std::map<int, std::string>*", "std::map<int, std::string>*", "std::map<int, std::string>", false, RefKind::None, 1},
+        {"char* const", "char* const", "char", false, RefKind::None, 1},
+        {"const char* const*", "const char* const*", "char", true, RefKind::None, 2},
+        {"Item * *", "Item**", "Item", false, RefKind::None, 2},
+        {"std::unique_ptr<const Item>", "std::unique_ptr<const Item>", "std::unique_ptr<const Item>", false, RefKind::None, 0},
+        {"constant", "constant", "constant", false, RefKind::None, 0},
+        {"const_iterator", "const_iterator", "const_iterator", false, RefKind::None, 0},
+    };
+    for (const SpellingCase& c : cases) {
+        const Type t = type_from_spelling(c.text);
+        EXPECT_EQ(t.spelling, c.spelling) << c.text;
+        EXPECT_EQ(t.base, c.base) << c.text;
+        EXPECT_EQ(t.is_const, c.is_const) << c.text;
+        EXPECT_EQ(t.ref, c.ref) << c.text;
+        EXPECT_EQ(t.pointer_depth, c.depth) << c.text;
+    }
+}
+
+TEST(TypeFromSpelling, FunctionPointersAndArraysAreKeptWhole) {
+    for (const char* text : {"void (*)(int)", "int[3]", "const char* names[]"}) {
+        const Type t = type_from_spelling(text);
+        EXPECT_EQ(t.base, t.spelling) << text;
+        EXPECT_EQ(t.pointer_depth, 0u) << text;
+        EXPECT_FALSE(t.is_const) << text;
+    }
+}
+
+TEST(TypeFromSpelling, AgreesWithMakeTypeOnTheCommonShapes) {
+    for (const char* text : {"int", "const std::string&", "const char*", "Item&&", "std::vector<int>*"}) {
+        const Type from_text = type_from_spelling(text);
+        const Type rebuilt = make_type(from_text.base, from_text.is_const, from_text.ref, from_text.pointer_depth);
+        EXPECT_EQ(rebuilt.spelling, from_text.spelling) << text;
+    }
+}
+
+TEST(TypeFromSpelling, EmptyAndOddInputsDoNotCrash) {
+    EXPECT_TRUE(type_from_spelling("").empty());
+    EXPECT_TRUE(type_from_spelling("   ").empty());
+    EXPECT_EQ(type_from_spelling("const").base, "");
+    EXPECT_EQ(type_from_spelling("*").pointer_depth, 1u);
+    EXPECT_EQ(type_from_spelling("&&&").ref, RefKind::RValue);
 }

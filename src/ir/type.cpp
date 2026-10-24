@@ -111,6 +111,89 @@ Type make_type(std::string_view base, bool is_const, RefKind ref, unsigned point
     return t;
 }
 
+namespace {
+
+bool ends_with(const std::string& s, std::string_view tail) {
+    return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+// `const` as a word at the end: "Item const" yes, "Item_const" no.
+bool ends_with_word(const std::string& s, std::string_view word) {
+    if (!ends_with(s, word)) return false;
+    const std::size_t before = s.size() - word.size();
+    if (before == 0) return true;
+    const char c = s[before - 1];
+    return !(std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_');
+}
+
+bool starts_with_word(const std::string& s, std::string_view word) {
+    if (s.compare(0, word.size(), word) != 0) return false;
+    if (s.size() == word.size()) return true;
+    const char c = s[word.size()];
+    return !(std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_');
+}
+
+void rtrim(std::string& s) {
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+}
+
+}  // namespace
+
+Type type_from_spelling(std::string_view spelling) {
+    Type t;
+    t.spelling = normalize_spelling(spelling);
+    if (t.spelling.empty()) return t;
+    if (t.spelling.find('(') != std::string::npos || t.spelling.find('[') != std::string::npos) {
+        t.base = t.spelling;       // a function pointer, an array: exact, and nothing finer
+        return t;
+    }
+
+    std::string s = t.spelling;
+    if (ends_with(s, "&&")) {
+        t.ref = RefKind::RValue;
+        s.resize(s.size() - 2);
+    } else if (ends_with(s, "&")) {
+        t.ref = RefKind::LValue;
+        s.pop_back();
+    }
+
+    // From the right: stars and consts. A const read before the next star
+    // belongs to that pointer ("char* const") and is not represented; one left
+    // when no star remains belongs to the base ("Item const").
+    bool const_pending = false;
+    for (;;) {
+        rtrim(s);
+        if (ends_with(s, "*")) {
+            s.pop_back();
+            ++t.pointer_depth;
+            const_pending = false;
+        } else if (ends_with_word(s, "const")) {
+            s.resize(s.size() - 5);
+            const_pending = true;
+        } else if (ends_with_word(s, "volatile")) {
+            s.resize(s.size() - 8);
+        } else {
+            break;
+        }
+    }
+    bool leading_const = false;
+    while (true) {
+        if (starts_with_word(s, "const")) {
+            s.erase(0, 5);
+            leading_const = true;
+        } else if (starts_with_word(s, "volatile")) {
+            s.erase(0, 8);
+        } else {
+            break;
+        }
+        while (!s.empty() && s[0] == ' ') s.erase(0, 1);
+    }
+    rtrim(s);
+    t.base = s;
+    t.is_const = leading_const || const_pending;
+    return t;
+}
+
 std::string qualified_name(const std::vector<std::string>& ns, std::string_view name) {
     std::string out;
     for (const std::string& part : ns) {

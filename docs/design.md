@@ -385,6 +385,8 @@ useful than none.
 5. Name classification (§7.7) → which classes/functions have to be generated.
 6. **Inference** (`inference.h`): facts → `ir::Model` with `Origin`, `reason`,
    `notes` and diagnostics.
+7. **Rounds** (`pipeline.h`, `analyse()`): steps 5 and 6 repeat while inference
+   learns the type behind a chained call (§7.9), at most `kMaxRounds` (4) times.
 
 Separating facts from inference allows each half to be tested on its own:
 *C++ fragment → expected facts* and *facts → expected model*.
@@ -457,12 +459,14 @@ Receiver of a call `x.m()` / `x->m()`:
 - Unknown receiver (an undeclared identifier, an `auto` with no deducible type,
   an `auto` parameter of a lambda) → `mt-unknown-receiver` note, ignored.
 - Chained call `a.b().c()` → the type of `a.b()` is unknown: the call to `b` is
-  left as `Receiver` and **one** `Unresolved` is recorded (only the first
-  unknown link; `a.b().c().d()` does not generate another for `d`).
-  `mt-chained-call` and the unknown-type policy are applied in §7.9.
-  `Unresolved.root` keeps the call it hangs from: in `Foo(3).size()` the root is
-  a `FreeCall` named `Foo`, and if §7.7 concludes that `Foo` is a class there is
-  nothing left unresolved.
+  left as `Receiver` and an `Unresolved` is recorded for `c`. **Every** link is
+  recorded: in `a.b().c().d()`, `c` hangs from the call `b`, and `d` hangs from the
+  link `c` (`Unresolved.root` of kind `Unresolved`). Only the first one shows as
+  an error when nothing says what `b` returns (§7.9, `mt-chained-call`); the
+  rest only matter once the first is resolved (§7.9, "Propagation and
+  chains"). `Unresolved.root` keeps the call it hangs from: in `Foo(3).size()`
+  the root is a `FreeCall` named `Foo`, and if §7.7 concludes that `Foo` is a
+  class there is nothing left unresolved.
 
 **`auto` and variables**: `auto x = Foo(1)` does not know whether `Foo` is a
 type or a function (the syntax does not say), so `x` is left without a type and
@@ -711,8 +715,9 @@ class through some other route; otherwise `mt-unknown-type` (warning).
   - variable of type `T`: if `T` is *by-value* (below) → `T`; otherwise
     `const T&`.
   - `std::move(x)` → `T` by value (note); `&x` → `T*`.
-  - result of another API call that has already been inferred → its type (a
-    fixed-point pass, at most 4 iterations; phase 2, a task of its own).
+  - result of another API call → the type that call was inferred to return,
+    by value or `const T&` like a variable of that type; a functional cast
+    `Foo(3)` → the class it constructs (§7.9, "Propagation and chains").
   - unknown → policy (D5): `error` (`mt-unknown-param`) or `todo`
     (`config.placeholder_type`, `int` by default, with a TODO).
   - parameter name: the variable's if the argument is an identifier; otherwise
@@ -799,6 +804,35 @@ diagnostics)`, a pure function). Details settled while implementing it:
   "parameter 1 of 'Foo::f' inferred from …" — and for none that the user
   declared or annotated.
 
+**Propagation and chains** (task 2.8). Two things need a type that some other
+call decided:
+
+- *An argument that is the result of another call* — `bar.set(foo.size())` — takes
+  the type `foo.size()` was inferred to return, as a variable of that type would
+  (by value, or `const T&`), with the note "inferred from the result of
+  'Foo::size'". A call whose result is a guess (a placeholder under
+  `auto_policy: todo`, or `void` because it was never used) passes nothing on:
+  its own parameter is then unknown, not silently typed. No iteration is needed:
+  return types depend only on how results are used, never on parameter types, so
+  `infer` works each result out the first time anything asks for it (once) and
+  the order of the statements does not matter. A functional cast as an argument
+  (`bar.use(Foo(3), QString("x"))`) is the class it constructs, `const Foo&`;
+  `Classified::casts` says which free calls are casts.
+- *A chained call whose receiver's type has become known* — `repo.find(1).name()`
+  once `find` is annotated, compared or assigned to a typed variable — is a method
+  of that type. This one does change the classes (`Item` may not be used anywhere
+  else) and so what is inferred, hence a loop outside `infer`: `analyse()` runs
+  classification and inference, looks at the chain links whose root now has a
+  result type, adds a `MethodCall` for each (the receiver being that type, taken
+  through `*`/`->`/`&`/smart pointers like any other, `const` included), and runs
+  again from the facts the file gave plus those additions. One round resolves one
+  link; at most four rounds run, and a chain still resolvable after the fourth
+  gets a warning that the rest is not followed. A link whose root has a known type
+  that has no members (`int`, `void`) is an `mt-chained-call` error. An external
+  receiver (`std::vector<…>`) is resolved too, and generates nothing. Diagnostics
+  of the rounds before the last are discarded: the next round may settle what they
+  complained about.
+
 ### 7.10 Existing headers
 
 Each `#include "…"` of the test is searched for in: the test's directory,
@@ -851,8 +885,11 @@ which calls are the code under test. Details settled while implementing it:
   attached to a class or function to generate (§7.7): `std::max(…)` or `strlen(…)`
   in the same statement do not count, and neither does a call classification
   found to belong to somebody else. A call found by classification itself
-  (`Foo(3).size()`) does. Exactly one is required; with several the message
-  names them and suggests the long form.
+  (`Foo(3).size()`) does. A chain link resolved by `analyse()` (§7.9: `name` in
+  `repo.find(1).name()` once `find` is known) is a consequence of the call it
+  hangs from and does not count, which is what lets one `// @mt: returns Item`
+  on that statement mean `find`. Exactly one is required; with several the
+  message names them and suggests the long form.
 - **What it does.** `returns T` goes to `CallAnnotation::returns`
   (`Origin::Annotated`, `reason = "annotation"`, `where` = the comment, which is
   what the TODO cites), `overload` and `ignore` to flags of the same struct, all

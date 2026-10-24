@@ -460,15 +460,22 @@ TEST(TestFrontendChain, ACallOnAResultIsUnresolvedNotGuessed) {
     EXPECT_TRUE(notes(r).empty()) << "a chain is not an 'unknown receiver'";
 }
 
-TEST(TestFrontendChain, OnlyTheFirstUnknownLinkOfALongerChainIsUnresolved) {
-    // What a() returns is the unknown; b() and c() being calls on that unknown
-    // is the same gap again, not three of them.
+TEST(TestFrontendChain, EveryLinkOfALongerChainHangsFromTheOneBefore) {
+    // What a() returns is the unknown. b() is a call on it and c() a call on
+    // b()'s result: each link is kept, rooted in the previous one, so that they
+    // can be resolved one at a time once the types are known.
     const Read r = body("Foo foo;\nfoo.a().b().c();\n");
     EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Foo::a"}));
-    ASSERT_EQ(r.facts.unresolved.size(), 1u);
+    ASSERT_EQ(r.facts.unresolved.size(), 2u);
     EXPECT_EQ(r.facts.unresolved[0].text, "foo.a().b()");
+    EXPECT_EQ(r.facts.unresolved[0].call.method, "b");
     EXPECT_EQ(r.facts.unresolved[0].root.kind, FactRef::Kind::MethodCall);
     EXPECT_EQ(r.facts.unresolved[0].root.index, 0u);
+    EXPECT_EQ(r.facts.unresolved[1].text, "foo.a().b().c()");
+    EXPECT_EQ(r.facts.unresolved[1].call.method, "c");
+    EXPECT_EQ(r.facts.unresolved[1].root.kind, FactRef::Kind::Unresolved);
+    EXPECT_EQ(r.facts.unresolved[1].root.index, 0u);
+    EXPECT_EQ(r.facts.unresolved[0].call.use.kind, UseKind::Receiver) << "b()'s result is the receiver of c()";
 }
 
 TEST(TestFrontendChain, TheRootOfTheChainIsRemembered) {
@@ -871,6 +878,15 @@ TEST(TestFrontendCalls, CastsGiveTheirTargetType) {
     ASSERT_EQ(r.facts.method_calls.size(), 2u);
     EXPECT_EQ(arg_types(method(r, 0).args), std::vector<std::string>{"unsigned char"});
     EXPECT_EQ(arg_types(method(r, 1).args), std::vector<std::string>{"long"});
+}
+
+TEST(TestFrontendCalls, FunctionalCastsToBuiltinAndTypedefTypes) {
+    // size_t and uint8_t are primitive types to tree-sitter, so size_t(2) is not
+    // a call to a function named size_t.
+    const Read r = body("Foo foo;\nfoo.put(size_t(2), uint8_t(1), int(3.5), static_cast<long>(4));\n");
+    EXPECT_TRUE(r.facts.free_calls.empty());
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(arg_types(method(r).args), (std::vector<std::string>{"size_t", "uint8_t", "int", "long"}));
 }
 
 TEST(TestFrontendCalls, SizeofIsASizeT) {

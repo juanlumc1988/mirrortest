@@ -22,50 +22,6 @@ using Use = UseKind;
 
 // ---- names and types ----------------------------------------------------------------------
 
-bool is_fundamental(std::string_view spelling) {
-    static const std::set<std::string> words = {
-        "bool", "char", "signed", "unsigned", "short", "int", "long", "float", "double", "void",
-        "wchar_t", "char8_t", "char16_t", "char32_t"};
-    std::istringstream in{std::string(spelling)};
-    std::string word;
-    bool any = false;
-    while (in >> word) {
-        any = true;
-        if (words.count(word) == 0) return false;
-    }
-    return any;
-}
-
-bool is_smart_pointer(const TypeName& n) {
-    const bool std_scope = n.scope.empty() || (n.scope.size() == 1 && n.scope[0] == "std");
-    if (std_scope && (n.name == "unique_ptr" || n.name == "shared_ptr")) return true;
-    return n.scope.empty() && (n.name == "QScopedPointer" || n.name == "QSharedPointer" || n.name == "QPointer");
-}
-
-// "int, std::map<int, int>" -> "int".
-std::string first_template_argument(const std::string& args) {
-    int depth = 0;
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (args[i] == '<' || args[i] == '(') ++depth;
-        else if (args[i] == '>' || args[i] == ')') --depth;
-        else if (args[i] == ',' && depth == 0) return ir::normalize_spelling(args.substr(0, i));
-    }
-    return ir::normalize_spelling(args);
-}
-
-// The class an ir::Type names, or nothing for fundamentals, `auto` and the
-// exotic (function pointers, arrays).
-std::optional<TypeName> class_name_of(const ir::Type& t) {
-    const std::string& base = t.base;
-    if (base.empty() || base == "auto" || base == "..." || base.find('(') != std::string::npos ||
-        base.find('[') != std::string::npos || is_fundamental(base)) {
-        return std::nullopt;
-    }
-    TypeName name = parse_type_name(base);
-    if (name.name.empty()) return std::nullopt;
-    return name;
-}
-
 ir::Type inferred_type(std::string_view spelling, const std::string& reason) {
     ir::Type t = ir::make_type(spelling);
     t.origin = ir::Origin::Inferred;
@@ -73,30 +29,8 @@ ir::Type inferred_type(std::string_view spelling, const std::string& reason) {
     return t;
 }
 
-// What `.` or `->` on a value reaches.
-struct Receiver {
-    TypeName cls;
-    bool     on_const = false;
-};
-
 std::optional<Receiver> receiver_of(const ValueInfo& v, bool arrow) {
-    if (!v.type) return std::nullopt;
-    const ir::Type& t = *v.type;
-    const std::optional<TypeName> name = class_name_of(t);
-    if (!name) return std::nullopt;
-
-    if (is_smart_pointer(*name)) {
-        if (t.pointer_depth != 0) return std::nullopt;
-        if (!arrow) return Receiver{*name, t.is_const};           // p.reset(): the pointer itself
-        const std::string inner = first_template_argument(name->template_args);
-        if (inner.empty()) return std::nullopt;
-        const bool is_const = inner.compare(0, 6, "const ") == 0;
-        const TypeName pointee = parse_type_name(is_const ? inner.substr(6) : inner);
-        if (pointee.name.empty() || is_fundamental(pointee.name)) return std::nullopt;
-        return Receiver{pointee, is_const};
-    }
-    if (arrow ? t.pointer_depth != 1 : t.pointer_depth != 0) return std::nullopt;
-    return Receiver{*name, t.is_const};
+    return v.type ? receiver_of_type(*v.type, arrow) : std::nullopt;
 }
 
 // *p, for a raw or smart pointer p.
@@ -591,7 +525,7 @@ private:
     // ---- type uses ----------------------------------------------------------------------------------
 
     void add_type_use(const TypeName& name, const Node& where, bool from_throw = false) {
-        if (name.empty() || is_fundamental(name.name)) return;
+        if (name.empty() || is_fundamental_name(name.name)) return;
         if (name.scope.empty() && std::find(template_params_.begin(), template_params_.end(), name.name) != template_params_.end()) {
             return;
         }
@@ -1207,7 +1141,7 @@ private:
             t.where = loc(type_node);
             v.type = t;
             const TypeName name = parse_type_name(t.base);
-            if (!is_fundamental(name.name)) add_construction(name, Construction::Form::Brace, args, n);
+            if (!is_fundamental_name(name.name)) add_construction(name, Construction::Form::Brace, args, n);
         }
         return v;
     }
@@ -1224,7 +1158,7 @@ private:
         add_type_uses(type_node);
         const std::string spelled = ir::normalize_spelling(type_node.text());
         const TypeName name = parse_type_name(spelled);
-        if (!is_fundamental(name.name)) add_construction(name, Construction::Form::New, args, n);
+        if (!is_fundamental_name(name.name)) add_construction(name, Construction::Form::New, args, n);
 
         ir::Type t = ir::make_type(spelled, false, ir::RefKind::None, 1);
         t.origin = ir::Origin::Declared;
@@ -1333,6 +1267,17 @@ private:
         if (fn_type == "identifier") return free_call(n, fn, arg_list);
         if (fn_type == "qualified_identifier") return scoped_call(n, fn, arg_list);
         if (fn_type == "template_function") return named_cast_or_template(n, fn, arg_list);
+        if (fn_type == "primitive_type") {
+            // size_t(2), int(x), uint8_t(1): tree-sitter makes the fixed-width and
+            // size typedef names primitive types. A cast, and not a call to anything.
+            (void)arguments(arg_list);
+            ValueInfo v = value_of(n);
+            ir::Type type = ir::make_type(fn.text());
+            type.origin = ir::Origin::Declared;
+            type.where = loc(fn);
+            v.type = type;
+            return v;
+        }
 
         // (*callback)(x), lambda calls, f()(): evaluate for the calls inside.
         (void)expr(fn);
@@ -1439,7 +1384,7 @@ private:
         const std::string pointee = first_template_argument(name.template_args);
         const TypeName constructed = parse_type_name(pointee);
         add_type_use(constructed, fn);
-        if (!is_fundamental(constructed.name)) {
+        if (!is_fundamental_name(constructed.name)) {
             add_construction(constructed, Construction::Form::MakeUnique, std::move(args), n);
         }
         ir::Type t = ir::make_type("std::" + name.name.substr(5) + "_ptr<" + pointee + ">");
@@ -1510,22 +1455,22 @@ private:
                 ValueInfo held = receiver;
                 held.from = root;
                 apply_use(held, use_of(Use::Receiver));
-                // Only the first unknown link is a gap; what hangs from an
-                // unresolved call is the same gap again.
-                if (root.kind != FactRef::Kind::Unresolved) {
-                    Unresolved u;
-                    u.kind = Unresolved::Kind::ChainedCall;
-                    u.text = std::string(n.text());
-                    u.where = loc(n);
-                    u.root = root;
-                    u.call.method = std::string(field.text());
-                    u.call.args = std::move(args);
-                    u.call.via_arrow = arrow;
-                    u.call.where = loc(field);
-                    u.call.ns = ns_;
-                    facts_.unresolved.push_back(std::move(u));
-                    v.from = {FactRef::Kind::Unresolved, facts_.unresolved.size() - 1};
-                }
+                // Every link is kept: the first hangs from a call, the next from the
+                // one before it. Only the first is a gap the user sees (the others
+                // have no result of their own to complain about), but once the
+                // first is resolved the second can be, and so on.
+                Unresolved u;
+                u.kind = Unresolved::Kind::ChainedCall;
+                u.text = std::string(n.text());
+                u.where = loc(n);
+                u.root = root;
+                u.call.method = std::string(field.text());
+                u.call.args = std::move(args);
+                u.call.via_arrow = arrow;
+                u.call.where = loc(field);
+                u.call.ns = ns_;
+                facts_.unresolved.push_back(std::move(u));
+                v.from = {FactRef::Kind::Unresolved, facts_.unresolved.size() - 1};
             } else if (object.type() == "identifier" && !receiver.is_lvalue) {
                 diagnostics_.note(core::code::unknown_receiver,
                                   "cannot tell what '" + receiver.text + "' is, so the call to " +

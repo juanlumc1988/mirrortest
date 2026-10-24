@@ -97,6 +97,7 @@ public:
 
         Classified out;
         out.overrides = merged_overrides();
+        out.casts = std::move(casts_);
         out.facts = std::move(facts_);
         out.classes = std::move(classes_);
         out.functions = std::move(functions_);
@@ -511,11 +512,13 @@ private:
                 classes_[ci].constructions.push_back(facts_.constructions.size() - 1);
                 note_first_use(classes_[ci].first_use, call.where);
                 cast_class_[i] = ci;
+                casts_[i] = TypeName{classes_[ci].ns, classes_[ci].name, ""};
                 continue;
             }
             if (is_macro_like(name)) continue;
             if (is_external_type(TypeName{{}, name, ""})) {      // QString("x"), size_t(3), Fixture(): a cast of somebody else's type
                 external_cast_[i] = true;
+                casts_[i] = TypeName{{}, name, ""};
                 continue;
             }
             if (is_c_function(name) || is_qt_function(name) || is_framework_member(name)) continue;
@@ -542,7 +545,7 @@ private:
 
     void resolve_pending_calls() {
         for (Unresolved& u : facts_.unresolved) {
-            if (u.root.kind != FactRef::Kind::FreeCall) continue;
+            if (u.resolved || u.root.kind != FactRef::Kind::FreeCall) continue;
             if (external_cast_[u.root.index]) {   // QString("x").size(): somebody else's class
                 u.resolved = true;
                 u.method_call = kNone;
@@ -605,6 +608,7 @@ private:
     std::vector<FunctionTarget>                    functions_;
     std::vector<std::size_t>                       cast_class_;          // per free call: the class it constructs
     std::vector<bool>                              external_cast_;       // per free call: a cast to somebody else's type
+    std::map<std::size_t, TypeName>                casts_;
 };
 
 }  // namespace

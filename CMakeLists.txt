@@ -60,6 +60,7 @@ add_library(mt_core STATIC
     src/frontend/known_names.cpp
     src/frontend/inference.cpp
     src/frontend/literals.cpp
+    src/frontend/pipeline.cpp
     src/frontend/test_frontend.cpp
     src/ir/type.cpp
     src/syntax/extract.cpp
@@ -100,6 +101,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_diagnostics.cpp
         tests/unit/test_diff.cpp
         tests/unit/test_naming.cpp
+        tests/unit/test_pipeline.cpp
         tests/unit/test_preprocess.cpp
         tests/unit/test_source.cpp
         tests/unit/test_syntax_tree.cpp

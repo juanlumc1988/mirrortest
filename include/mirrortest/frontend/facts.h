@@ -49,6 +49,30 @@ struct TypeName {
 // ir::Type::base).
 TypeName parse_type_name(std::string_view spelling);
 
+// True for "int", "unsigned long", "void": a spelling made only of the words of
+// the fundamental types.
+bool is_fundamental_name(std::string_view spelling);
+
+// std::unique_ptr, std::shared_ptr, QScopedPointer, QSharedPointer, QPointer.
+bool is_smart_pointer(const TypeName& name);
+
+// "int, std::map<int, int>" -> "int".
+std::string first_template_argument(const std::string& args);
+
+// The class an ir::Type names, or nothing for fundamentals, `auto` and the
+// exotic (function pointers, arrays). Pointers and references are looked
+// through: `const Foo&` names Foo.
+std::optional<TypeName> class_name_of(const ir::Type& type);
+
+// What `.` or `->` on a value of this type reaches: `Foo` and `Foo&` through a
+// dot, `Foo*` through an arrow, `unique_ptr<Foo>` through an arrow (and
+// unique_ptr itself through a dot). Nothing for the combinations C++ does not allow.
+struct Receiver {
+    TypeName cls;
+    bool     on_const = false;
+};
+std::optional<Receiver> receiver_of_type(const ir::Type& type, bool arrow);
+
 // Which fact an expression's value came from, so that whoever uses the value
 // can tell the fact how.
 struct FactRef {

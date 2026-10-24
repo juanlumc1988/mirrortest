@@ -18,6 +18,9 @@
 #ifndef MT_FRONTEND_INFERENCE_H
 #define MT_FRONTEND_INFERENCE_H
 
+#include <cstddef>
+#include <map>
+#include <utility>
 #include <vector>
 
 #include "mirrortest/core/config.h"
@@ -27,10 +30,29 @@
 
 namespace mt::frontend {
 
+// The type each call of the code under test was inferred to return, by fact:
+// what lets a later pass see that `foo.make().run()` calls run on a Bar.
+// Only results that something actually said are here; a placeholder under
+// `auto_policy: todo` is a guess and is left out.
+class ResultTypes {
+public:
+    const ir::Type* find(const FactRef& ref) const;
+    void set(const FactRef& ref, const ir::Type& type);
+    std::size_t size() const { return types_.size(); }
+
+private:
+    std::map<std::pair<int, std::size_t>, ir::Type> types_;
+};
+
 // `known` are the headers the test includes, already read (design 7.10): here
 // they only tell which enums exist, since an enum is passed by value.
+//
+// An argument that is the result of another call of the code under test takes
+// that call's type (or, for a functional cast, the class it constructs):
+// `bar.set(foo.size())` makes set's parameter whatever size() returns.
+// Results are filled in if `results` is given.
 ir::Model infer(const Classified& classified, const core::Config& config, const std::vector<ir::Model>& known,
-                core::Diagnostics& diagnostics);
+                core::Diagnostics& diagnostics, ResultTypes* results = nullptr);
 
 }  // namespace mt::frontend
 

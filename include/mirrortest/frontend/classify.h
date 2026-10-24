@@ -87,6 +87,12 @@ struct Classified {
     std::vector<ClassTarget>    classes;
     std::vector<FunctionTarget> functions;
 
+    // The type each functional cast constructs, by index into facts.free_calls:
+    // a class to generate (qualified, as it will be declared) or somebody else's
+    // type (as written). A cast is a call whose result has a type the syntax did
+    // not give, so `process(Foo(3))` can type process's parameter.
+    std::map<std::size_t, TypeName> casts;
+
     // config.overrides with the file's long-form annotations laid over them,
     // attribute by attribute: the annotation, being nearer the code, wins. Keyed
     // "Class::member" or "ns::Class::member" as written.

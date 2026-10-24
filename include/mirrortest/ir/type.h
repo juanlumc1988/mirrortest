@@ -40,6 +40,20 @@ Type make_type(std::string_view base,
                RefKind ref = RefKind::None,
                unsigned pointer_depth = 0);
 
+// A Type from a spelling written by a person -- in an annotation, in the
+// configuration -- rather than read off a declaration: the spelling is kept
+// (normalised, exactly what was written), and the decomposed fields are worked
+// out from its end.
+//
+//   "const Item*"          -> base "Item", is_const, pointer_depth 1
+//   "Item const&"          -> base "Item", is_const, LValue
+//   "std::vector<int>"     -> base "std::vector<int>"
+//   "char* const"          -> base "char", pointer_depth 1 (a const pointer is not represented)
+//   "void (*)(int)", "int[3]" -> base is the whole spelling: nothing finer is claimed
+//
+// origin/reason/where are left for the caller.
+Type type_from_spelling(std::string_view spelling);
+
 // "acme::core::Widget" from {"acme", "core"} and "Widget"; just the name
 // when there is no namespace.
 std::string qualified_name(const std::vector<std::string>& ns, std::string_view name);

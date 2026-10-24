@@ -129,8 +129,10 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   `const`, `static`, ctors (default only when needed, `explicit`), fields,
   by-value vs `const&`, parameter names, `auto`/unknown policies (`error` and
   `todo`), `type_map`.
-- [ ] **2.8 Propagation between calls** — fixed point (at most 4 iterations)
-  for arguments that are the result of another call of the API (§7.9). Tests.
+- [x] **2.8 Propagation between calls** — arguments that are the result of
+  another call of the API take its inferred type, and chained calls are resolved
+  a link per round (at most 4) once the type behind them is known (§7.9,
+  `frontend/pipeline`). Tests.
 - [ ] **2.9 Implementation backend** — `backend/impl_backend` + templates
   `impl/header.inja`, `impl/source.inja` (§8): file assignment, includes by
   type (`ir/classify`), regions, TODOs, stub policies, commented parameter

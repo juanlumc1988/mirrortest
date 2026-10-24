@@ -4,6 +4,7 @@
 #include "mirrortest/frontend/annotations.h"
 
 #include <algorithm>
+#include <set>
 #include <tuple>
 #include <utility>
 
@@ -181,7 +182,7 @@ private:
             fail(std::string("'") + directive + "' needs a type");
             return std::nullopt;
         }
-        ir::Type type = ir::make_type(text);
+        ir::Type type = ir::type_from_spelling(text);
         type.origin = ir::Origin::Annotated;
         type.reason = "annotation";
         type.where = where_;
@@ -345,10 +346,22 @@ void apply_call_annotations(Classified& classified, core::Diagnostics& diagnosti
     TestFileFacts& facts = classified.facts;
     if (facts.annotations.shorts.empty()) return;
 
+    // A link of a chain that was resolved (`repo.find(1).name()`: name, once find
+    // is known to return an Item) is a consequence of the call it hangs from, not
+    // a second call to annotate -- unless it hangs from a functional cast, which
+    // is no call of the API at all.
+    std::set<std::size_t> derived;
+    for (const Unresolved& u : facts.unresolved) {
+        if (!u.resolved || u.method_call >= facts.method_calls.size()) continue;
+        const bool cast_root = u.root.kind == FactRef::Kind::FreeCall && classified.casts.count(u.root.index) != 0;
+        if (!cast_root) derived.insert(u.method_call);
+    }
+
     // The calls of the code under test: those some target holds on to.
     std::vector<ApiCall> api;
     for (const ClassTarget& c : classified.classes) {
         for (std::size_t i : c.method_calls) {
+            if (derived.count(i) != 0) continue;
             const MethodCall& m = facts.method_calls[i];
             api.push_back({{FactRef::Kind::MethodCall, i}, m.where, m.receiver.qualified() + "::" + m.method});
         }
