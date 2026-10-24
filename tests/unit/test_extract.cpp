@@ -558,6 +558,13 @@ TEST(ExtractQFetch, TypesWithSeveralWordsAndSpaces) {
     EXPECT_EQ(fetch->name, "big");
 }
 
+TEST(ExtractQFetch, ItIsTheLastCommaOutsideAnyBracketThatSeparates) {
+    const auto fetch = parse_qfetch("QFETCH(a, b, c)");
+    ASSERT_TRUE(fetch.has_value());
+    EXPECT_EQ(fetch->type, "a, b");
+    EXPECT_EQ(fetch->name, "c");
+}
+
 TEST(ExtractQFetch, TheGlobalVariant) {
     const auto fetch = parse_qfetch("QFETCH_GLOBAL(Foo, foo);");
     ASSERT_TRUE(fetch.has_value());
@@ -575,7 +582,13 @@ TEST(ExtractQFetch, ANewlineBetweenTheParts) {
 TEST(ExtractQFetch, NothingElseIsAFetch) {
     for (const char* text : {"", "QFETCH", "QFETCH()", "QFETCH(int)", "QFETCH(, name)", "QFETCH(int, )", "QFETCHER(int, a)",
                              "QFETCH_X(int, a)", "XQFETCH(int, a)", "QFETCH(int, a) + 1", "QFETCH int, a", "QFETCH(int, a",
-                             "foo(int, a)", "QTEST(int, a)"}) {
+                             "foo(int, a)", "QTEST(int, a)",
+                             "QFETCX(int, a)", "ABCDEF(int, a)",                    // six characters, then a parenthesis
+                             "QFETCH int, a)",                                      // a closing parenthesis without an opening one
+                             "QFETCH(std::map<int, QString>)",                      // the only comma is inside the brackets
+                             "QFETCH(int, a), QFETCH(int, b)",                      // two macros
+                             "QFETCH(int, a)) + (QFETCH(int, b)",                   // brackets that do not match
+                             "QFETCH((int, a)"}) {
         EXPECT_FALSE(parse_qfetch(text).has_value()) << text;
     }
 }

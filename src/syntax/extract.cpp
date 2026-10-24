@@ -359,8 +359,10 @@ std::optional<QFetch> parse_qfetch(std::string_view text) {
         if (c == '(' || c == '[' || c == '{' || c == '<') ++depth;
         else if (c == ')' || c == ']' || c == '}' || c == '>') --depth;
         else if (c == ',' && depth == 0) comma = i;
+        // `QFETCH(int, a), QFETCH(int, b)` is two macros, not one with odd arguments.
+        if (depth < 0) return std::nullopt;
     }
-    if (comma == std::string_view::npos) return std::nullopt;
+    if (depth != 0 || comma == std::string_view::npos) return std::nullopt;
 
     QFetch out;
     out.type = std::string(trim(rest.substr(0, comma)));

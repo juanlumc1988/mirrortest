@@ -120,6 +120,13 @@ TEST(QtFrontendFramework, TheMainMacrosAreEvidence) {
     EXPECT_FALSE(read("int main() { QTEST_MAIN(T); }\n").facts.qtest_main) << "only at the top of the file";
 }
 
+TEST(QtFrontendFramework, StraySemicolonsAndATrailingOneAroundTheMainAreHarmless) {
+    const Read r = read("class T {};\n;\nQTEST_MAIN(T);\n;\n");
+    EXPECT_TRUE(r.facts.qtest_main);
+    EXPECT_TRUE(warnings(r).empty());
+    EXPECT_FALSE(read("class T {};\n;\n").facts.qtest_main);
+}
+
 TEST(QtFrontendFramework, ASlotIsEvidenceEvenWithoutAnInclude) {
     const Read r = read("class T : public QObject {\n    Q_OBJECT\nprivate slots:\n    void a() {}\n};\n");
     const frontend::FrameworkEvidence e = frontend::detect_framework(r.facts);
@@ -221,6 +228,16 @@ TEST(QtFrontendAssert, ACommaInsideTheStatementIsNotAnotherArgument) {
     EXPECT_EQ(method(r, 1).use.kind, UseKind::Discarded);
 }
 
+TEST(QtFrontendAssert, AStatementWithACommaOperatorIsAllRead) {
+    // The macros take `...`: what is between the parentheses is one statement, and a comma at
+    // the top level of it reaches the parser as several arguments.
+    const Read r = slot("Foo foo;\nQVERIFY_THROWS_NO_EXCEPTION(foo.a(), foo.b());\nQVERIFY_THROWS_EXCEPTION(E, foo.c(), foo.d());");
+    std::vector<std::string> names;
+    for (const frontend::MethodCall& m : r.facts.method_calls) names.push_back(m.method);
+    EXPECT_EQ(names, (std::vector<std::string>{"a", "b", "c", "d"}));
+    for (std::size_t i = 0; i < 4; ++i) EXPECT_EQ(method(r, i).use.kind, UseKind::Discarded) << i;
+}
+
 TEST(QtFrontendAssert, ABraceInitialiserSplitByTheMacroIsStillAllRead) {
     const Read r = slot("Foo foo;\nQVERIFY_THROWS_NO_EXCEPTION(foo.take(std::pair<int, int>{1, 2}));");
     EXPECT_EQ(method(r).method, "take");
@@ -292,6 +309,15 @@ TEST(QtFrontendFetch, AFetchedValueIsAnArgumentWithItsType) {
     EXPECT_EQ(r.facts.constructions[0].args[0].var_name, "start");
     ASSERT_TRUE(r.facts.constructions[0].args[0].type.has_value());
     EXPECT_EQ(r.facts.constructions[0].args[0].type->spelling, "int");
+    EXPECT_EQ(r.facts.constructions[0].args[0].type->origin, ir::Origin::Declared);
+    EXPECT_EQ(r.facts.constructions[0].args[0].type->where.line, 8u) << "the line of the QFETCH";
+}
+
+TEST(QtFrontendFetch, TwoFetchesInOneStatementAreNotOneFetch) {
+    const Read r = slot("QFETCH(int, a), QFETCH(int, b);\nFoo foo;\nfoo.use(a, b);");
+    EXPECT_FALSE(warnings(r).empty()) << "the parser could not read it and the tool does not pretend";
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_FALSE(method(r).args[0].type.has_value()) << "a and b were never declared";
 }
 
 TEST(QtFrontendFetch, ItIsAStatementLikeAnyOtherAndItsScopeEnds) {

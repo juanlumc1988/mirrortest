@@ -269,9 +269,7 @@ private:
     // Qt Test file ends with, and the one thing in it that no other framework has.
     static bool is_qtest_main(const Node& statement) {
         if (statement.named_child_count() == 0 || statement.named_child(0).type() != "call_expression") return false;
-        const Node fn = statement.named_child(0).child_by_field("function");
-        if (fn.type() != "identifier") return false;
-        const std::string_view name = fn.text();
+        const std::string_view name = statement.named_child(0).child_by_field("function").text();
         return name == "QTEST_MAIN" || name == "QTEST_APPLESS_MAIN" || name == "QTEST_GUILESS_MAIN" ||
                name == "QTEST_DISABLED_MAIN";
     }
