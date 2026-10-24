@@ -238,7 +238,7 @@ struct Unresolved {
 };
 
 struct TestCaseInfo {
-    std::string kind;                       // "TEST", "TEST_F", "TEST_P"
+    std::string kind;                       // "TEST", "TEST_F", "TEST_P"; "SLOT" for a slot of a Qt Test class
     std::string suite;                      // the suite, or for TEST_F/TEST_P the fixture
     std::string name;
     ir::SourceLoc where;
@@ -258,6 +258,7 @@ struct TestFileFacts {
     ir::Model local;
 
     std::vector<TestCaseInfo> tests;
+    bool                      qtest_main = false;   // QTEST_MAIN(...) and its variants
     std::vector<MethodCall>   method_calls;
     std::vector<ScopedCall>   scoped_calls;
     std::vector<FreeCall>     free_calls;

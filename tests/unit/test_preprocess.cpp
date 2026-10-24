@@ -82,6 +82,21 @@ TEST(Preprocess, NamespaceRequiredResultAndDeprecatedAreJustBlanked) {
     EXPECT_TRUE(out.markers.empty());
 }
 
+TEST(Preprocess, QBenchmarkLeavesTheBlockItGuards) {
+    const std::string in = "void f() { QBENCHMARK { g(); } QBENCHMARK_ONCE { h(); } }";
+    const Preprocessed out = run(in);
+    EXPECT_EQ(out.text.size(), in.size());
+    EXPECT_EQ(out.text.find("QBENCHMARK"), std::string::npos);
+    EXPECT_NE(out.text.find("{ g(); }"), std::string::npos);
+    EXPECT_NE(out.text.find("{ h(); }"), std::string::npos);
+    EXPECT_TRUE(out.markers.empty());
+}
+
+TEST(Preprocess, AnIdentifierThatOnlyStartsLikeQBenchmarkIsLeftAlone) {
+    const std::string in = "int QBENCHMARKS = 1; int MY_QBENCHMARK = 2;";
+    EXPECT_EQ(run(in).text, in);
+}
+
 TEST(Preprocess, InvokableIsMarkedAtTheMacro) {
     const std::string in = "class A { public: Q_INVOKABLE void ping(); };";
     const Preprocessed out = run(in);

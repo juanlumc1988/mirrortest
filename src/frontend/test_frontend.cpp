@@ -11,6 +11,7 @@
 
 #include "mirrortest/frontend/code_frontend.h"
 #include "mirrortest/frontend/known_names.h"
+#include "mirrortest/ir/classify.h"
 #include "mirrortest/ir/type.h"
 #include "mirrortest/syntax/extract.h"
 
@@ -109,14 +110,37 @@ enum class Assert {
     Double,      // DOUBLE_EQ
     Near,        // NEAR                     (a, b, abs_error)
     Throws,      // THROW                    (stmt, ExceptionType)
+    ThrowsFirst, // QVERIFY_THROWS_EXCEPTION  (ExceptionType, stmt...): Qt 6.3 wrote the arguments the other way round
     Statement,   // ANY_THROW NO_THROW DEATH NO_FATAL_FAILURE ...   (stmt, ...)
+    StatementList, // QVERIFY_THROWS_NO_EXCEPTION (stmt...): the commas inside the statement are its own
     Matcher,     // THAT                     (value, matcher): the matcher is not analysed
     Skip,        // EXPECT_CALL, ON_CALL: mock set-up, not code under test
-    Message,     // FAIL SUCCEED GTEST_SKIP ADD_FAILURE: carry only a streamed message
+    Message,     // FAIL SUCCEED GTEST_SKIP ADD_FAILURE QFAIL QSKIP QWARN QEXPECT_FAIL: carry only a message
     Opaque,      // PRED*, ...: evaluate the arguments, say nothing about them
 };
 
+// Qt Test's macros (Qt 5.15 and 6). QTEST(actual, "column") compares with a data
+// column whose type only the _data function knows, so it says nothing about `actual`.
+Assert classify_qt_assertion(std::string_view name) {
+    if (name == "QFAIL" || name == "QSKIP" || name == "QWARN" || name == "QEXPECT_FAIL") return Assert::Message;
+    if (name == "QCOMPARE" || name == "QTRY_COMPARE" || name == "QTRY_COMPARE_WITH_TIMEOUT" || name == "QCOMPARE_EQ" ||
+        name == "QCOMPARE_NE" || name == "QCOMPARE_LT" || name == "QCOMPARE_LE" || name == "QCOMPARE_GT" ||
+        name == "QCOMPARE_GE") {
+        return Assert::Compare;
+    }
+    if (name == "QVERIFY" || name == "QVERIFY2" || name == "QTRY_VERIFY" || name == "QTRY_VERIFY2" ||
+        name == "QTRY_VERIFY_WITH_TIMEOUT" || name == "QTRY_VERIFY2_WITH_TIMEOUT") {
+        return Assert::Truth;
+    }
+    if (name == "QVERIFY_EXCEPTION_THROWN") return Assert::Throws;
+    if (name == "QVERIFY_THROWS_EXCEPTION") return Assert::ThrowsFirst;
+    if (name == "QVERIFY_THROWS_NO_EXCEPTION") return Assert::StatementList;
+    if (name == "QTEST") return Assert::Opaque;
+    return Assert::None;
+}
+
 Assert classify_assertion(std::string_view name) {
+    if (name.size() > 1 && name[0] == 'Q') return classify_qt_assertion(name);
     if (name == "EXPECT_CALL" || name == "ON_CALL" || name == "SCOPED_TRACE") return Assert::Skip;
     if (name == "FAIL" || name == "SUCCEED" || name == "GTEST_SKIP" || name == "ADD_FAILURE" ||
         name == "GTEST_FAIL" || name == "GTEST_SUCCEED") {
@@ -235,7 +259,37 @@ private:
                 if (specifier.type() == "class_specifier" || specifier.type() == "struct_specifier") {
                     class_bodies(specifier);
                 }
+            } else if (type == "expression_statement" && is_qtest_main(child)) {
+                facts_.qtest_main = true;
             }
+        }
+    }
+
+    // QTEST_MAIN(Class), QTEST_APPLESS_MAIN, QTEST_GUILESS_MAIN, QTEST_DISABLED_MAIN: what a
+    // Qt Test file ends with, and the one thing in it that no other framework has.
+    static bool is_qtest_main(const Node& statement) {
+        if (statement.named_child_count() == 0 || statement.named_child(0).type() != "call_expression") return false;
+        const Node fn = statement.named_child(0).child_by_field("function");
+        if (fn.type() != "identifier") return false;
+        const std::string_view name = fn.text();
+        return name == "QTEST_MAIN" || name == "QTEST_APPLESS_MAIN" || name == "QTEST_GUILESS_MAIN" ||
+               name == "QTEST_DISABLED_MAIN";
+    }
+
+    // A slot of a local class whose body is in this file is one of the file's tests (or
+    // one of the functions Qt Test calls around them: init, cleanup, the _data functions).
+    void note_slot(const ir::Class* cls, const std::string& name, const Node& where) {
+        if (cls == nullptr) return;
+        for (const ir::Method& m : cls->methods) {
+            if (m.name != name || m.qt_role != ir::QtRole::Slot) continue;
+            TestCaseInfo info;
+            info.kind = "SLOT";
+            info.suite = cls->name;
+            info.name = name;
+            info.where = loc(where);
+            info.ns = ns_;
+            facts_.tests.push_back(std::move(info));
+            return;
         }
     }
 
@@ -291,6 +345,7 @@ private:
                 const syntax::Declarator d = syntax::parse_declarator(member.child_by_field("declarator"));
                 if (!d.function.is_null() && !member.child_by_field("body").is_null()) {
                     add_type_uses(member.child_by_field("type"));
+                    note_slot(cls, d.name, member);
                     analyse(member.child_by_field("body"), d.function.child_by_field("parameters"), cls, std::nullopt,
                             initialiser_list(member));
                 }
@@ -369,7 +424,9 @@ private:
                                  d.name + " is not supported; its body is skipped", loc(d.name_node));
         } else if (const std::size_t sep = d.name.rfind("::"); sep != std::string::npos) {
             // void Fixture::SetUp() { ... }: the body sees Fixture's members.
-            analyse(body, params, local_class(d.name.substr(0, sep)), std::nullopt, initialiser_list(def));
+            const ir::Class* owner = local_class(d.name.substr(0, sep));
+            note_slot(owner, d.name.substr(sep + 2), def);
+            analyse(body, params, owner, std::nullopt, initialiser_list(def));
         } else {
             analyse(body, params, nullptr, std::nullopt);
         }
@@ -517,7 +574,8 @@ private:
     // What the other side of a comparison says the result is.
     std::optional<ir::Type> hint_from(const ValueInfo& other, const std::string& assertion) const {
         if (other.is_string_literal) {
-            return inferred_type("std::string", "string literal in " + assertion);
+            // QCOMPARE(foo.name(), "x") compares QStrings; EXPECT_EQ(foo.name(), "x") std::strings.
+            return inferred_type(assertion.compare(0, 1, "Q") == 0 ? "QString" : "std::string", "string literal in " + assertion);
         }
         if (other.type) {
             ir::Type t = *other.type;
@@ -600,6 +658,13 @@ private:
             declaration(n);
         } else if (type == "expression_statement") {
             expression_statement(n);
+        } else if (type == "ERROR") {
+            // `QFETCH(int, v);` reads as a declaration of a function called QFETCH.
+            if (const std::optional<syntax::QFetch> fetch = syntax::parse_qfetch(n.text())) {
+                qfetch(*fetch, n);
+            } else {
+                value_statement(n);
+            }
         } else if (type == "alias_declaration" || type == "type_definition") {
             alias(n);
         } else if (type == "for_range_loop") {
@@ -692,8 +757,27 @@ private:
             for (const Node& s : streamed) (void)expr(s);
             return;
         }
+        if (e.type() == "call_expression") {
+            if (const std::optional<syntax::QFetch> fetch = syntax::parse_qfetch(e.text())) {
+                qfetch(*fetch, e);
+                return;
+            }
+        }
         const ValueInfo v = expr(e);
         apply_use(v, use_of(Use::Discarded));
+    }
+
+    // QFETCH(T, name) declares `name` of type T from the test's data. T must be copyable
+    // (that is how the macro reads the row) but nothing more: it is a use of T, not a
+    // construction of it.
+    void qfetch(const syntax::QFetch& fetch, const Node& where) {
+        ir::Type type = ir::type_from_spelling(fetch.type);
+        type.origin = ir::Origin::Declared;
+        type.where = loc(where);
+        declare_typed(fetch.name, type);
+        for (const std::string& mention : ir::mentioned_names(fetch.type)) {
+            add_type_use(parse_type_name(mention), where);
+        }
     }
 
     // EXPECT_CALL(m, f(1)).WillOnce(Return(3)): a chain rooted in a macro that
@@ -738,11 +822,13 @@ private:
                 const ValueInfo a = expr(arg(0));
                 const ValueInfo b = expr(arg(1));
                 compare(a, b, name);
+                for (std::size_t i = 2; i < args.size(); ++i) (void)expr(args[i]);   // QTRY_COMPARE_WITH_TIMEOUT's timeout
                 break;
             }
             case Assert::Truth: {
                 const ValueInfo a = expr(arg(0));
                 apply_use(a, use_of(Use::Condition, bool_hint(name)));
+                for (std::size_t i = 1; i < args.size(); ++i) (void)expr(args[i]);   // QVERIFY2's message, a timeout
                 break;
             }
             case Assert::CString: {
@@ -774,8 +860,15 @@ private:
                 statement_argument(arg(0));
                 add_type_uses(arg(1), true);
                 break;
+            case Assert::ThrowsFirst:
+                add_type_uses(arg(0), true);
+                for (std::size_t i = 1; i < args.size(); ++i) statement_argument(args[i]);
+                break;
             case Assert::Statement:
                 statement_argument(arg(0));
+                break;
+            case Assert::StatementList:
+                for (const Node& a : args) statement_argument(a);
                 break;
             case Assert::Matcher: {
                 const ValueInfo a = expr(arg(0));
@@ -1394,6 +1487,8 @@ private:
             return moved;
         }
         for (const ValueInfo& a : args) apply_use(a, use_of(Use::Argument));
+        // QTest::addColumn<acme::Foo>("foo"): the types between the angle brackets are types the file uses.
+        for (const std::string& mention : ir::mentioned_names(name.template_args)) add_type_use(parse_type_name(mention), fn);
 
         ScopedCall call;
         call.scope = name.scope;

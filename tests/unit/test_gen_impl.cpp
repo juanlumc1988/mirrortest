@@ -181,13 +181,83 @@ TEST(GenImpl, AFileWithBothFrameworksIsAmbiguous) {
     EXPECT_TRUE(contains(r.err, "uses both GoogleTest and QTest")) << r.err;
 }
 
-TEST(GenImpl, QTestIsNotSupportedYetAndSaysSo) {
+// ---- Qt Test -----------------------------------------------------------------------------------------------
+
+const char* kQtFooTest =
+    "#include <QtTest>\n"
+    "#include \"acme/foo.h\"\n"
+    "\n"
+    "class TestFoo : public QObject {\n"
+    "    Q_OBJECT\n"
+    "private slots:\n"
+    "    void startsWithThreeItems();\n"
+    "    void names_data();\n"
+    "    void names();\n"
+    "};\n"
+    "\n"
+    "void TestFoo::startsWithThreeItems() {\n"
+    "    const acme::Foo foo(3);\n"
+    "    QCOMPARE(foo.size(), 3u);\n"
+    "    QVERIFY(!foo.empty());\n"
+    "    QCOMPARE(foo.name(), \"foo\");\n"
+    "}\n"
+    "\n"
+    "void TestFoo::names_data() {\n"
+    "    QTest::addColumn<int>(\"count\");\n"
+    "    QTest::newRow(\"three\") << 3;\n"
+    "}\n"
+    "\n"
+    "void TestFoo::names() {\n"
+    "    QFETCH(int, count);\n"
+    "    acme::Foo foo(count);\n"
+    "    QBENCHMARK { foo.touch(); }\n"
+    "}\n"
+    "\n"
+    "QTEST_MAIN(TestFoo)\n"
+    "#include \"tst_foo.moc\"\n";
+
+TEST(GenImplQt, ATestFileGeneratesTheClassItTestsAndNotTheMocFileOrTheTestClass) {
     const TempDir dir;
-    write_file(dir.path() / "t.cpp", "#include <QtTest>\nclass T : public QObject { Q_OBJECT private slots: void a(); };\n");
-    const Outcome r = gen_impl(dir, {"t.cpp", "--out", "src"});
-    EXPECT_EQ(r.code, 1);
-    EXPECT_TRUE(contains(r.err, "QTest test files are not supported yet")) << r.err;
-    EXPECT_TRUE(contains(r.err, "[mt-unsupported]"));
+    write_file(dir.path() / "tests/tst_foo.cpp", kQtFooTest);
+    const Outcome r = gen_impl(dir, {"tests/tst_foo.cpp", "--out", "src"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(r.err, "created src/acme/foo.h\ncreated src/acme/foo.cpp\n")) << r.err;
+    EXPECT_TRUE(contains(r.err, "'acme::Foo::touch' is never used")) << "a call inside QBENCHMARK is a statement like another: " << r.err;
+    EXPECT_FALSE(exists(dir, "src/tst_foo.moc"));
+    EXPECT_FALSE(exists(dir, "src/tst_foo.h"));
+    const std::string header = read(dir, "src/acme/foo.h");
+    EXPECT_TRUE(contains(header, "explicit Foo(int count);")) << "named after the QFETCH variable: " << header;
+    EXPECT_TRUE(contains(header, "unsigned int size()")) << header;
+    EXPECT_TRUE(contains(header, "bool empty()")) << header;
+    EXPECT_TRUE(contains(header, "QString name()")) << "a string literal is a QString to QCOMPARE: " << header;
+    EXPECT_TRUE(contains(header, "#include <QString>"));
+    EXPECT_TRUE(contains(header, "void touch();"));
+    EXPECT_FALSE(contains(header, "TestFoo"));
+}
+
+TEST(GenImplQt, TheFrameworkCanBeSaidInsteadOfDetected) {
+    const TempDir dir;
+    write_file(dir.path() / "t.cpp", "#include \"foo.h\"\nvoid run() { Foo foo(1); QCOMPARE(foo.size(), 2u); }\n");
+    const Outcome unsure = gen_impl(dir, {"t.cpp", "--out", "src"});
+    EXPECT_EQ(unsure.code, 1) << "no include, no slot, no macro: nothing says which framework";
+    const Outcome r = gen_impl(dir, {"t.cpp", "--out", "src", "--framework", "qtest"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(read(dir, "src/foo.h"), "unsigned int size()"));
+}
+
+TEST(GenImplQt, ASecondRunChangesNothing) {
+    const TempDir dir;
+    write_file(dir.path() / "tests/tst_foo.cpp", kQtFooTest);
+    ASSERT_EQ(gen_impl(dir, {"tests/tst_foo.cpp", "--out", "src"}).code, 0);
+    const Outcome r = gen_impl(dir, {"tests/tst_foo.cpp", "--out", "src"});
+    EXPECT_EQ(r.code, 0);
+    EXPECT_TRUE(contains(r.err, "unchanged src/acme/foo.h\nunchanged src/acme/foo.cpp\n")) << r.err;
+}
+
+TEST(GenImplQt, NoParseWarningIsMadeOfTheQtMacros) {
+    const TempDir dir;
+    write_file(dir.path() / "tests/tst_foo.cpp", kQtFooTest);
+    EXPECT_FALSE(contains(gen_impl(dir, {"tests/tst_foo.cpp", "--out", "src"}).err, "mt-parse"));
 }
 
 TEST(GenImpl, AnErrorInTheInputMeansNoFileIsWritten) {

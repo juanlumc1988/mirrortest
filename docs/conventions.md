@@ -180,6 +180,28 @@ default-constructed — if that constructor is defined *inside* the class.
 - `using namespace std;` is understood, and the generated header says
   `std::string`, never `string`.
 
+### Qt Test
+
+`gen-impl` reads Qt Test files as it reads GoogleTest ones: the test class is
+yours (never generated), the slots are the tests, and `QCOMPARE`, `QVERIFY` and
+the `QTRY_` family say what `EXPECT_EQ` and `EXPECT_TRUE` say. It tells which
+framework a file uses from its includes, a slot, or `QTEST_MAIN`; `--framework
+qtest` settles it when nothing does.
+
+- `QCOMPARE(foo.name(), "x")` makes `name()` return `QString`, not
+  `std::string`.
+- `QFETCH(T, v)` declares `v` of type `T`; the type is used but not
+  constructed, so a class you fetch does not need a default constructor. Name
+  `T` as you mean it: `QFETCH(acme::Foo, foo)` makes `foo.run()` a call on
+  `acme::Foo`.
+- `QTest::addColumn<acme::Foo>("foo")` asks for `acme::Foo` to exist.
+- `QTEST(actual, "column")` says nothing about `actual`; compare with
+  `QCOMPARE` where the type matters.
+- `QBENCHMARK { ... }` is read as the block it guards, and `#include
+  "tst_foo.moc"` is left to the build.
+- A signal given to `QSignalSpy` as `&Class::signal` is not seen, so it is not
+  declared.
+
 ### What is *not* generated
 
 Anything the test declares itself (fixtures, helper classes, enums, aliases), the
@@ -450,8 +472,8 @@ differences.
 
 Honest list of what it does not do (yet):
 
-- GoogleTest only. QTest files are rejected with `mt-unsupported`, and so is
-  `gen-tests --framework qtest`.
+- `gen-impl` reads GoogleTest and Qt Test; `gen-tests` writes GoogleTest only:
+  `--framework qtest` is rejected with `mt-unsupported`.
 - Merging adds members; it does not reconcile a changed one (a mismatch is
   reported) and never removes a member the tests no longer mention.
 - One test file per header, in practice: two files that would write the same

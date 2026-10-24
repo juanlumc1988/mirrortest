@@ -449,8 +449,9 @@ Scopes nested by `compound_statement`, `if`/`while`/`for`/`switch` (a variable
 declared in the condition lives in its scope), `try`/`catch` and lambdas;
 declaration happens in order. Sources: local declarations (`T v;`, `T v(…)`,
 `T v{…}`, `T v = …`), parameters of functions, lambdas and `catch`,
-`QFETCH(T, v)` (text: it is split at the **last top-level comma**; *verified*:
-the node varies depending on whether `T` is primitive; phase 5), members of the
+`QFETCH(T, v)` (text: it is split at the **last top-level comma**, by
+`syntax::parse_qfetch`; *verified*: the node varies depending on whether `T` is
+primitive, §7.12), members of the
 fixture/test class (including those of its local base classes), `for (T x : …)`.
 Each symbol keeps the complete declared type (to know about `const`, reference,
 pointer, smart pointer).
@@ -506,7 +507,7 @@ class still is (a spurious default constructor, harmless, in the generated class
 | `TEST_F(F, N)`, `TEST_P(F, N)` | members of the class `F` defined in the file (if it is not there: `mt-unknown-fixture`, warning, and the body is read anyway); `GetParam()` typed by `TestWithParam<T>` or `WithParamInterface<T>` (without a parameter type, `GetParam()` is just another free call) |
 | fixture methods, inside or outside the class, constructors and destructors | members of the fixture and of its local bases; in a constructor, also its parameters and the initialisers |
 | helper functions | their parameters |
-| slots/methods of the QTest class | members of the test class |
+| slots/methods of the QTest class | members of the test class (§7.12) |
 
 `TYPED_TEST`/`TYPED_TEST_P` are not supported: `mt-unsupported` warning and the
 body is skipped. Assertion macros are recognised in any position (also nested,
@@ -584,9 +585,10 @@ the position of the type. Details settled while implementing it:
 | `EXPECT_/ASSERT_THROW(stmt, E)`, `ANY_THROW`, `NO_THROW`, `EXPECT_DEATH(stmt, re)` | `stmt` is analysed (it can be a `{…}` block); its result is `Discarded` |
 | `EXPECT_THAT(v, matcher)` | no hint (`mt-unknown-return`); matchers: later phase |
 | `… << "msg"` | the left operand is unwrapped |
-| `QCOMPARE(a, b)`, `QTRY_COMPARE*` | each side the other's; string → `QString` |
-| `QVERIFY(c)`, `QVERIFY2(c, m)`, `QTRY_VERIFY*` | `bool` |
-| `QVERIFY_EXCEPTION_THROWN(stmt, E)` · `QVERIFY_THROWS_EXCEPTION(E, stmt…)` · `QVERIFY_THROWS_NO_EXCEPTION(stmt)` | `stmt` is analysed (beware: reversed order between the first two) |
+| `QCOMPARE(a, b)`, `QCOMPARE_EQ/NE/LT/LE/GT/GE`, `QTRY_COMPARE`, `QTRY_COMPARE_WITH_TIMEOUT` | each side the other's; string → `QString`. The timeout is code too |
+| `QVERIFY(c)`, `QVERIFY2(c, m)`, `QTRY_VERIFY*` | `bool`; the message and the timeout are code too |
+| `QVERIFY_EXCEPTION_THROWN(stmt, E)` · `QVERIFY_THROWS_EXCEPTION(E, stmt…)` · `QVERIFY_THROWS_NO_EXCEPTION(stmt…)` | `stmt` is analysed (beware: reversed order between the first two; the commas of `stmt` split it into several macro arguments and all of them are read) |
+| `QTEST(actual, "column")` | `actual` is read, with no hint: its type is that of the column, which only the `_data` function knows |
 | `if`/`while`/`for`/`do` (condition), `!x`, `x && y`, `x \|\| y`, `c ? … : …` | `bool`. The condition of a `switch` is an integer: no hint |
 | `x == lit`, `!=`, `<`, `<=`, `>`, `>=` | type of the literal |
 | `T v = call;`, and `T v(call);` / `T v{call};` when `T` is **not** a class | `T` without the top-level `const`/`&`; if `T` is a non-const `U&` → return `U&` (a temporary does not bind). The frontend keeps `T` as declared; stripping qualifiers is the inference's job. With a class `T`, `Bar b(call);` is a constructor argument (`Argument`, no hint) |
@@ -950,6 +952,40 @@ which calls are the code under test. Details settled while implementing it:
   (`Foo::f returns`, `Foo::f param 1`, `Foo::f const`, `class Foo namespace`,
   …); a second one is an error that cites the line of the first, and the first
   stands. A bad directive does not stop the good ones in the same comment.
+
+### 7.12 Qt Test files
+
+Everything of §7.1–7.11 applies; what is particular to Qt Test is this.
+
+- **The tests are slots.** A slot of a local class (`private slots:`, or
+  `Q_SLOTS`) whose body is in the file -- inside the class or as `T::a()` -- is
+  recorded as `TestCaseInfo{kind: "SLOT", suite: the class, name: the slot}`,
+  with the namespace. Qt Test's own `initTestCase`, `init`, `cleanup`,
+  `cleanupTestCase` and the `_data` functions are slots too and are read like
+  the rest. The class is a *local* class, as a GoogleTest fixture is: never
+  generated, its members give the symbol table its types.
+- **Evidence** (§7.1): the includes, a slot, or a `QTEST_MAIN`,
+  `QTEST_APPLESS_MAIN`, `QTEST_GUILESS_MAIN` or `QTEST_DISABLED_MAIN` at the top
+  of the file (`TestFileFacts::qtest_main`). `#include "tst_foo.moc"` is an
+  include like any other and is never a header to generate: a name ending in
+  `.moc` is foreign (`core::is_foreign_include`).
+- **`QFETCH(T, v)`** declares `v` of type `T` in the scope where it stands,
+  and `T` is a use of every type it names. It is **not** a construction: the
+  macro copies a row of the test's data, so it asks nothing of a default
+  constructor. The grammar reads the macro as an `ERROR` node when `T` is a
+  builtin type (`QFETCH(int, v)`, `QFETCH(unsigned long long, v)`) and as a call
+  otherwise, so both forms are read by text (`syntax::parse_qfetch`); the
+  `ERROR` is not an `mt-parse` warning. `QFETCH_GLOBAL` is the same.
+- **`QBENCHMARK`** and `QBENCHMARK_ONCE` are blanked by the preprocessing of
+  §5.2: the braces that follow are an ordinary block.
+- **Template arguments** of a scoped call are uses of types:
+  `QTest::addColumn<acme::Foo>("foo")` asks for `acme::Foo` to exist.
+- **Not seen**: the types of a `QTest::newRow(...) << a << b` row (the columns
+  say them, but nothing connects the two); `&Class::signal` given to a
+  `QSignalSpy` or `connect` (a pointer to a member is not a call, so the signal
+  is not declared, and a class that has signals must be a `QObject`, which
+  `gen-impl` does not generate yet); the `QTEST` column comparison (above).
+  Each is a gap in what is generated, never a wrong guess.
 
 ---
 
@@ -1425,7 +1461,7 @@ warnings into errors.
 | `mt-unknown-type` | warning | a type used (e.g. in `EXPECT_THROW`) that is neither generated nor known |
 | `mt-no-include` | warning | class or function that no `#include` of the test claims, and no annotation places |
 | `mt-annotation` | error | malformed annotation, or one without a single target |
-| `mt-unsupported` | warning | construct outside the supported subset; also, from the backend: a header path outside the output directory, headers that hold each other's classes by value, region labels that collide, a `default` stub that cannot return `{}`. An error: a QTest file (until phase 5), or two test files that would write the same file with different content |
+| `mt-unsupported` | warning | construct outside the supported subset; also, from the backend: a header path outside the output directory, headers that hold each other's classes by value, region labels that collide, a `default` stub that cannot return `{}`. An error: `gen-tests --framework qtest` (until task 5.2), or two test files that would write the same file with different content |
 | `mt-conditional` | note | member under `#if` with different versions |
 | `mt-stub-may-pass` | warning | `default` policy |
 | `mt-merge-region` | error | malformed or duplicated regions |

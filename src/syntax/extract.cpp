@@ -335,4 +335,38 @@ std::vector<ir::Param> read_parameters(const Node& parameter_list, std::string_v
     return params;
 }
 
+std::optional<QFetch> parse_qfetch(std::string_view text) {
+    const auto trim = [](std::string_view s) {
+        while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\n' || s.front() == '\r')) s.remove_prefix(1);
+        while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\n' || s.back() == '\r' || s.back() == ';')) s.remove_suffix(1);
+        return s;
+    };
+    text = trim(text);
+    std::string_view rest;
+    if (text.substr(0, 6) == "QFETCH" && text.size() > 6) {
+        rest = trim(text.substr(6));
+    } else {
+        return std::nullopt;
+    }
+    if (rest.substr(0, 7) == "_GLOBAL") rest = trim(rest.substr(7));
+    if (rest.size() < 2 || rest.front() != '(' || rest.back() != ')') return std::nullopt;
+    rest = rest.substr(1, rest.size() - 2);
+
+    int depth = 0;
+    std::size_t comma = std::string_view::npos;
+    for (std::size_t i = 0; i < rest.size(); ++i) {
+        const char c = rest[i];
+        if (c == '(' || c == '[' || c == '{' || c == '<') ++depth;
+        else if (c == ')' || c == ']' || c == '}' || c == '>') --depth;
+        else if (c == ',' && depth == 0) comma = i;
+    }
+    if (comma == std::string_view::npos) return std::nullopt;
+
+    QFetch out;
+    out.type = std::string(trim(rest.substr(0, comma)));
+    out.name = std::string(trim(rest.substr(comma + 1)));
+    if (out.type.empty() || out.name.empty()) return std::nullopt;
+    return out;
+}
+
 }  // namespace mt::syntax

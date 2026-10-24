@@ -226,9 +226,11 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 
 ## Phase 5 — QTest in both directions
 
-- [ ] **5.1 QTest recogniser** — test class, slots inside/outside the class,
+- [x] **5.1 QTest recogniser** — test class, slots inside/outside the class,
   `QFETCH`, `addColumn`, `QCOMPARE`/`QVERIFY*`/`QTRY_*`, both exception macros
-  (reversed order), framework detection (§7.1). Tests.
+  (reversed order), framework detection (§7.1). Tests. (`gen-impl` accepts Qt
+  Test files from here on, since its backend does not depend on the framework;
+  the goldens and the compile-and-run round trip are 5.3. The details are §7.12.)
 - [ ] **5.2 QTest backend** — `backend/qtest_backend` + `qtest/test_file.inja`
   (§9.5–9.6): `.moc`, main, `--qt 5|6`, `QSignalSpy` for signals.
 - [ ] **5.3 QTest goldens and round trip** — both directions; expectations of

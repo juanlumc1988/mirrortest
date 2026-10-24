@@ -84,13 +84,6 @@ FileResult process_input(const Options& options, const Env& env, const core::Tem
 
     const std::optional<ir::Framework> framework = choose_framework(options, input, facts, diagnostics);
     if (!framework) return result;
-    if (*framework == ir::Framework::QTest) {
-        ir::SourceLoc where;
-        where.file = input;
-        diagnostics.error(core::code::unsupported, "QTest test files are not supported yet (see docs/plan.md, phase 5)", where);
-        return result;
-    }
-
     // Which includes exist (their declarations are the API the test uses) and
     // which are ours to write.
     core::IncludeSearch search;

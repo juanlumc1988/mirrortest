@@ -30,6 +30,7 @@
 #define MT_SYNTAX_EXTRACT_H
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -129,6 +130,22 @@ FunctionTraits read_function_traits(const Node& function_declarator, std::string
 // The parameters of a parameter_list. `(void)` is no parameters; a trailing
 // `...` is a parameter of type "..." with no name. Comments are skipped.
 std::vector<ir::Param> read_parameters(const Node& parameter_list, std::string_view file);
+
+// ---- QTest ---------------------------------------------------------------------------------
+
+struct QFetch {
+    std::string type;   // "std::map<int, int>"
+    std::string name;   // "items"
+};
+
+// `QFETCH(T, name)` and `QFETCH_GLOBAL(T, name)`, split at the last comma that
+// is outside any bracket: T may hold commas of its own (`std::map<int, int>`)
+// and the name never does. The grammar cannot be asked, because what it makes of
+// the macro depends on T -- a call when T is a name, an ERROR node when T is a
+// builtin type (`QFETCH(int, v)` is a function declarator to it, and
+// `QFETCH(unsigned long long, v)` the same). `text` may carry a trailing `;`.
+// Nothing for text that is not a QFETCH.
+std::optional<QFetch> parse_qfetch(std::string_view text);
 
 }  // namespace mt::syntax
 

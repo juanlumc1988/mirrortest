@@ -157,6 +157,10 @@ private:
             if (!n.is_error()) {
                 return true;
             }
+            // QFETCH(int, v) is no C++ to a parser, and the test frontend reads it by text.
+            if (syntax::parse_qfetch(n.text())) {
+                return false;
+            }
             if (reported < kMaxParseWarnings) {
                 ++reported;
                 diagnostics_.warning(core::code::parse,

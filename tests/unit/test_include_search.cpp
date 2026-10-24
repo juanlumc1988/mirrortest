@@ -40,6 +40,11 @@ TEST(IncludeSearchForeign, FrameworksQtAndTheStandardLibrary) {
     }
 }
 
+TEST(IncludeSearchForeign, TheMocFileOfAQtTestIsWrittenByTheBuildNotByUs) {
+    for (const char* p : {"tst_foo.moc", "acme/tst_foo.moc", "foo.moc"}) EXPECT_TRUE(core::is_foreign_include(p)) << p;
+    for (const char* p : {"mocha.h", "moc_helpers.h", "foo.moc.h"}) EXPECT_FALSE(core::is_foreign_include(p)) << p;
+}
+
 TEST(IncludeSearchForeign, ProjectHeadersAreNot) {
     for (const char* p : {"foo.h", "acme/foo.h", "acme/foo.hpp", "a/b/c.hh", "../x.h", "my_gtest_helpers.h", "qt_helpers.h", "Quark.h",
                           "QtUtils/helper.h", "gtest_extras/x.h"}) {

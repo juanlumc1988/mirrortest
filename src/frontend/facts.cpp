@@ -132,8 +132,11 @@ FrameworkEvidence detect_framework(const TestFileFacts& facts) {
     for (const TestCaseInfo& t : facts.tests) {
         if (t.kind == "TEST" || t.kind == "TEST_F" || t.kind == "TEST_P") {
             evidence.gtest = true;
+        } else if (t.kind == "SLOT") {
+            evidence.qtest = true;
         }
     }
+    if (facts.qtest_main) evidence.qtest = true;
     return evidence;
 }
 

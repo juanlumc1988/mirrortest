@@ -55,6 +55,8 @@ const char* const kBlankFunctions[] = {
 // Replaced by spaces.
 const char* const kBlankObjects[] = {
     "Q_NAMESPACE", "Q_REQUIRED_RESULT", "Q_DECL_DEPRECATED",
+    // `QBENCHMARK { ... }` is a loop the macro writes; without it the braces are a block.
+    "QBENCHMARK", "QBENCHMARK_ONCE",
 };
 
 // Replaced by the keyword they stand for. Every keyword is shorter than its

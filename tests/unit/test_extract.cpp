@@ -527,3 +527,55 @@ TEST(ExtractParams, ParameterPacksKeepTheirEllipsisInTheType) {
 TEST(ExtractParams, ANullListIsEmpty) {
     EXPECT_TRUE(read_parameters(Node(), "f.h").empty());
 }
+
+// ---- QFETCH ---------------------------------------------------------------------------------------------
+
+TEST(ExtractQFetch, TheTypeAndTheName) {
+    const auto fetch = parse_qfetch("QFETCH(int, start)");
+    ASSERT_TRUE(fetch.has_value());
+    EXPECT_EQ(fetch->type, "int");
+    EXPECT_EQ(fetch->name, "start");
+}
+
+TEST(ExtractQFetch, ACommaInsideTheTypeIsNotTheSeparator) {
+    const auto map = parse_qfetch("QFETCH(std::map<int, QString>, rows)");
+    ASSERT_TRUE(map.has_value());
+    EXPECT_EQ(map->type, "std::map<int, QString>");
+    EXPECT_EQ(map->name, "rows");
+    const auto fn = parse_qfetch("QFETCH(std::function<int(int, int)>, cb)");
+    ASSERT_TRUE(fn.has_value());
+    EXPECT_EQ(fn->type, "std::function<int(int, int)>");
+    EXPECT_EQ(fn->name, "cb");
+    const auto arr = parse_qfetch("QFETCH(std::array<int, 3>, a)");
+    ASSERT_TRUE(arr.has_value());
+    EXPECT_EQ(arr->type, "std::array<int, 3>");
+}
+
+TEST(ExtractQFetch, TypesWithSeveralWordsAndSpaces) {
+    const auto fetch = parse_qfetch("  QFETCH ( unsigned long long ,  big ) ;");
+    ASSERT_TRUE(fetch.has_value());
+    EXPECT_EQ(fetch->type, "unsigned long long");
+    EXPECT_EQ(fetch->name, "big");
+}
+
+TEST(ExtractQFetch, TheGlobalVariant) {
+    const auto fetch = parse_qfetch("QFETCH_GLOBAL(Foo, foo);");
+    ASSERT_TRUE(fetch.has_value());
+    EXPECT_EQ(fetch->type, "Foo");
+    EXPECT_EQ(fetch->name, "foo");
+}
+
+TEST(ExtractQFetch, ANewlineBetweenTheParts) {
+    const auto fetch = parse_qfetch("QFETCH(\n    QString,\n    label\n)");
+    ASSERT_TRUE(fetch.has_value());
+    EXPECT_EQ(fetch->type, "QString");
+    EXPECT_EQ(fetch->name, "label");
+}
+
+TEST(ExtractQFetch, NothingElseIsAFetch) {
+    for (const char* text : {"", "QFETCH", "QFETCH()", "QFETCH(int)", "QFETCH(, name)", "QFETCH(int, )", "QFETCHER(int, a)",
+                             "QFETCH_X(int, a)", "XQFETCH(int, a)", "QFETCH(int, a) + 1", "QFETCH int, a", "QFETCH(int, a",
+                             "foo(int, a)", "QTEST(int, a)"}) {
+        EXPECT_FALSE(parse_qfetch(text).has_value()) << text;
+    }
+}

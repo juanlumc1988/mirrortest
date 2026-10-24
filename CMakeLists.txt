@@ -122,6 +122,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_merge.cpp
         tests/unit/test_naming.cpp
         tests/unit/test_pipeline.cpp
+        tests/unit/test_qtest_frontend.cpp
         tests/unit/test_preprocess.cpp
         tests/unit/test_regions.cpp
         tests/unit/test_source.cpp

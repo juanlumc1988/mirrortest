@@ -46,6 +46,7 @@ bool same_file(const fs::path& a, const fs::path& b) {
 }  // namespace
 
 bool is_foreign_include(std::string_view path) {
+    if (path.size() > 4 && path.substr(path.size() - 4) == ".moc") return true;   // moc writes it at build time
     if (starts_with(path, "gtest/") || starts_with(path, "gmock/") || starts_with(path, "catch2/") || starts_with(path, "doctest/")) return true;
     const std::string_view first = path.substr(0, path.find('/'));
     if (is_qt_module(first)) return true;                                     // QtTest, QtCore/qglobal.h
