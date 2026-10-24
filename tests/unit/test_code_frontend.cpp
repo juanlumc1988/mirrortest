@@ -672,3 +672,249 @@ TEST(CodeFrontendErrors, IgnoredMacrosKeepAHeaderParseable) {
     EXPECT_TRUE(with.diagnostics.empty());
     EXPECT_EQ(method_names(the_class(with, "Widget")), std::vector<std::string>{"f"});
 }
+
+// ---- #if branches that disagree (6.5) ----------------------------------------------------------------------------------
+
+namespace {
+
+std::vector<core::Diagnostic> with_code(const Read& r, const char* code) {
+    std::vector<core::Diagnostic> out;
+    for (const core::Diagnostic& d : r.diagnostics.sorted()) {
+        if (d.code == code) out.push_back(d);
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(CodeFrontendConditionalNotes, TwoBranchesDeclaringTheSameNameAndArityDifferentlyAreNoted) {
+    const Read r = read(
+        "class A {\npublic:\n"
+        "#ifdef ARM\n"
+        "    void set(int v);\n"
+        "#else\n"
+        "    void set(double v);\n"
+        "#endif\n"
+        "};\n");
+    EXPECT_EQ(method_names(the_class(r, "A")), (std::vector<std::string>{"set", "set"})) << "both are kept";
+    const std::vector<core::Diagnostic> notes = with_code(r, "mt-conditional");
+    ASSERT_EQ(notes.size(), 1u);
+    EXPECT_EQ(notes[0].severity, core::Severity::Note);
+    EXPECT_EQ(notes[0].message,
+              "'A::set' is declared differently under the branches of an #if: 'void set(int)' and 'void set(double)'; both are kept");
+    EXPECT_EQ(notes[0].where.line, 6u);
+    ASSERT_EQ(notes[0].notes.size(), 1u);
+    EXPECT_EQ(notes[0].notes[0].where.line, 4u);
+}
+
+TEST(CodeFrontendConditionalNotes, TheSameSignatureWithAnotherReturnTypeKeepsTheFirst) {
+    const Read r = read(
+        "class A {\npublic:\n"
+        "#if X\n    int get();\n#else\n    long get();\n#endif\n"
+        "};\n");
+    const ir::Class& a = the_class(r, "A");
+    ASSERT_EQ(a.methods.size(), 1u);
+    EXPECT_EQ(a.methods[0].ret.spelling, "int");
+    const std::vector<core::Diagnostic> notes = with_code(r, "mt-conditional");
+    ASSERT_EQ(notes.size(), 1u);
+    EXPECT_NE(notes[0].message.find("the first is kept"), std::string::npos) << notes[0].message;
+}
+
+TEST(CodeFrontendConditionalNotes, TheSameDeclarationInBothBranchesIsNotWorthANote) {
+    const Read r = read("class A {\npublic:\n#ifdef X\n    int get();\n#else\n    int get();\n#endif\n};\n");
+    EXPECT_EQ(the_class(r, "A").methods.size(), 1u);
+    EXPECT_TRUE(with_code(r, "mt-conditional").empty());
+}
+
+TEST(CodeFrontendConditionalNotes, OverloadsAreOnlyAlternativesIfTheyAreInDifferentBranches) {
+    for (const char* body : {
+             // plain overloads
+             "    void set(int);\n    void set(double);\n",
+             // both in the same branch
+             "#ifdef X\n    void set(int);\n    void set(double);\n#endif\n",
+             // one conditional, one not
+             "#ifdef X\n    void set(int);\n#endif\n    void set(double);\n",
+             // two separate conditionals
+             "#ifdef X\n    void set(int);\n#endif\n#ifdef Y\n    void set(double);\n#endif\n",
+             // the else of one conditional is not the opposite of the if of another
+             "#ifdef X\n    void set(int);\n#endif\n#ifdef Y\n    void other();\n#else\n    void set(double);\n#endif\n"}) {
+        const Read r = read(std::string("class A {\npublic:\n") + body + "};\n");
+        EXPECT_TRUE(with_code(r, "mt-conditional").empty()) << body;
+    }
+}
+
+TEST(CodeFrontendConditionalNotes, DifferentNamesOrAritiesAreDifferentMembers) {
+    const Read r = read("class A {\npublic:\n#ifdef X\n    void set(int);\n#else\n    void set(int, int);\n    void put(int);\n#endif\n};\n");
+    EXPECT_TRUE(with_code(r, "mt-conditional").empty());
+}
+
+TEST(CodeFrontendConditionalNotes, AnElifChainComparesEveryPair) {
+    const Read r = read(
+        "class A {\npublic:\n"
+        "#if A\n    void f(int);\n#elif B\n    void f(long);\n#else\n    void f(char);\n#endif\n"
+        "};\n");
+    EXPECT_EQ(the_class(r, "A").methods.size(), 3u);
+    EXPECT_EQ(with_code(r, "mt-conditional").size(), 3u) << "if/elif, if/else and elif/else";
+}
+
+TEST(CodeFrontendConditionalNotes, TheClassMayBeDefinedInEachBranch) {
+    const Read r = read(
+        "#ifdef X\nclass A { public: void f(int); };\n#else\nclass A { public: void f(double); };\n#endif\n");
+    EXPECT_EQ(the_class(r, "A").methods.size(), 2u);
+    ASSERT_EQ(with_code(r, "mt-conditional").size(), 1u);
+    EXPECT_NE(with_code(r, "mt-conditional")[0].message.find("'A::f'"), std::string::npos);
+}
+
+TEST(CodeFrontendConditionalNotes, NamespacesAreInTheName) {
+    const Read r = read("namespace ns {\nclass A {\npublic:\n#ifdef X\n void f(int);\n#else\n void f(char);\n#endif\n};\n}\n");
+    ASSERT_EQ(with_code(r, "mt-conditional").size(), 1u);
+    EXPECT_NE(with_code(r, "mt-conditional")[0].message.find("'ns::A::f'"), std::string::npos);
+}
+
+TEST(CodeFrontendConditionalNotes, NestedConditionalsAreTheirOwnChains) {
+    const Read r = read(
+        "class A {\npublic:\n"
+        "#ifdef OUTER\n"
+        "#ifdef INNER\n    void f(int);\n#else\n    void f(char);\n#endif\n"
+        "#endif\n"
+        "};\n");
+    EXPECT_EQ(with_code(r, "mt-conditional").size(), 1u);
+}
+
+TEST(CodeFrontendConditionalNotes, ReadingTheSameHeaderTwiceAddsNoNotes) {
+    core::SourceFile file{"foo.h", "class A {\npublic:\n#ifdef X\n void f(int);\n#else\n void f(int);\n#endif\n};\n"};
+    ir::Model model;
+    core::Diagnostics diagnostics;
+    const syntax::Preprocessed pre = syntax::preprocess(file.text, {});
+    const syntax::Tree tree = syntax::parse_cpp(pre.text);
+    frontend::read_declarations(tree, pre.markers, "foo.h", "foo.h", model, diagnostics);
+    frontend::read_declarations(tree, pre.markers, "foo.h", "foo.h", model, diagnostics);
+    EXPECT_TRUE(diagnostics.empty());
+    EXPECT_EQ(model.classes.size(), 1u);
+}
+
+// ---- nested classes ---------------------------------------------------------------------------------------------------------
+
+TEST(CodeFrontendNested, ANestedClassIsReadLikeAnyOther) {
+    const Read r = read(
+        "namespace ns {\n"
+        "class Outer {\npublic:\n"
+        "    struct Item { int x; Item(); explicit Item(int v); void reset(); };\n"
+        "    Item make() const;\n"
+        "private:\n"
+        "    class Hidden { public: void f(); };\n"
+        "};\n}\n");
+    const ir::Class& outer = the_class(r, "Outer");
+    EXPECT_EQ(outer.nested_types, (std::vector<std::string>{"Item", "Hidden"}));
+    ASSERT_EQ(outer.nested_classes.size(), 2u);
+
+    const ir::Class& item = outer.nested_classes[0];
+    EXPECT_EQ(item.name, "Item");
+    EXPECT_EQ(item.ns, std::vector<std::string>{"ns"});
+    EXPECT_TRUE(item.is_struct);
+    EXPECT_EQ(item.nested_access, Access::Public);
+    EXPECT_EQ(item.methods.size(), 3u);
+    EXPECT_EQ(item.fields.size(), 1u);
+    EXPECT_EQ(item.methods[0].kind, MethodKind::Constructor);
+    EXPECT_TRUE(item.methods[1].is_explicit);
+
+    const ir::Class& hidden = outer.nested_classes[1];
+    EXPECT_EQ(hidden.name, "Hidden");
+    EXPECT_FALSE(hidden.is_struct);
+    EXPECT_EQ(hidden.nested_access, Access::Private);
+    EXPECT_EQ(method_names(hidden), std::vector<std::string>{"f"});
+
+    // The outer class itself is untouched by what is inside.
+    EXPECT_EQ(method_names(outer), std::vector<std::string>{"make"});
+}
+
+TEST(CodeFrontendNested, NestingGoesAsDeepAsTheCode) {
+    const Read r = read("class A { public: class B { public: class C { public: void deep(); }; }; };");
+    const ir::Class& a = the_class(r, "A");
+    ASSERT_EQ(a.nested_classes.size(), 1u);
+    ASSERT_EQ(a.nested_classes[0].nested_classes.size(), 1u);
+    EXPECT_EQ(method_names(a.nested_classes[0].nested_classes[0]), std::vector<std::string>{"deep"});
+    EXPECT_EQ(r.model.classes.size(), 1u) << "nested classes are not classes of the model";
+}
+
+TEST(CodeFrontendNested, UnionsEnumsAndAnonymousStructsAreNotNestedClasses) {
+    const Read r = read("class A { public: union U { int i; }; enum class E { X }; struct { int a; } anon; };");
+    EXPECT_TRUE(the_class(r, "A").nested_classes.empty());
+    EXPECT_EQ(the_class(r, "A").nested_types, (std::vector<std::string>{"U", "E"})) << "still types of the class, by name";
+}
+
+TEST(CodeFrontendNested, ANestedClassOfAnIfBranchIsReadOnce) {
+    const Read r = read("class A { public:\n#ifdef X\n struct N { void f(); };\n#else\n struct N { void f(); void g(); };\n#endif\n};");
+    const ir::Class& a = the_class(r, "A");
+    ASSERT_EQ(a.nested_classes.size(), 1u);
+    EXPECT_EQ(method_names(a.nested_classes[0]), (std::vector<std::string>{"f", "g"}));
+}
+
+TEST(CodeFrontendNested, MethodsOfANestedClassAreNotMethodsOfTheOuter) {
+    const Read r = read("class A { public: struct N { void inner(); }; void outer(); };");
+    EXPECT_EQ(method_names(the_class(r, "A")), std::vector<std::string>{"outer"});
+}
+
+TEST(CodeFrontendNested, AConstructorOfANestedClassIsAConstructor) {
+    const Read r = read("class A { public: struct N { N(int); ~N(); }; };");
+    const ir::Class& n = the_class(r, "A").nested_classes[0];
+    ASSERT_EQ(n.methods.size(), 2u);
+    EXPECT_EQ(n.methods[0].kind, MethodKind::Constructor);
+    EXPECT_EQ(n.methods[1].kind, MethodKind::Destructor);
+}
+
+// ---- what is not supported, said out loud (6.4) ------------------------------------------------------------------------
+
+TEST(CodeFrontendUnsupported, SpecialisationsAreSkippedWithAWarning) {
+    const Read r = read(
+        "template <typename T> class Box { public: void put(T); };\n"
+        "template <> class Box<int> { public: void put_int(int); };\n"
+        "template <typename T> class Box<T*> { public: void put_ptr(T*); };\n");
+    ASSERT_EQ(r.model.classes.size(), 1u) << "only the primary template";
+    EXPECT_EQ(method_names(r.model.classes[0]), std::vector<std::string>{"put"});
+    const std::vector<core::Diagnostic> w = with_code(r, "mt-unsupported");
+    ASSERT_EQ(w.size(), 2u);
+    EXPECT_EQ(w[0].message, "the specialisation 'Box<int>' is not supported and is skipped");
+    EXPECT_EQ(w[1].message, "the specialisation 'Box<T*>' is not supported and is skipped");
+    EXPECT_EQ(w[0].severity, core::Severity::Warning);
+    EXPECT_EQ(w[0].where.line, 2u);
+}
+
+TEST(CodeFrontendUnsupported, ConceptsAndRequiresClauses) {
+    const Read r = read(
+        "template <typename T> concept Small = sizeof(T) < 8;\n"
+        "template <typename T> requires Small<T> class R { public: void g(); };\n"
+        "template <typename T> class S { public: void h() requires Small<T>; void ok(); };\n");
+    const std::vector<core::Diagnostic> w = with_code(r, "mt-unsupported");
+    std::vector<std::string> messages;
+    for (const core::Diagnostic& d : w) messages.push_back(d.message);
+    EXPECT_EQ(messages, (std::vector<std::string>{"concept 'Small' is not supported and is skipped",
+                                                  "the requires-clause 'requires Small<T>' is ignored",
+                                                  "the requires-clause of 'h' is ignored"}));
+    // The classes are still read: a header that almost parses is far more useful than none.
+    EXPECT_EQ(method_names(the_class(r, "R")), std::vector<std::string>{"g"});
+    EXPECT_EQ(method_names(the_class(r, "S")), (std::vector<std::string>{"h", "ok"}));
+}
+
+TEST(CodeFrontendUnsupported, InheritedConstructorsAreWarnedAbout) {
+    const Read r = read("class D : public B { public: using B::B; using B::f; void g(); };");
+    const std::vector<core::Diagnostic> w = with_code(r, "mt-unsupported");
+    ASSERT_EQ(w.size(), 1u);
+    EXPECT_EQ(w[0].message, "'using B::B;' inherits constructors, which are not supported");
+}
+
+TEST(CodeFrontendUnsupported, OtherUsingDeclarationsAreNotConstructorInheritance) {
+    const Read r = read("class D : public ns::B { public: using ns::B::f; using std::swap; using Alias = int; };");
+    EXPECT_TRUE(with_code(r, "mt-unsupported").empty());
+}
+
+TEST(CodeFrontendUnsupported, QualifiedInheritedConstructors) {
+    const Read r = read("class D : public ns::B { public: using ns::B::B; };");
+    EXPECT_EQ(with_code(r, "mt-unsupported").size(), 1u);
+}
+
+TEST(CodeFrontendUnsupported, FunctionTemplatesStillWarn) {
+    const Read r = read("template <typename T> T twice(T x);\nint plain(int);\n");
+    EXPECT_EQ(with_code(r, "mt-unsupported").size(), 1u);
+    EXPECT_EQ(r.model.functions.size(), 1u);
+}

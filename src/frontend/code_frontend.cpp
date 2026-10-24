@@ -4,6 +4,7 @@
 #include "mirrortest/frontend/code_frontend.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <utility>
 
@@ -125,6 +126,26 @@ private:
         ir::Access  access;
         ir::QtRole  section = ir::QtRole::None;
         unsigned    previous_end = 0;
+        std::string key;          // the qualified name, for the notes about #if branches
+    };
+
+    // One branch of an #if the walk is inside of: the conditional (by where it
+    // starts) and the branch's number in it (if = 0, elif/else = 1, 2, ...).
+    struct Branch {
+        unsigned chain = 0;
+        unsigned index = 0;
+    };
+
+    // A method as seen in the walk, with the branches it was declared under, to
+    // notice two declarations that are alternatives of each other.
+    struct Declared {
+        std::string         name;
+        std::size_t         arity = 0;
+        std::string         signature;
+        std::string         shape;      // what else can differ: the return type, the flags
+        std::string         text;       // as a person says it
+        ir::SourceLoc       where;
+        std::vector<Branch> branches;
     };
 
     // ---- diagnostics ----------------------------------------------------------------
@@ -172,7 +193,10 @@ private:
                 declaration(body);
             }
         } else if (is_conditional(type)) {
-            declarations(node);   // every branch: the frontend cannot know which one builds
+            // Every branch: the frontend cannot know which one builds.
+            enter_branch(node);
+            declarations(node);
+            branches_.pop_back();
         } else if (type == "preproc_include") {
             include(node);
         } else if (is_class_like(type)) {
@@ -231,7 +255,16 @@ private:
         }
         for (const Node& child : node.named_children()) {
             const std::string_view type = child.type();
-            if (type == "class_specifier" || type == "struct_specifier") {
+            if (type == "concept_definition") {
+                unsupported("concept '" + std::string(child.child_by_field("name").text()) + "' is not supported and is skipped", child);
+            } else if (type == "requires_clause") {
+                unsupported("the requires-clause '" + std::string(child.text()) + "' is ignored", child);
+            } else if (type == "class_specifier" || type == "struct_specifier") {
+                const Node name = child.child_by_field("name");
+                if (!name.is_null() && name.type() == "template_type") {
+                    unsupported("the specialisation '" + std::string(name.text()) + "' is not supported and is skipped", name);
+                    continue;
+                }
                 class_definition(child, params);
             } else if (type == "declaration" || type == "function_definition") {
                 const Declarator d = syntax::parse_declarator(child.child_by_field("declarator"));
@@ -316,20 +349,45 @@ private:
         }
 
         ir::Class& cls = find_or_add_class(std::string(name.text()));
+        read_class(cls, spec, body, template_params, ir::qualified_name(ns_, cls.name));
+    }
+
+    // The body of a class, into `cls`: whether it is declared at namespace scope or inside another class.
+    void read_class(ir::Class& cls, const Node& spec, const Node& body, const std::optional<std::string>& template_params,
+                    const std::string& key) {
         const bool first_time = !cls.where.known();   // not yet read: no position recorded
         if (first_time) {
             cls.is_struct = spec.type() == "struct_specifier";
             cls.header = header_;
             cls.origin = ir::Origin::Declared;
-            cls.where = syntax::location(name, file_);
+            cls.where = syntax::location(spec.child_by_field("name"), file_);
             cls.template_params = template_params;
             read_bases(spec, cls);
         }
 
-        ClassState state{cls, cls.is_struct ? ir::Access::Public : ir::Access::Private};
-        state.previous_end = body.start_byte();
+        ClassState state{cls, cls.is_struct ? ir::Access::Public : ir::Access::Private, ir::QtRole::None, body.start_byte(), key};
         members(body, state);
         read_qt_class_markers(spec, body, cls);
+    }
+
+    // `struct Item { ... };` inside a class.
+    void nested_class(const Node& spec, ClassState& outer) {
+        const Node name = spec.child_by_field("name");
+        const Node body = spec.child_by_field("body");
+        if (name.is_null() || body.is_null() || spec.type() == "union_specifier") return;
+        const std::string simple(name.text());
+        ir::Class* nested = nullptr;
+        for (ir::Class& c : outer.cls.nested_classes) {
+            if (c.name == simple) nested = &c;
+        }
+        if (nested == nullptr) {
+            outer.cls.nested_classes.emplace_back();
+            nested = &outer.cls.nested_classes.back();
+            nested->name = simple;
+            nested->ns = outer.cls.ns;
+            nested->nested_access = outer.access;
+        }
+        read_class(*nested, spec, body, std::nullopt, outer.key + "::" + simple);
     }
 
     void read_bases(const Node& spec, ir::Class& cls) {
@@ -401,6 +459,85 @@ private:
         }
     }
 
+    void unsupported(const std::string& message, const Node& at) {
+        diagnostics_.warning(core::code::unsupported, message, syntax::location(at, file_));
+    }
+
+    // `using Base::Base;` makes Base's constructors the derived class's own.
+    void inherited_constructors(const Node& using_declaration) {
+        std::string text(using_declaration.text());
+        if (text.compare(0, 5, "using") != 0) return;
+        text.erase(0, 5);
+        while (!text.empty() && (text.back() == ';' || text.back() == ' ')) text.pop_back();
+        const std::size_t last = text.rfind("::");
+        if (last == std::string::npos) return;
+        const std::size_t before = text.rfind("::", last == 0 ? 0 : last - 1);
+        const std::string tail = text.substr(last + 2);
+        const std::string scope = text.substr(before == std::string::npos ? 0 : before + 2, last - (before == std::string::npos ? 0 : before + 2));
+        const auto trim = [](std::string s) {
+            while (!s.empty() && s.front() == ' ') s.erase(0, 1);
+            while (!s.empty() && s.back() == ' ') s.pop_back();
+            return s;
+        };
+        if (!trim(tail).empty() && trim(tail) == trim(scope)) {
+            unsupported("'using" + text + ";' inherits constructors, which are not supported", using_declaration);
+        }
+    }
+
+    // ---- conditional compilation -----------------------------------------------------------------
+
+    // `preproc_if` starts a conditional; its `preproc_elif` / `preproc_else` are its
+    // children and continue the one it is inside of with the next branch number.
+    void enter_branch(const Node& node) {
+        const std::string_view type = node.type();
+        const bool continues = type == "preproc_else" || type == "preproc_elif" || type == "preproc_elifdef";
+        Branch b;
+        if (continues && !branches_.empty()) {
+            b.chain = branches_.back().chain;
+            b.index = branches_.back().index + 1;
+        } else {
+            b.chain = node.start_byte();
+        }
+        branches_.push_back(b);
+    }
+
+    static bool alternatives(const std::vector<Branch>& a, const std::vector<Branch>& b) {
+        for (const Branch& x : a) {
+            for (const Branch& y : b) {
+                if (x.chain == y.chain && x.index != y.index) return true;
+            }
+        }
+        return false;
+    }
+
+    Declared describe(const ir::Method& m) const {
+        Declared d;
+        d.name = m.name;
+        d.arity = m.params.size();
+        d.signature = signature(m);
+        d.shape = m.ret.spelling + (m.is_static ? "|static" : "") + (m.is_virtual ? "|virtual" : "") + (m.is_noexcept ? "|noexcept" : "") +
+                  (m.is_explicit ? "|explicit" : "") + (m.is_deleted ? "|deleted" : "") + (m.is_pure ? "|pure" : "");
+        std::string params;
+        for (const ir::Param& p : m.params) params += (params.empty() ? "" : ", ") + p.type.spelling;
+        d.text = (m.ret.empty() ? std::string() : m.ret.spelling + " ") + m.name + "(" + params + ")" + (m.is_const ? " const" : "");
+        d.where = m.where;
+        d.branches = branches_;
+        return d;
+    }
+
+    // Two declarations of one member under the alternatives of one #if are not
+    // an error, but the user is the one who knows which applies: say so.
+    void note_conditional(const ClassState& state, const Declared& first, const Declared& second, bool both_kept) {
+        core::Diagnostic d;
+        d.severity = core::Severity::Note;
+        d.code = core::code::conditional;
+        d.where = second.where;
+        d.message = "'" + state.key + "::" + second.name + "' is declared differently under the branches of an #if: '" + first.text +
+                    "' and '" + second.text + "'; " + (both_kept ? "both are kept" : "the first is kept");
+        d.notes.push_back({first.where, "the other declaration"});
+        diagnostics_.add(std::move(d));
+    }
+
     // ---- members --------------------------------------------------------------------------------
 
     void members(const Node& body, ClassState& state) {
@@ -413,8 +550,12 @@ private:
                 state.access = to_access(child.text());
                 state.section = section_role(child.start_byte());
             } else if (is_conditional(type)) {
+                enter_branch(child);
                 members(child, state);
+                branches_.pop_back();
                 continue;
+            } else if (type == "using_declaration") {
+                inherited_constructors(child);
             } else if (type == "field_declaration" || type == "declaration" || type == "function_definition") {
                 member(child, state, false);
             } else if (type == "template_declaration") {
@@ -456,6 +597,7 @@ private:
             const Node type = node.child_by_field("type");
             if (!type.is_null() && (is_class_like(type.type()) || type.type() == "enum_specifier")) {
                 add_nested(state.cls, std::string(type.child_by_field("name").text()));
+                if (is_class_like(type.type())) nested_class(type, state);
             }
             return;
         }
@@ -485,10 +627,20 @@ private:
     }
 
     void add_method(ClassState& state, ir::Method m) {
-        const std::string sig = signature(m);
-        for (const ir::Method& existing : state.cls.methods) {
-            if (signature(existing) == sig) return;
+        const Declared now = describe(m);
+        std::vector<Declared>& seen = declared_[state.key];
+        for (const Declared& before : seen) {
+            if (before.name != now.name || before.arity != now.arity || !alternatives(before.branches, now.branches)) continue;
+            if (before.signature != now.signature) {
+                note_conditional(state, before, now, true);
+            } else if (before.shape != now.shape) {
+                note_conditional(state, before, now, false);
+            }
         }
+        for (const ir::Method& existing : state.cls.methods) {
+            if (signature(existing) == now.signature) return;
+        }
+        seen.push_back(now);
         state.cls.methods.push_back(std::move(m));
     }
 
@@ -532,6 +684,9 @@ private:
         apply_declaration_flags(node, spec, traits, m);
         m.origin = ir::Origin::Declared;
         m.where = syntax::location(d.name_node, file_);
+        if (has_child_of_type(d.function, "requires_clause")) {
+            unsupported("the requires-clause of '" + m.name + "' is ignored", d.function);
+        }
         add_method(state, std::move(m));
     }
 
@@ -579,6 +734,8 @@ private:
     ir::Model&                       model_;
     core::Diagnostics&               diagnostics_;
     std::vector<std::string>         ns_;
+    std::vector<Branch>                          branches_;   // the #if branches the walk is inside of
+    std::map<std::string, std::vector<Declared>> declared_;   // per class, what has been declared so far
 };
 
 }  // namespace

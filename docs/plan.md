@@ -199,7 +199,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 
 ## Phase 4 — gen-tests with GoogleTest
 
-- [ ] **4.1 Code frontend, what remains** — Qt roles, `is_qobject` and the
+- [x] **4.1 Code frontend, what remains** — Qt roles, `is_qobject` and the
   merging of `#if` branches have been in since 2.2. Missing: `mt-conditional`
   when two branches declare the same (name, arity) with different signatures
   (§6.5), complete nested classes, and the `mt-unsupported` cases of §6.4

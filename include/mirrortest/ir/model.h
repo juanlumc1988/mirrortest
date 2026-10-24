@@ -150,6 +150,13 @@ struct Class {
     // of the class they must be written Foo::Item; the backends qualify any
     // signature that mentions one.
     std::vector<std::string> nested_types;
+    // The classes and structs declared inside this one, read like any other.
+    // They are not Classes of the Model -- Foo::Item is reached through Foo --
+    // but a planner that wants to know whether an Item can be default
+    // constructed has somewhere to look.
+    std::vector<Class>       nested_classes;
+    // For a nested class: the access it was declared under in its outer class.
+    Access                   nested_access = Access::Public;
     // "typename T, int N" for a class template; templates are only expanded
     // for instantiations listed in the configuration.
     std::optional<std::string> template_params;
