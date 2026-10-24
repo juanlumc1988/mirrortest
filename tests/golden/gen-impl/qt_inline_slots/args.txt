@@ -1,0 +1,4 @@
+gen-impl
+${IN}/tst_stack.cpp
+--out
+${OUT}

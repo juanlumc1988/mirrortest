@@ -233,8 +233,10 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   the goldens and the compile-and-run round trip are 5.3. The details are §7.12.)
 - [x] **5.2 QTest backend** — `backend/qtest_backend` + `qtest/test_file.inja`
   (§9.5–9.6): `.moc`, main, `--qt 5|6`, `QSignalSpy` for signals.
-- [ ] **5.3 QTest goldens and round trip** — both directions; expectations of
+- [x] **5.3 QTest goldens and round trip** — both directions; expectations of
   §16.3 (R26). CI: a job with `qt6-base-dev`; a second job with `qtbase5-dev`.
+  (The goldens: 6 for gen-impl, 9 for gen-tests; 13 of them run, against Qt 6.4.2.
+  The Qt 5 job is written but has not run: the authoring environment has Qt 6 only.)
 
 ## Phase 6 — Fixtures, parameterised tests, mocks
 

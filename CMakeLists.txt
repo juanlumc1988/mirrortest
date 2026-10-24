@@ -244,6 +244,80 @@ if(MT_BUILD_TESTS)
         endforeach()
     endif()
 
+    # Qt Test round trips (docs/design.md 16.3), in both directions, when Qt's Test
+    # module is installed: Qt 6 is looked for first, then Qt 5. They need moc, so
+    # they are driven the same way as the others -- compiler command lines, moc
+    # run by the script -- with Qt's include directories, libraries and moc taken
+    # from its imported targets. Without Qt one test says so and is reported as
+    # skipped rather than the cases silently not existing.
+    set(MT_QT "")
+    find_package(Qt6 QUIET COMPONENTS Test)
+    if(TARGET Qt6::Test)
+        set(MT_QT Qt6)
+    else()
+        find_package(Qt5 QUIET COMPONENTS Test)
+        if(TARGET Qt5::Test)
+            set(MT_QT Qt5)
+        endif()
+    endif()
+    if(MT_QT AND NOT MSVC)
+        message(STATUS "Qt Test round trips: ${MT_QT} ${${MT_QT}_VERSION}")
+        set(mt_qt_args
+            "-DMT_QT_INCLUDE=$<TARGET_PROPERTY:${MT_QT}::Test,INTERFACE_INCLUDE_DIRECTORIES>$<SEMICOLON>$<TARGET_PROPERTY:${MT_QT}::Core,INTERFACE_INCLUDE_DIRECTORIES>"
+            "-DMT_QT_LIBS=$<TARGET_FILE:${MT_QT}::Test>$<SEMICOLON>$<TARGET_FILE:${MT_QT}::Core>"
+            -DMT_MOC=$<TARGET_FILE:${MT_QT}::moc>
+            -DMT_BIN=$<TARGET_FILE:mirrortest>
+            -DMT_CXX=${CMAKE_CXX_COMPILER}
+            "-DMT_CXX_FLAGS=${CMAKE_CXX_FLAGS}")
+
+        # gen-tests: the golden cases that have an example implementation in tests/roundtrip/qt/.
+        file(GLOB mt_qt_impls RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/qt"
+             "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/qt/*.cpp")
+        list(SORT mt_qt_impls)
+        foreach(impl IN LISTS mt_qt_impls)
+            string(REGEX REPLACE "\\.cpp$" "" case "${impl}")
+            set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-tests/${case}")
+            file(READ "${case_dir}/args.txt" case_args)
+            set(expect fail)
+            if(case_args MATCHES "\n--placeholder\nskip\n")
+                set(expect skip)
+            endif()
+            set(prelude "")
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/qt/${case}.prelude.h")
+                set(prelude "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/qt/${case}.prelude.h")
+            endif()
+            add_test(NAME roundtrip.qt.gen_tests.${case}
+                COMMAND "${CMAKE_COMMAND}" ${mt_qt_args}
+                    -DMT_DIRECTION=gen-tests
+                    -DMT_CASE_DIR=${case_dir}
+                    -DMT_IMPL=${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/qt/${impl}
+                    "-DMT_PRELUDE=${prelude}"
+                    -DMT_EXPECT=${expect}
+                    -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/roundtrip/qt/gen-tests/${case}
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/run_qt_case.cmake")
+            set_tests_properties(roundtrip.qt.gen_tests.${case} PROPERTIES TIMEOUT 300)
+        endforeach()
+
+        # gen-impl: the golden cases whose test runs. qt_exceptions_new needs the macros of Qt 6.3.
+        set(mt_qt_impl_cases qt_basic qt_inline_slots qt_exceptions)
+        if(MT_QT STREQUAL "Qt6" AND Qt6_VERSION VERSION_GREATER_EQUAL 6.3)
+            list(APPEND mt_qt_impl_cases qt_exceptions_new)
+        endif()
+        foreach(case IN LISTS mt_qt_impl_cases)
+            add_test(NAME roundtrip.qt.gen_impl.${case}
+                COMMAND "${CMAKE_COMMAND}" ${mt_qt_args}
+                    -DMT_DIRECTION=gen-impl
+                    -DMT_CASE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl/${case}
+                    -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/roundtrip/qt/gen-impl/${case}
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/run_qt_case.cmake")
+            set_tests_properties(roundtrip.qt.gen_impl.${case} PROPERTIES TIMEOUT 300)
+        endforeach()
+    elseif(NOT MSVC)
+        message(STATUS "Qt Test round trips: skipped, no Qt 6 or Qt 5 Test module found")
+        add_test(NAME roundtrip.qt COMMAND "${CMAKE_COMMAND}" -E echo "MT_SKIPPED: the Qt Test round trips need Qt 6 or Qt 5 with the Test module")
+        set_tests_properties(roundtrip.qt PROPERTIES SKIP_REGULAR_EXPRESSION "MT_SKIPPED")
+    endif()
+
     # The merge round trip: first run, implement a method, grow the test, merge;
     # the work survives and passes, the new stubs are red.
     if(NOT MSVC)
@@ -280,7 +354,23 @@ if(MT_BUILD_TESTS)
         if(EXISTS "${case_dir}/exit_code.txt" OR NOT case_sources)
             continue()
         endif()
+        # A case whose headers include a Qt class needs Qt to be checked at all, and Qt is a host
+        # library: it is checked where Qt is installed, never with the cross compiler.
+        set(case_qt FALSE)
+        file(GLOB_RECURSE case_headers "${case_dir}/expected/*.h")
+        foreach(header IN LISTS case_headers)
+            file(READ "${header}" header_text)
+            if(header_text MATCHES "#include <Q")
+                set(case_qt TRUE)
+            endif()
+        endforeach()
+        if(case_qt AND NOT MT_QT)
+            continue()
+        endif()
         foreach(kind host arm)
+            if(case_qt AND kind STREQUAL "arm")
+                continue()
+            endif()
             if(kind STREQUAL "host")
                 set(compiler "${CMAKE_CXX_COMPILER}")
             else()
@@ -293,6 +383,7 @@ if(MT_BUILD_TESTS)
                         -DMT_CASE_DIR=${case_dir}
                         -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/stubs-${kind}/${case}
                         -DMT_CXX=${compiler}
+                        "$<$<BOOL:${case_qt}>:-DMT_QT_INCLUDE=$<TARGET_PROPERTY:${MT_QT}::Test,INTERFACE_INCLUDE_DIRECTORIES>$<SEMICOLON>$<TARGET_PROPERTY:${MT_QT}::Core,INTERFACE_INCLUDE_DIRECTORIES>>"
                         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/syntax_case.cmake")
                 set_tests_properties(stubs.${kind}.${case} PROPERTIES TIMEOUT 120)
             endif()

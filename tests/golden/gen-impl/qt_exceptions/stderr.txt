@@ -1,0 +1,3 @@
+in/tst_parser.cpp:13:37: warning: the result of 'Parser::parse' is never used, so the method is assumed to return void [mt-unused-result]
+created out/parser.h
+created out/parser.cpp

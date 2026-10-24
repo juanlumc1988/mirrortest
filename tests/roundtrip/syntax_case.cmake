@@ -14,6 +14,10 @@
 #
 # Each source includes its own header first, so a header that is not
 # self-contained fails here too.
+#
+# Stubs that mention Qt (a QString in a signature) need Qt's headers, which are
+# C++17: with -DMT_QT_INCLUDE=<list> the stubs are compiled as C++17 with -fPIC
+# and Qt's include directories, and nothing else changes.
 
 cmake_minimum_required(VERSION 3.20)
 
@@ -31,6 +35,12 @@ file(MAKE_DIRECTORY "${gen}")
 file(STRINGS "${MT_CASE_DIR}/args.txt" raw_args)
 set(args "")
 set(flags -std=c++11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only)
+if(DEFINED MT_QT_INCLUDE AND NOT "${MT_QT_INCLUDE}" STREQUAL "")
+    set(flags -std=c++17 -fPIC -Wall -Wextra -Wpedantic -Werror -fsyntax-only)
+    foreach(dir IN LISTS MT_QT_INCLUDE)
+        list(APPEND flags "-I${dir}")
+    endforeach()
+endif()
 foreach(arg IN LISTS raw_args)
     string(REPLACE "\${IN}" "${input}" arg "${arg}")
     string(REPLACE "\${OUT}" "${gen}" arg "${arg}")

@@ -1,0 +1,6 @@
+gen-tests
+${IN}/slider.h
+--out
+${OUT}
+--framework
+qtest

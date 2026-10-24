@@ -1,0 +1,1 @@
+--qt-main appless: QTEST_APPLESS_MAIN, for tests that need no application object.

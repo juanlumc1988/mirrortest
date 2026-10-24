@@ -1,0 +1,1 @@
+--qt-main gui: QTEST_MAIN, for tests that need a QApplication.

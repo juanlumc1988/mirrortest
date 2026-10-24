@@ -1752,13 +1752,31 @@ Implemented in `core/templates.h` (`TemplateStore`) and
      there), and the cases that write nothing. The implementations matter even
      though a compiler drops the code after `FAIL()`'s `return`: they are what
      makes the declarations in the headers, and so the calls, real.
-   - QTest (if `find_package(Qt6|Qt5 COMPONENTS Test)` finds it; otherwise the
-     CTest test is marked *skipped* with `SKIP_RETURN_CODE`): gen-tests → no
-     `PASS   : TestX::<slot>()` line for a generated slot and the number of
-     `FAIL!`/`SKIP` lines = the number of slots (`Totals:` also counts
-     `initTestCase`/`cleanupTestCase` as *passed*, so it cannot be used as it
-     is); gen-impl → exit ≠ 0, at least one `FAIL!` and **no** `PASS` for a test
-     slot (R26: after the first exception QTest aborts).
+   - QTest (`tests/roundtrip/run_qt_case.cmake`, CTest names
+     `roundtrip.qt.gen_tests.<case>` and `roundtrip.qt.gen_impl.<case>`; if
+     `find_package(Qt6|Qt5 COMPONENTS Test)` finds nothing, one test
+     `roundtrip.qt` is reported as *skipped* with `SKIP_REGULAR_EXPRESSION`; the CI
+     jobs for Qt 6 and Qt 5 run the group with `--no-tests=error`, so a job that
+     lost its Qt fails instead of checking nothing). Qt needs moc, which the script
+     runs on the Q_OBJECT headers of the case and on the test file, writing the
+     `.moc` where the test's own `#include` finds it. Each generated test file is
+     its own program; everything is compiled as C++17 with `-fPIC` (Qt 6's
+     requirement), the test files with `-Wall -Wextra -Werror`.
+     - gen-tests → every slot (`-functions` lists them) has a `FAIL!  : …::slot()`
+       line and no `PASS   : …::slot()` one, and the program fails; with
+       `--placeholder skip`, a `SKIP   :` line each and exit 0. (`Totals:` also
+       counts `initTestCase`/`cleanupTestCase` as *passed*, so it cannot be used as
+       it is.) The case `qt_special_names` is the proof that a method called
+       `init` must not become a slot of that name: without the renaming the
+       program's own `initTestCase` fails.
+     - gen-impl → R26: after the first exception QTest ends the program, so each
+       slot is **run alone** and must fail, with no `PASS` line for it, and the
+       whole program must fail. `qt_fetch_types` has no round trip (a data
+       function without rows runs no slot) and `qt_exceptions_new` needs Qt 6.3;
+       the test of `qt_exceptions` uses a macro that Qt 6.3 deprecates, which is
+       allowed to warn.
+     - Not covered: `QTEST_MAIN` (it needs QtWidgets), hence no round trip for
+       `qt_gui_main`.
    - **ARM**: if `MT_ARM_CXX` is defined (CI installs
      `g++-arm-linux-gnueabihf`), the same syntax checks run with the cross
      compiler (`stubs.arm.<case>`): the generated stubs with

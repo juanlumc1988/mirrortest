@@ -1,0 +1,6 @@
+gen-tests
+${IN}/gate.h
+--out
+${OUT}
+--framework
+qtest

@@ -72,6 +72,39 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
         run: ctest --test-dir build-san --output-on-failure
 
+  qt:
+    name: qt ${{ matrix.qt }} round trips
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - qt: 6
+            packages: qt6-base-dev
+          - qt: 5
+            packages: qtbase5-dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools and Qt ${{ matrix.qt }}
+        run: sudo apt-get update && sudo apt-get install -y ninja-build ${{ matrix.packages }}
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DMT_WERROR=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      # Both directions: gen-tests skeletons compiled against the real API and red
+      # (or skipped), gen-impl stubs that make a Qt test compile and fail. A job
+      # that finds no Qt registers no such test, and --no-tests=error turns that
+      # into a failure instead of a green run that checked nothing.
+      - name: Qt Test round trips
+        run: ctest --test-dir build -R '^roundtrip\.qt\.' --no-tests=error --output-on-failure
+
   arm:
     name: arm stubs (cross syntax check)
     runs-on: ubuntu-latest

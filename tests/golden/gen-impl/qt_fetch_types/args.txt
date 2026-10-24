@@ -1,0 +1,4 @@
+gen-impl
+${IN}/tst_shelf.cpp
+--out
+${OUT}
