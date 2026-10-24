@@ -831,21 +831,6 @@ private:
         return cls;
     }
 
-    // "'MockSensor', 'FakeSensor'": the doubles that stand for the class.
-    std::string doubles_of(const std::string& name) const {
-        std::string out;
-        for (const auto& entry : c_.doubles) {
-            const std::string& base = entry.second;
-            const std::size_t sep = base.rfind("::");
-            const std::size_t open = base.find('<');
-            const std::size_t from = sep == std::string::npos || (open != std::string::npos && sep > open) ? 0 : sep + 2;
-            if (base.substr(from, open == std::string::npos ? std::string::npos : open - from) == name) {
-                out += (out.empty() ? "'" : ", '") + entry.first + "'";
-            }
-        }
-        return out;
-    }
-
     // A class the test's doubles derive from is an interface: the functions they override, pure
     // virtual and as they declare them (a call of the same name and arity made through the
     // interface says less, and gives way), and a virtual destructor, which a class that is
@@ -876,7 +861,9 @@ private:
         destructor.is_defaulted = true;
         destructor.origin = ir::Origin::Inferred;
         destructor.where = target.first_use;
-        destructor.notes.push_back("virtual because the test derives " + doubles_of(target.name) + " from it");
+        std::string derived;
+        for (const std::string& name : target.doubles) derived += (derived.empty() ? "'" : ", '") + name + "'";
+        destructor.notes.push_back("virtual because the test derives " + derived + " from it");
         cls.methods.insert(cls.methods.begin(), std::move(destructor));
     }
 

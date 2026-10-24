@@ -68,6 +68,7 @@ struct ClassTarget {
     // pure unless the test builds the class itself); one per signature, whichever
     // double said it first.
     std::vector<ir::Method>  interface_methods;
+    std::vector<std::string> doubles;          // the names of those doubles, in the order the file defines them
 
     std::string qualified() const;             // "acme::Foo"
 };

@@ -677,6 +677,7 @@ private:
             if (is_external_type(stands_for)) continue;   // somebody else's class: not ours to declare
             const std::size_t ci = find_class(stands_for.name, stands_for.scope, !stands_for.scope.empty());
             if (ci == kNone) continue;
+            classes_[ci].doubles.push_back(c.name);
             std::vector<ir::Method>& interface = classes_[ci].interface_methods;
             for (const ir::Method& m : c.methods) {
                 if (!is_overrider(m)) continue;

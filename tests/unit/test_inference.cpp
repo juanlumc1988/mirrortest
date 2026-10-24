@@ -885,7 +885,16 @@ TEST(InferenceDoubles, TheVirtualDestructorSaysWhy) {
     EXPECT_TRUE(destructor.is_virtual);
     EXPECT_TRUE(destructor.is_defaulted);
     EXPECT_EQ(destructor.origin, ir::Origin::Inferred);
-    EXPECT_TRUE(has_note(destructor.notes, "'FakeSensor'"));
+    ASSERT_EQ(destructor.notes.size(), 1u);
+    EXPECT_EQ(destructor.notes[0], "virtual because the test derives 'FakeSensor' from it");
+}
+
+TEST(InferenceDoubles, TheNoteNamesEveryDouble) {
+    const Outcome o = infer_text(
+        "class FakeSensor : public Sensor { public: int read() override { return 1; } };\n"
+        "class MockSensor : public Sensor { public: MOCK_METHOD(int, read, (), (override)); };\n");
+    EXPECT_EQ(the_class(o, "Sensor").methods.front().notes,
+              std::vector<std::string>{"virtual because the test derives 'FakeSensor', 'MockSensor' from it"});
 }
 
 TEST(InferenceDoubles, TheDeclaredSignatureIsKeptAsDeclared) {
@@ -1069,6 +1078,29 @@ TEST(InferenceDoubles, TheReturnTypeOfAFunctionThatGivesBackADoubleIsTheInterfac
         std::string(kFakeSensor) +
         "TEST(S, N) { FakeSensor f; Controller c(&f); EXPECT_EQ(c.sensor(), &f); }\n");
     EXPECT_EQ(method(o, "Controller", "sensor").ret.spelling, "Sensor*");
+}
+
+TEST(InferenceDoubles, AnyPrefixOfAFileWithDoublesIsRead) {
+    // Cut anywhere, a file with mocks, wrappers and a fixture is read without incident: the macros
+    // are expanded by text, which a cut leaves half written.
+    const std::string text =
+        "#include <gmock/gmock.h>\n"
+        "using ::testing::NiceMock;\n"
+        "namespace {\n"
+        "class MockSensor : public Sensor {\n"
+        "public:\n"
+        "    MOCK_METHOD(int, read, (), (override));\n"
+        "    MOCK_METHOD(void,\n        put,\n        ((std::map<int, int>), int),\n        (const, override));\n"
+        "    MOCK_CONST_METHOD1(at, const int&(int));\n"
+        "};\n"
+        "}  // namespace\n"
+        "class F : public ::testing::Test { protected: NiceMock<MockSensor> s; Controller c{&s}; };\n"
+        "TEST_F(F, N) { EXPECT_EQ(c.value(), 42); }\n";
+    for (std::size_t n = 0; n <= text.size(); ++n) {
+        const Outcome o = infer_text(text.substr(0, n));
+        EXPECT_LE(o.model.classes.size(), 2u) << "cut at " << n;
+    }
+    EXPECT_EQ(infer_text(text).model.classes.size(), 2u);
 }
 
 TEST(InferenceDoubles, AnInterfaceWithoutOverridesIsStillGenerated) {

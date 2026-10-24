@@ -673,6 +673,15 @@ TEST(ClassifyDoubles, TheMacrosOfAMockSayTheSame) {
               (std::vector<std::string>{"int read()", "void set(double, const std::string&) const", "void write(int)", "bool ok() const"}));
 }
 
+TEST(ClassifyDoubles, TheClassKnowsItsDoubles) {
+    const Outcome r = classify(
+        "class FakeSensor : public Sensor {};\n"
+        "class Other : public Logger {};\n"
+        "class MockSensor : public Sensor {};\n");
+    EXPECT_EQ(the_class(r, "Sensor").doubles, (std::vector<std::string>{"FakeSensor", "MockSensor"}));
+    EXPECT_EQ(the_class(r, "Logger").doubles, (std::vector<std::string>{"Other"}));
+}
+
 TEST(ClassifyDoubles, TwoDoublesOfOneClassAreOneInterface) {
     const Outcome r = classify(
         "class Fake : public Sensor { public: int read() override { return 1; } void a() override {} };\n"
