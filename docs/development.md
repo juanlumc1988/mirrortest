@@ -51,6 +51,7 @@ before committing.
 | `<Suite>.<Test>` | unit tests of every module (`tests/unit/`), C++ fragments as strings |
 | `golden.*` | the real command line against the files in `tests/golden/` (output, stderr, exit code, determinism) |
 | `roundtrip.<case>` | generates from the test of a golden case, compiles the stubs as strict C++11 and the test as C++14, links, runs, requires every test red, and requires a second run to change nothing (`tests/roundtrip/run_case.cmake`) |
+| `roundtrip.merge` | the TDD session: generate, implement a method, grow the test, `--overwrite merge`; the work survives and passes, the new stubs are red (`tests/roundtrip/run_merge.cmake`) |
 | `stubs.host.<case>` | the stubs of *every* gen-impl golden compile with `-fsyntax-only` as strict C++11 (`tests/roundtrip/syntax_case.cmake`) |
 | `stubs.arm.<case>` | the same with a cross compiler, if `-DMT_ARM_CXX=arm-linux-gnueabihf-g++` is given (CI does) |
 

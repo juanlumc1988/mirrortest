@@ -1,0 +1,3 @@
+out/foo.h:13:9: warning: 'int size() const' is declared here but the tests imply 'unsigned int size()'; left as it is [mt-merge-mismatch]
+merged 2 members into out/foo.h
+merged 2 members into out/foo.cpp

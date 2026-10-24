@@ -8,10 +8,10 @@ classes. The command it builds is `mirrortest`.
 
 **Status: `gen-impl` works for GoogleTest; `gen-tests` and QTest are next.**
 `gen-impl` is complete end to end — parsing, inference, headers and stubs,
-`.new` files, `--dry-run`/`--check` — and verified by unit tests, golden files,
-compile-and-run round trips and a syntax check of every generated stub as strict
-C++11. `gen-tests`, QTest and `--overwrite=merge` are designed and not written
-yet; see [docs/plan.md](docs/plan.md) for what is done and what comes next. The
+`.new` files, merging into earlier output, `--dry-run`/`--check` — and verified
+by unit tests, golden files, compile-and-run round trips and a syntax check of
+every generated stub as strict C++11. `gen-tests` and QTest are designed and not
+written yet; see [docs/plan.md](docs/plan.md) for what is done and what comes next. The
 `gen-tests` lines under [Usage](#usage) describe the target behaviour.
 
 ## What it does
@@ -84,7 +84,7 @@ the API under test, literal suffixes where the type matters, optional
 | `--stub-policy throw\|abort\|default` | what the stubs do (default `throw`); `--no-exceptions` makes `throw` behave as `abort` |
 | `--auto-policy error\|todo` | what to do when a type cannot be inferred (default: an error, nothing written) |
 | `--std c++11\|...\|c++23` | the standard the generated code must be valid in (default `c++17`) |
-| `--overwrite never\|force` | a differing file gets a `.new` beside it (default) or is replaced |
+| `--overwrite never\|merge\|force` | a differing file gets a `.new` beside it (default), gets the missing members inserted into its regions, or is replaced |
 | `--dry-run`, `--check` | show diffs without writing; exit 4 if anything would change |
 | `--config FILE.json`, `--templates DIR` | house style: [docs/conventions.md](docs/conventions.md#configuration), [docs/templates.md](docs/templates.md) |
 | `--strict`, `--quiet`, `--verbose` | warnings as errors; fewer lines; more lines |

@@ -273,6 +273,110 @@ TEST(GenImpl, AnIncludeNobodyUsesIsStillWrittenSoTheTestCompiles) {
     EXPECT_FALSE(exists(dir, "src/constants.cpp"));
 }
 
+// ---- --overwrite merge -----------------------------------------------------------------------------------------
+
+const char* kFooTestMore =
+    "#include <gtest/gtest.h>\n"
+    "#include \"acme/foo.h\"\n"
+    "\n"
+    "TEST(FooTest, StartsWithThreeItems) {\n"
+    "    const acme::Foo foo(3);\n"
+    "    EXPECT_EQ(foo.size(), 3u);\n"
+    "    EXPECT_FALSE(foo.empty());\n"
+    "    EXPECT_EQ(foo.name(), std::string(\"x\"));\n"
+    "}\n";
+
+TEST(GenImplMerge, AddsTheNewMembersToTheFilesOfAnEarlierRun) {
+    const TempDir dir;
+    write_foo_test(dir);
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src"}).code, 0);
+    write_file(dir.path() / "tests/foo_test.cpp", kFooTestMore);
+
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--overwrite", "merge"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "merged 1 member into src/acme/foo.h\nmerged 1 member into src/acme/foo.cpp\n");
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.h"), "    std::string name() const;\n"));
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.h"), "#include <string>\n"));
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.cpp"), "std::string Foo::name() const {"));
+    EXPECT_FALSE(exists(dir, "src/acme/foo.h.new"));
+
+    // And the next run has nothing to add.
+    const Outcome again = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--overwrite", "merge"});
+    EXPECT_EQ(again.code, 0);
+    EXPECT_EQ(again.err, "unchanged src/acme/foo.h\nunchanged src/acme/foo.cpp\n");
+}
+
+TEST(GenImplMerge, WhatTheUserWroteIsKept) {
+    const TempDir dir;
+    write_foo_test(dir);
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src"}).code, 0);
+
+    // The user implements size() and adds a member of their own.
+    std::string source = read(dir, "src/acme/foo.cpp");
+    const std::string stub = "    throw std::logic_error(\"mirrortest: not implemented: acme::Foo::size() const\");";
+    ASSERT_TRUE(contains(source, stub));
+    source.replace(source.find(stub), stub.size(), "    return 3;");
+    write_file(dir.path() / "src/acme/foo.cpp", source);
+    std::string header = read(dir, "src/acme/foo.h");
+    header.insert(header.find("    // <mt:end acme::Foo>"), "    int mine() const;\n");
+    write_file(dir.path() / "src/acme/foo.h", header);
+
+    write_file(dir.path() / "tests/foo_test.cpp", kFooTestMore);
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--overwrite", "merge"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.cpp"), "    return 3;\n"));
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.h"), "    int mine() const;\n"));
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.h"), "    std::string name() const;\n"));
+}
+
+TEST(GenImplMerge, AClassWithoutARegionGetsADotNewAndAWarning) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "src/acme/foo.h", "namespace acme { class Foo { public: explicit Foo(int); }; }\n");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--overwrite", "merge"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(r.err, "[mt-merge-no-region]")) << r.err;
+    EXPECT_TRUE(contains(r.err, "wrote src/acme/foo.h.new")) << r.err;
+    EXPECT_EQ(read(dir, "src/acme/foo.h"), "namespace acme { class Foo { public: explicit Foo(int); }; }\n");
+}
+
+TEST(GenImplMerge, MalformedRegionsAreAnErrorAndNothingIsWritten) {
+    const TempDir dir;
+    write_foo_test(dir);
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src"}).code, 0);
+    std::string header = read(dir, "src/acme/foo.h");
+    header.insert(0, "// <mt:begin dangling>\n");
+    write_file(dir.path() / "src/acme/foo.h", header);
+    write_file(dir.path() / "tests/foo_test.cpp", kFooTestMore);
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--overwrite", "merge"});
+    EXPECT_EQ(r.code, 1);
+    EXPECT_TRUE(contains(r.err, "src/acme/foo.h:1:1: error: region 'dangling' is never closed [mt-merge-region]")) << r.err;
+    EXPECT_FALSE(contains(read(dir, "src/acme/foo.cpp"), "name() const"));
+}
+
+TEST(GenImplMerge, DryRunShowsTheMergeWithoutDoingIt) {
+    const TempDir dir;
+    write_foo_test(dir);
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src"}).code, 0);
+    write_file(dir.path() / "tests/foo_test.cpp", kFooTestMore);
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--overwrite", "merge", "--dry-run"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(r.out, "+    std::string name() const;")) << r.out;
+    EXPECT_TRUE(contains(r.err, "would merge 1 member into src/acme/foo.h")) << r.err;
+    EXPECT_FALSE(contains(read(dir, "src/acme/foo.h"), "name() const"));
+    EXPECT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--overwrite", "merge", "--check"}).code, 4);
+}
+
+TEST(GenImplMerge, WorksWithSeparateIncludeAndSourceDirectories) {
+    const TempDir dir;
+    write_foo_test(dir);
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out-include", "include", "--out-src", "lib"}).code, 0);
+    write_file(dir.path() / "tests/foo_test.cpp", kFooTestMore);
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out-include", "include", "--out-src", "lib", "--overwrite", "merge"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(read(dir, "include/acme/foo.h"), "std::string name() const;"));
+    EXPECT_TRUE(contains(read(dir, "lib/acme/foo.cpp"), "std::string Foo::name() const {")) << "the header was found under --out-include";
+}
+
 // ---- several test files -----------------------------------------------------------------------------------------
 
 TEST(GenImpl, SeveralTestFilesForDifferentClassesAreOneRun) {

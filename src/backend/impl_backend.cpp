@@ -71,11 +71,6 @@ std::string directory_of(const std::string& path) {
     return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
 }
 
-std::string under(const std::string& dir, const std::string& path) {
-    if (dir.empty() || dir == ".") return path;
-    return dir.back() == '/' ? dir + path : dir + "/" + path;
-}
-
 // ---- which header holds what ---------------------------------------------------------------------------------
 
 struct Unit {
@@ -691,6 +686,11 @@ private:
 
 }  // namespace
 
+std::string output_path(const std::string& dir, const std::string& relative) {
+    if (dir.empty() || dir == ".") return relative;
+    return dir.back() == '/' ? dir + relative : dir + "/" + relative;
+}
+
 std::vector<ImplViews> build_impl_views(const ir::Model& model, const ImplOptions& options, core::Diagnostics& diagnostics) {
     return Builder(model, options, diagnostics).run();
 }
@@ -700,11 +700,11 @@ core::OutputPlan generate_impl(const ir::Model& model, const ImplOptions& option
     core::OutputPlan plan;
     for (const ImplViews& v : build_impl_views(model, options, diagnostics)) {
         if (auto text = templates.render("impl/header.inja", v.header_view, diagnostics)) {
-            plan.files.push_back({under(options.out_include, v.header_path), *text});
+            plan.files.push_back({output_path(options.out_include, v.header_path), *text});
         }
         if (!v.source_path.empty()) {
             if (auto text = templates.render("impl/source.inja", v.source_view, diagnostics)) {
-                plan.files.push_back({under(options.out_src, v.source_path), *text});
+                plan.files.push_back({output_path(options.out_src, v.source_path), *text});
             }
         }
     }

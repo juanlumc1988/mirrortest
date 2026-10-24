@@ -61,6 +61,10 @@ struct ImplViews {
     nlohmann::json source_view;    // for impl/source.inja; null when there is no source file
 };
 
+// Where a file lands: `dir` joined with the path below it, "" and "." meaning
+// the working directory ("out" + "acme/foo.h" -> "out/acme/foo.h").
+std::string output_path(const std::string& dir, const std::string& relative);
+
 // Pure: no rendering, no file system. Reports through `diagnostics`:
 // mt-no-include (a class or function no #include claims), mt-stub-may-pass
 // (stub_policy "default"), mt-unsupported (a stub that cannot return an empty

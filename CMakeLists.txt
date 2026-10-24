@@ -46,6 +46,7 @@ mt_embed_templates("${MT_EMBEDDED_TEMPLATES}" "${CMAKE_CURRENT_SOURCE_DIR}/templ
 add_library(mt_core STATIC
     src/backend/cxx_format.cpp
     src/backend/impl_backend.cpp
+    src/backend/impl_merge.cpp
     src/cli/commands.cpp
     src/cli/gen_impl.cpp
     src/cli/run.cpp
@@ -53,6 +54,7 @@ add_library(mt_core STATIC
     src/core/diagnostics.cpp
     src/core/diff.cpp
     src/core/include_search.cpp
+    src/core/merge.cpp
     src/core/naming.cpp
     src/core/regions.cpp
     src/core/source.cpp
@@ -105,12 +107,14 @@ if(MT_BUILD_TESTS)
         tests/unit/test_gen_impl.cpp
         tests/unit/test_include_search.cpp
         tests/unit/test_impl_backend.cpp
+        tests/unit/test_impl_merge.cpp
         tests/unit/test_inference.cpp
         tests/unit/test_ir_classify.cpp
         tests/unit/test_known_names.cpp
         tests/unit/test_literals.cpp
         tests/unit/test_diagnostics.cpp
         tests/unit/test_diff.cpp
+        tests/unit/test_merge.cpp
         tests/unit/test_naming.cpp
         tests/unit/test_pipeline.cpp
         tests/unit/test_preprocess.cpp
@@ -188,6 +192,27 @@ if(MT_BUILD_TESTS)
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/run_case.cmake")
             set_tests_properties(roundtrip.${case} PROPERTIES TIMEOUT 300)
         endforeach()
+    endif()
+
+    # The merge round trip: first run, implement a method, grow the test, merge;
+    # the work survives and passes, the new stubs are red.
+    if(NOT MSVC)
+        add_test(NAME roundtrip.merge
+            COMMAND "${CMAKE_COMMAND}"
+                -DMT_BIN=$<TARGET_FILE:mirrortest>
+                -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/roundtrip/merge
+                -DMT_V1=${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/merge/foo_test.v1.cpp
+                -DMT_V2=${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/merge/foo_test.v2.cpp
+                "-DMT_PATCH_FROM=throw std::logic_error(\"mirrortest: not implemented: Foo::size()\");"
+                "-DMT_PATCH_TO=return 3u;"
+                "-DMT_PASS=FooTest.Size"
+                "-DMT_FAIL=FooTest.More"
+                -DMT_CXX=${CMAKE_CXX_COMPILER}
+                "-DMT_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
+                "-DMT_GTEST_INCLUDE=$<TARGET_PROPERTY:GTest::gtest,INTERFACE_INCLUDE_DIRECTORIES>"
+                "-DMT_GTEST_LIBS=$<TARGET_FILE:GTest::gtest_main>$<SEMICOLON>$<TARGET_FILE:GTest::gtest>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/run_merge.cmake")
+        set_tests_properties(roundtrip.merge PROPERTIES TIMEOUT 300)
     endif()
 
     # Do the stubs of *every* gen-impl golden compile as strict C++11? With the

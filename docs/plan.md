@@ -185,16 +185,17 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 
 ## Phase 3 — Merge by regions (brought forward, R15)
 
-- [ ] **3.1 Regions** — `core/merge.h/.cpp`: locate, validate
+- [x] **3.1 Regions** — `core/merge.h/.cpp`: locate, validate
   (`mt-merge-region`), insert before `<mt:end>` with the marker's indentation.
-- [ ] **3.2 Header and source merge** — §11.3 complete, with the key of §11.2,
+- [x] **3.2 Header and source merge** — §11.3 complete, with the key of §11.2,
   `mt-merge-mismatch`, `mt-merge-no-region`, re-parse check
   (`mt-merge-broke`). Unit tests per step.
-- [ ] **3.3 `--overwrite=merge`** in the writer + goldens: `merge_new_method`,
+- [x] **3.3 `--overwrite=merge`** in the writer + goldens: `merge_new_method`,
   `merge_new_ctor`, `merge_user_changed_type` (no duplicate), `merge_no_region`,
-  `merge_includes`, `merge_idempotent`. Round trip: generate → "implement" a
-  method (patch in the case) → add a test → merge → it compiles, the
-  implemented one passes and the new one fails.
+  `merge_includes`, `merge_idempotent` (and `merge_user_implemented`,
+  `merge_new_ctor`). Round trip (`tests/roundtrip/run_merge.cmake`): generate →
+  "implement" a method (patch in the case) → add a test → merge → it compiles,
+  the implemented one passes and the new one fails.
 
 ## Phase 4 — gen-tests with GoogleTest
 

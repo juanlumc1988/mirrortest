@@ -11,6 +11,7 @@ which is the authority for every detail.
 
 - [What it needs from a test](#what-it-needs-from-a-test)
 - [Which files it writes, and where](#which-files-it-writes-and-where)
+- [Merging](#merging)
 - [Annotations](#annotations)
 - [What the stubs do](#what-the-stubs-do)
 - [Configuration](#configuration)
@@ -216,6 +217,9 @@ $ mirrortest gen-impl tests/foo_test.cpp --out src -I include
 - **Nothing is ever destroyed.** A file that exists and differs is left alone and
   the new text goes to `<file>.new`; `--overwrite force` replaces it. A re-run
   that changes nothing says `unchanged` and does not touch the files.
+- **`--overwrite merge`** is for the second test of a TDD session: it adds what
+  the tests now ask for to the files of the earlier run and leaves everything
+  else — see [Merging](#merging).
 - If anything is an error, **nothing is written**. `--dry-run` shows the diffs,
   `--check` exits 4 if anything would change.
 - Two headers that include each other are broken with a forward declaration where
@@ -224,6 +228,50 @@ $ mirrortest gen-impl tests/foo_test.cpp --out src -I include
 
 Several test files in one run are fine as long as they do not write the same
 file with different content.
+
+## Merging
+
+```console
+$ mirrortest gen-impl tests/foo_test.cpp --out src --overwrite merge
+merged 2 members into src/acme/foo.h
+merged 2 members into src/acme/foo.cpp
+```
+
+The generated files fence what belongs to the tool in regions:
+
+```cpp
+class Foo {
+public:
+    // <mt:begin acme::Foo>
+    ...
+    // <mt:end acme::Foo>
+};
+```
+
+A merge **only inserts**, before an `<mt:end>` line, with that line's
+indentation and the file's own line endings. Code outside the markers is never
+edited and nothing is ever deleted: implement a stub, add members of your own,
+move one out of the region — all safe.
+
+- A member is "already there" if the class has one of that **name and number of
+  parameters**, wherever in the class it is (overloads of one arity are told
+  apart by their parameter types). If it is there with other types
+  (`int size() const` where the tests say `unsigned int size()`), it is left as
+  it is with an `mt-merge-mismatch` warning.
+- A definition goes into the source only if the header, as merged, declares that
+  member, and the source does not already define it.
+- Missing `#include` lines go into the `includes` region (a warning if there is
+  none).
+- Where it cannot do that safely the new text goes to a `.new` file beside the
+  original with a warning: a class without a region (`mt-merge-no-region`), or a
+  result that would parse worse than the original (`mt-merge-broke`). Regions that
+  are malformed — nested, unclosed, repeated — are an error
+  (`mt-merge-region`) and nothing is written until you fix them.
+- Do not delete the `// <mt:begin>` / `// <mt:end>` lines of a class you want
+  merged into.
+
+`--dry-run` shows the merge as a diff first; `--check` exits 4 if there is
+anything to merge.
 
 ## Annotations
 
@@ -354,6 +402,8 @@ differences.
 | `mt-unsupported` | a construct outside the supported subset (see [Limits](#limits)), a QTest file, or two test files that write the same file differently | see the message |
 | `mt-stub-may-pass` | `--stub-policy default` | by design; a reminder |
 | `mt-framework` | the test framework could not be told, or the file uses both | `--framework gtest` |
+| `mt-merge-region` | an error: the regions of a file being merged are nested, unclosed or repeated | fix the `// <mt:begin>` / `// <mt:end>` lines |
+| `mt-merge-no-region`, `mt-merge-mismatch`, `mt-merge-broke` | warnings of `--overwrite merge`: a class has no region (so a `.new` is written), a member exists with other types (left alone), a merge would have broken the file | see [Merging](#merging) |
 | `mt-config`, `mt-io` | a bad configuration file, a file that cannot be read or written | fix the file or path |
 
 ## Limits
@@ -362,8 +412,8 @@ Honest list of what it does not do (yet):
 
 - GoogleTest only. QTest files are rejected with `mt-unsupported`; `gen-tests` is
   not implemented.
-- **No merging.** An existing file is never edited; differing output goes to a
-  `.new` file (`--overwrite merge` arrives with phase 3).
+- Merging adds members; it does not reconcile a changed one (a mismatch is
+  reported) and never removes a member the tests no longer mention.
 - One test file per header, in practice: two files that would write the same
   header differently are an error.
 - Templates (`Box<int>`) get a warning and a plain class; template function

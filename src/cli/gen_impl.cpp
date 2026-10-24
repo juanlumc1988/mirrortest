@@ -9,6 +9,8 @@
 // an error (D8).
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <ostream>
 #include <string>
@@ -16,6 +18,7 @@
 #include <vector>
 
 #include "mirrortest/backend/impl_backend.h"
+#include "mirrortest/backend/impl_merge.h"
 #include "mirrortest/cli/run.h"
 #include "mirrortest/core/include_search.h"
 #include "mirrortest/core/source.h"
@@ -164,10 +167,19 @@ int run_gen_impl(const Options& options, const Env& env) {
     if (options.strict) diagnostics.promote_warnings();
     if (diagnostics.has_errors()) return finish_run(options, env, diagnostics, nullptr);
 
+    // --overwrite=merge: insert what is missing into the regions of the files that
+    // are there. The merger reads the header a source goes with when that header was not merged.
+    backend::ImplMerger merger(options.header_dir(), [&env](const std::string& path) -> std::optional<std::string> {
+        std::ifstream in(resolve(env, path), std::ios::binary);
+        if (!in) return std::nullopt;
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    });
+
     core::WriterOptions writer;
     writer.mode = options.overwrite;
     writer.dry_run = options.dry_run;
     writer.check = options.check;
+    if (options.overwrite == core::OverwriteMode::Merge) writer.merge = merger.function();
     core::WriteReport report;
     core::write_plan(plan, env.cwd, writer, report, diagnostics);
     return finish_run(options, env, diagnostics, &report);

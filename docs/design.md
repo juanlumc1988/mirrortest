@@ -34,7 +34,7 @@ README per version).
 | R13 | §4 | `Foo::bar()` | *Verified*: `Foo::create()` and `ns::create()` are syntactically identical (`namespace_identifier`). | Explicit scope-resolution rule (§7.7). |
 | R14 | §2 | IR with `Fixture*` and `Type{isConst,isRef,isPtr}` | A raw pointer in a value model; the booleans cannot represent `const char* const&`, pointer-to-const vs const pointer, `&&`. `noexcept`, `= 0`, `override`, `= delete/default`, `explicit`, ref-qualifiers, Qt roles and provenance are missing. | IR in `include/mirrortest/ir/model.h` (§4): authoritative `spelling` + derived fields, `Origin`, `reason`, `SourceLoc`. Names in `snake_case`, like the owner's other repositories. |
 | R15 | §4, §12 | "Smart" merge in phase 6, yet "it is the most important requirement" | Contradiction: without merge, the TDD loop (new test → regenerate) always ends in a manual `.new`. | Merge by marked regions in phase 3, right after the gen-impl MVP (§11). **[confirmed]** |
-| R16 | §11 (merge) | — | Comparing by full signature would add spurious overloads when the user changes `int` → `std::uint32_t`; and the return type does not distinguish overloads. | Merge key = (name, arity); by types only with the `overload` annotation; differences in types or `const` → warning, never a new member (§11.2). |
+| R16 | §11 (merge) | — | Comparing by full signature would add spurious overloads when the user changes `int` → `std::uint32_t`; and the return type does not distinguish overloads. | Merge key = (name, arity); by types only for overloads of one arity that the run wants; differences in types or `const` → warning, never a new member (§11.2). |
 | R17 | §2 | inja templates editable "without recompiling" | If they are loaded from disk, the binary depends on an installation path; and putting logic in templates leaves it untested. | Default templates **embedded** in the binary + `--templates DIR` to override. The logic (signatures, TODOs, default values) lives in C++ and reaches the template already formatted (§15). |
 | R18 | §10 | `tool.yaml` | YAML adds yaml-cpp; nlohmann/json is already mandatory because of inja. | Configuration in JSON for the MVP; the loader is isolated so that YAML can be added later. **[confirmed]** |
 | R19 | §5 | Placeholder arguments in the generated tests | `{}` is ambiguous between `f(int)` and `f(double)` and does not bind to `T&`. Besides, **running** legacy methods with zero values can hang or touch hardware and take down the whole test binary. | Named locals of exact type; the placeholder (`FAIL()`/`QFAIL`) goes **first**: what follows compiles (it checks the API) but does not run (§9.2). |
@@ -1275,12 +1275,16 @@ Two different notions, so as not to confuse them:
 - **Full signature** = (name, normalised parameter types, `const`,
   ref-qualifier). It identifies a member for real; the code frontend uses it to
   deduplicate (§6.5). `at(int)` and `at(int) const` are two members.
-- **Merge key** = (name, arity); if any parameter type is `Annotated` or there is
-  an `overload` annotation → (name, normalised types). It decides whether an
-  inferred member "already exists" in the user's file. Neither the return type
-  (it does not distinguish overloads) nor `const` (adding `size() const` next to
-  the user's `size()` would be surprising) is part of it (R16); differences in
-  them → `mt-merge-mismatch`.
+- **Merge key** = (name, arity); for the members of one class (or namespace)
+  that the run wants as several overloads *of the same arity* → (name,
+  normalised parameter types). The generated text shows which those are, so the
+  merge needs no annotation to know (this replaces "if a parameter type is
+  `Annotated`": that information does not survive being written out). It
+  decides whether an inferred member "already exists" in the user's file.
+  Neither the return type (it does not distinguish overloads) nor `const`
+  (adding `size() const` next to the user's `size()` would be surprising) is
+  part of it (R16); differences in them, in a parameter type or in `static` →
+  `mt-merge-mismatch`.
 
 ### 11.3 Algorithm (per existing target file)
 
@@ -1290,15 +1294,22 @@ Two different notions, so as not to confuse them:
    definitions in the `.cpp`.
 3. Missing = desired ones whose key does not exist. Insert their declarations
    (with their TODOs) right before the `<mt:end …>` line, with the marker's
-   indentation, in the order of the desired model. In the `.cpp`, missing =
-   declared in the header (already merged) without a definition, comparing by
-   **full signature** (there both sides are declared code).
+   indentation (and the file's line endings), in the order of the desired model.
+   In the `.cpp`, a definition is missing when the header — **as merged**, or as
+   it is on disk if it was not — declares a member of that **full signature**
+   (qualified name, parameter types, `const`: there both sides are declared
+   code) and the `.cpp` defines none; it is inserted with a blank line before it,
+   unless the region is empty. A definition whose declaration the user's header
+   does not have is not added: it would not compile.
 4. An existing member with types different from the inferred ones →
    `mt-merge-mismatch` warning, left untouched.
-5. Missing includes → the `includes` region; if it does not exist, only a
-   warning.
-6. A class without a region → `WriteNew` + `mt-merge-no-region` warning (code
-   outside regions is never edited).
+5. Missing includes (compared as `<x>` / `"x"`, whatever the spacing, and anywhere
+   in the file) → the `includes` region; if it does not exist, only a warning.
+6. A class (or the free functions of a namespace) without a region, or whose
+   region is there but whose class the file does not declare → `WriteNew` +
+   `mt-merge-no-region` warning (code outside regions is never edited). A file
+   whose regions are malformed is an `mt-merge-region` error and nothing is
+   written.
 7. Final check: the result is re-parsed; if it has more error nodes than the
    original → `WriteNew` + `mt-merge-broke` warning (a warning and not an error:
    an error would prevent writing the `.new`, D8).
