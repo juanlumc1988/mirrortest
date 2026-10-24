@@ -353,7 +353,7 @@ void apply_call_annotations(Classified& classified, core::Diagnostics& diagnosti
     std::set<std::size_t> derived;
     for (const Unresolved& u : facts.unresolved) {
         if (!u.resolved || u.method_call >= facts.method_calls.size()) continue;
-        const bool cast_root = u.root.kind == FactRef::Kind::FreeCall && classified.casts.count(u.root.index) != 0;
+        const bool cast_root = classified.cast_of(u.root) != nullptr;
         if (!cast_root) derived.insert(u.method_call);
     }
 

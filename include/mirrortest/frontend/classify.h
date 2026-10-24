@@ -92,6 +92,11 @@ struct Classified {
     // type (as written). A cast is a call whose result has a type the syntax did
     // not give, so `process(Foo(3))` can type process's parameter.
     std::map<std::size_t, TypeName> casts;
+    // The same for `ns::Foo(3)`, by index into facts.scoped_calls.
+    std::map<std::size_t, TypeName> scoped_casts;
+
+    // The type a call constructs if it is a functional cast, else null.
+    const TypeName* cast_of(const FactRef& call) const;
 
     // config.overrides with the file's long-form annotations laid over them,
     // attribute by attribute: the annotation, being nearer the code, wins. Keyed

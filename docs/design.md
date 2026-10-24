@@ -664,7 +664,11 @@ and the first rule that applies wins:
 An unqualified call `f(args)` (also `::f(args)`) is, in this order:
 1. a name in `config.ignore_macros` → nothing;
 2. the name of a class to be generated → a **functional construction**
-   (`Foo(3)`): a `Construction::Functional` is added and the class picks it up;
+   (`Foo(3)`): a `Construction::Functional` is added and the class picks it up.
+   The qualified spelling `acme::Foo(3)` is the same when `acme::Foo` is a class
+   the file uses elsewhere (it is decided with the scoped calls, §7.7, before
+   `acme` is taken for a namespace); with no such evidence it stays a function
+   `Foo` of the namespace `acme`, as the unqualified spelling does;
 3. ALL_CAPS (R21) → a macro, nothing. (A class called `ADC` beats the macro rule
    thanks to step 2);
 4. the name of somebody else's type (`QString("x")`, `size_t(3)`, the fixture) →
@@ -688,8 +692,9 @@ A call to a local variable (lambda, function pointer, `std::function`) never get
 here: the frontend (§7.3) treats it as a call on the object, and it only
 produces a fact (`operator()`) if the object is of a class.
 
-**Pending calls** (§7.3): an `Unresolved` rooted in a `FreeCall` whose name turns
-out to be a class (`Foo(3).size()`, `auto f = Foo(1); f.run();`) becomes an
+**Pending calls** (§7.3): an `Unresolved` rooted in a `FreeCall` (or a `ScopedCall`:
+`acme::Foo(3).size()`) whose name turns out to be a class
+(`Foo(3).size()`, `auto f = Foo(1); f.run();`) becomes an
 ordinary `MethodCall` of that class (`Unresolved::resolved`, `method_call`),
 with the use it already had; if the root is a *cast* to a foreign type there is
 nothing left to resolve; with any other root (`foo.make().run()`) they stay

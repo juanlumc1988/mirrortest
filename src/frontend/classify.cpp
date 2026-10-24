@@ -98,6 +98,7 @@ public:
         Classified out;
         out.overrides = merged_overrides();
         out.casts = std::move(casts_);
+        out.scoped_casts = std::move(scoped_casts_);
         out.facts = std::move(facts_);
         out.classes = std::move(classes_);
         out.functions = std::move(functions_);
@@ -437,6 +438,7 @@ private:
     }
 
     void resolve_scoped_calls() {
+        scoped_cast_class_.assign(facts_.scoped_calls.size(), kNone);
         for (std::size_t i = 0; i < facts_.scoped_calls.size(); ++i) {
             const ScopedCall call = facts_.scoped_calls[i];
             if (call.scope.empty()) continue;
@@ -444,6 +446,24 @@ private:
             const Ns outer(call.scope.begin(), call.scope.end() - 1);
 
             if (is_foreign_namespace(call.scope.front())) continue;                       // std::move, testing::Return
+
+            // acme::Foo(3), where acme::Foo is a class the file uses elsewhere: a
+            // construction, not a function Foo in the namespace acme.
+            const std::size_t constructed = find_class(call.name, call.scope, true);
+            if (constructed != kNone) {
+                Construction c;
+                c.type = TypeName{call.scope, call.name, ""};
+                c.form = Construction::Form::Functional;
+                c.args = call.args;
+                c.where = call.where;
+                c.ns = call.ns;
+                facts_.constructions.push_back(std::move(c));
+                classes_[constructed].constructions.push_back(facts_.constructions.size() - 1);
+                note_first_use(classes_[constructed].first_use, call.where);
+                scoped_cast_class_[i] = constructed;
+                scoped_casts_[i] = TypeName{classes_[constructed].ns, classes_[constructed].name, ""};
+                continue;
+            }
             if (is_external_type(TypeName{outer, x, ""})) continue;                       // QString::number, Fixture::SetUp
             if (is_known_function(call.scope, call.name)) continue;                       // helpers::twice, declared in the file
 
@@ -545,17 +565,25 @@ private:
 
     void resolve_pending_calls() {
         for (Unresolved& u : facts_.unresolved) {
-            if (u.resolved || u.root.kind != FactRef::Kind::FreeCall) continue;
-            if (external_cast_[u.root.index]) {   // QString("x").size(): somebody else's class
-                u.resolved = true;
-                u.method_call = kNone;
-                continue;
+            if (u.resolved) continue;
+            std::size_t ci = kNone;
+            std::string root_name;
+            if (u.root.kind == FactRef::Kind::FreeCall) {
+                if (external_cast_[u.root.index]) {   // QString("x").size(): somebody else's class
+                    u.resolved = true;
+                    u.method_call = kNone;
+                    continue;
+                }
+                ci = cast_class_[u.root.index];
+                root_name = facts_.free_calls[u.root.index].name;
+            } else if (u.root.kind == FactRef::Kind::ScopedCall) {
+                ci = scoped_cast_class_[u.root.index];
+                root_name = facts_.scoped_calls[u.root.index].name;
             }
-            const std::size_t ci = cast_class_[u.root.index];
             if (ci == kNone) continue;
 
             MethodCall m = u.call;
-            m.receiver.name = facts_.free_calls[u.root.index].name;
+            m.receiver.name = root_name;
             facts_.method_calls.push_back(std::move(m));
             classes_[ci].method_calls.push_back(facts_.method_calls.size() - 1);
             u.resolved = true;
@@ -607,11 +635,22 @@ private:
     std::vector<ClassTarget>                       classes_;
     std::vector<FunctionTarget>                    functions_;
     std::vector<std::size_t>                       cast_class_;          // per free call: the class it constructs
+    std::vector<std::size_t>                       scoped_cast_class_;   // per scoped call: the same, for ns::Foo(3)
     std::vector<bool>                              external_cast_;       // per free call: a cast to somebody else's type
     std::map<std::size_t, TypeName>                casts_;
+    std::map<std::size_t, TypeName>                scoped_casts_;
 };
 
 }  // namespace
+
+const TypeName* Classified::cast_of(const FactRef& call) const {
+    const std::map<std::size_t, TypeName>* table = nullptr;
+    if (call.kind == FactRef::Kind::FreeCall) table = &casts;
+    else if (call.kind == FactRef::Kind::ScopedCall) table = &scoped_casts;
+    if (table == nullptr) return nullptr;
+    const auto found = table->find(call.index);
+    return found == table->end() ? nullptr : &found->second;
+}
 
 Classified classify(TestFileFacts facts, const ClassifyOptions& options, core::Diagnostics& diagnostics) {
     return Classifier(std::move(facts), options, diagnostics).run();

@@ -128,6 +128,13 @@ TEST(PipelineArguments, AnAnnotatedResultIsKnownToo) {
     EXPECT_EQ(param_types(o, "Bar", "take", 1), std::vector<std::string>{"const std::vector<int>&"});
 }
 
+TEST(PipelineArguments, AQualifiedCastTypesTheParameterLikeAnUnqualifiedOne) {
+    const Outcome o = body("acme::Foo foo(7);\nacme::Bar bar;\nbar.put(acme::Foo(2));\nEXPECT_EQ(bar.put(foo), 1);\n");
+    EXPECT_EQ(param_types(o, "Bar", "put", 1), std::vector<std::string>{"const acme::Foo&"});
+    EXPECT_EQ(find_class(o, "Foo")->methods.size(), 1u) << "one constructor, from both uses";
+    EXPECT_TRUE(errors(o).empty()) << ::testing::PrintToString(errors(o));
+}
+
 TEST(PipelineArguments, AResultNobodyTypedStaysUnknown) {
     const Outcome o = body("Foo foo;\nBar bar;\nbar.set(foo.size());\n");
     EXPECT_EQ(errors(o), (std::vector<std::string>{"mt-unknown-param", "mt-unknown-return"}));
@@ -285,6 +292,12 @@ TEST(PipelineChains, ALongChainStopsAtTheCapWithAWarning) {
 }
 
 // ---- the whole --------------------------------------------------------------------------------------------------------------
+
+TEST(PipelineWhole, AChainRootedInAQualifiedCastIsResolved) {
+    const Outcome o = body("acme::Foo foo(1);\nEXPECT_EQ(acme::Foo(3).size(), 3u);\n");
+    EXPECT_EQ(ret_of(o, "Foo", "size"), "unsigned int");
+    EXPECT_TRUE(errors(o).empty()) << ::testing::PrintToString(errors(o));
+}
 
 TEST(PipelineWhole, DiagnosticsOfTheFinalRoundAreReportedOnceEach) {
     const Outcome o = analyse(

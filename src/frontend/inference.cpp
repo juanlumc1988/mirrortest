@@ -253,17 +253,14 @@ private:
             if (!propagate) return std::nullopt;
 
             // A functional cast: the class it constructs.
-            if (v.from.kind == FactRef::Kind::FreeCall) {
-                const auto cast = c_.casts.find(v.from.index);
-                if (cast != c_.casts.end()) {
-                    ir::Type t = ir::make_type(cast->second.qualified());
-                    t.origin = ir::Origin::Declared;
-                    t.reason = "the cast " + v.text;
-                    t.where = v.where;
-                    e.reason = t.reason;
-                    e.type = is_by_value(t) ? t : with_shape(t, true, ir::RefKind::LValue, 0);
-                    return e;
-                }
+            if (const TypeName* cast = c_.cast_of(v.from)) {
+                ir::Type t = ir::make_type(cast->qualified());
+                t.origin = ir::Origin::Declared;
+                t.reason = "the cast " + v.text;
+                t.where = v.where;
+                e.reason = t.reason;
+                e.type = is_by_value(t) ? t : with_shape(t, true, ir::RefKind::LValue, 0);
+                return e;
             }
             // The result of another call of the API, if something said what it is.
             if (const Slot* slot = result_of(v.from)) {

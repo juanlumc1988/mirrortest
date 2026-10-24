@@ -413,6 +413,49 @@ TEST(ClassifyFree, ACallThatNamesAClassIsAConstruction) {
     EXPECT_EQ(cast.type.name, "Foo");
 }
 
+TEST(ClassifyFree, AQualifiedCallThatNamesAClassIsAConstructionToo) {
+    const Outcome r = body("acme::Foo foo;\nprocess(acme::Foo(3, 4));\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"acme::Foo"});
+    EXPECT_EQ(function_names(r), std::vector<std::string>{"process"}) << "not a function Foo in the namespace acme";
+    const frontend::ClassTarget& foo = the_class(r, "acme::Foo");
+    ASSERT_EQ(foo.constructions.size(), 2u);
+    const Construction& cast = r.result.facts.constructions[foo.constructions[1]];
+    EXPECT_EQ(cast.form, Construction::Form::Functional);
+    EXPECT_EQ(cast.args.size(), 2u);
+    EXPECT_EQ(cast.type.qualified(), "acme::Foo");
+    ASSERT_EQ(r.result.scoped_casts.size(), 1u);
+    EXPECT_EQ(r.result.scoped_casts.begin()->second.qualified(), "acme::Foo");
+}
+
+TEST(ClassifyFree, AQualifiedCallIsAFunctionWhenNothingSaysItsNameIsAClass) {
+    const Outcome r = body("process(acme::Foo(3));\n");
+    EXPECT_EQ(function_names(r), (std::vector<std::string>{"process", "acme::Foo"}));
+    EXPECT_TRUE(r.result.scoped_casts.empty());
+}
+
+TEST(ClassifyFree, TheNamespaceHasToMatchForAQualifiedCast) {
+    const Outcome r = body("acme::Foo foo;\nuse(other::Foo(3));\n");
+    EXPECT_TRUE(r.result.scoped_casts.empty());
+    EXPECT_EQ(function_names(r), (std::vector<std::string>{"use", "other::Foo"}));
+}
+
+TEST(ClassifyFree, CastOfTellsAFreeCastFromAScopedOneFromNeither) {
+    const Outcome r = body("acme::Foo foo;\nFoo local;\nuse(acme::Foo(1));\nuse(Foo(2));\nuse(bar(3));\n");
+    ASSERT_EQ(r.result.facts.scoped_calls.size(), 1u);
+    ASSERT_EQ(r.result.casts.size(), 1u);
+    ASSERT_EQ(r.result.scoped_casts.size(), 1u);
+    const FactRef scoped{FactRef::Kind::ScopedCall, r.result.scoped_casts.begin()->first};
+    const FactRef free{FactRef::Kind::FreeCall, r.result.casts.begin()->first};
+    ASSERT_NE(r.result.cast_of(scoped), nullptr);
+    ASSERT_NE(r.result.cast_of(free), nullptr);
+    EXPECT_EQ(r.result.cast_of(scoped)->qualified(), "acme::Foo");
+    EXPECT_EQ(r.result.cast_of(free)->name, "Foo");
+    EXPECT_EQ(r.result.cast_of(FactRef{FactRef::Kind::FreeCall, 99}), nullptr);
+    EXPECT_EQ(r.result.cast_of(FactRef{FactRef::Kind::ScopedCall, 99}), nullptr);
+    EXPECT_EQ(r.result.cast_of(FactRef{FactRef::Kind::MethodCall, 0}), nullptr);
+    EXPECT_EQ(r.result.cast_of(FactRef{}), nullptr);
+}
+
 TEST(ClassifyFree, AMacroLikeNameThatIsAClassStillConstructs) {
     const Outcome r = body("ADC adc(3);\nuse(ADC(4));\n");
     EXPECT_EQ(class_names(r), std::vector<std::string>{"ADC"});
@@ -446,6 +489,19 @@ TEST(ClassifyPending, ACallOnAFunctionalCastOfAKnownClassBecomesAMethodCall) {
     const frontend::ClassTarget& foo = the_class(r, "Foo");
     EXPECT_EQ(foo.method_calls.back(), u.method_call);
     EXPECT_EQ(foo.constructions.size(), 2u) << "`Foo other;` and the cast";
+    EXPECT_TRUE(function_names(r).empty());
+}
+
+TEST(ClassifyPending, ACallOnAQualifiedCastBecomesAMethodCallToo) {
+    const Outcome r = body("acme::Foo other;\nEXPECT_EQ(acme::Foo(3).size(), 3u);\n");
+    ASSERT_EQ(r.result.facts.unresolved.size(), 1u);
+    const frontend::Unresolved& u = r.result.facts.unresolved[0];
+    ASSERT_TRUE(u.resolved);
+    ASSERT_LT(u.method_call, r.result.facts.method_calls.size());
+    const frontend::MethodCall& m = r.result.facts.method_calls[u.method_call];
+    EXPECT_EQ(m.receiver.name, "Foo");
+    EXPECT_EQ(m.method, "size");
+    EXPECT_EQ(the_class(r, "acme::Foo").method_calls.back(), u.method_call);
     EXPECT_TRUE(function_names(r).empty());
 }
 

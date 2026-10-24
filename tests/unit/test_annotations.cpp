@@ -386,6 +386,12 @@ TEST(AnnotationApply, ACallFoundByClassificationCounts) {
     EXPECT_TRUE(method_named(o, "size").annotation.returns.has_value());
 }
 
+TEST(AnnotationApply, ACallOnAQualifiedCastCountsToo) {
+    const Outcome o = body("acme::Foo other;\n// @mt: returns unsigned\nEXPECT_EQ(acme::Foo(3).size(), 3u);\n");
+    EXPECT_TRUE(errors(o.diagnostics).empty());
+    EXPECT_TRUE(method_named(o, "size").annotation.returns.has_value());
+}
+
 TEST(AnnotationApply, ManyCallsInOneStatementIsAnErrorThatSaysWhich) {
     const Outcome o = body("Foo foo;\n// @mt: returns int\nEXPECT_EQ(foo.a(), foo.b());\n");
     EXPECT_EQ(errors(o.diagnostics), kOneError);
