@@ -166,6 +166,42 @@ constructor; `Stack stack_{4};` a constructor taking an `int`), and so are the
 constructor's initialisers. A member the constructor initialises is not also
 default-constructed — if that constructor is defined *inside* the class.
 
+### Fakes and mocks
+
+The code under test is written against an interface, and the test hands it a
+double: a class of the file that derives from the interface.
+
+```cpp
+class MockSensor : public Sensor {
+public:
+    MOCK_METHOD(int, read, (), (override));
+    MOCK_METHOD(std::string, name, (), (const, override));
+};
+
+TEST(ControllerTest, ReportsWhatTheSensorReads) {
+    testing::NiceMock<MockSensor> sensor;
+    Controller controller(&sensor);       // Controller(Sensor*), not Controller(MockSensor*)
+    EXPECT_CALL(sensor, read()).WillOnce(testing::Return(42));
+    EXPECT_EQ(controller.value(), 42);
+}
+```
+
+- `Sensor` is generated as an interface: `virtual ~Sensor() = default;` and one
+  pure virtual function for each function the double overrides —with the
+  signature the double gives it— and `Controller` takes a `Sensor*`. The same for
+  a fake you write by hand (it needs `override` on the functions, which is what
+  tells them from its own), and for the old macros (`MOCK_METHOD1(f, void(int))`,
+  `MOCK_CONST_METHOD0(g, bool())`).
+- Whatever the double is wrapped in (`NiceMock`, `StrictMock`, `NaggyMock`), or
+  held by (`std::unique_ptr<MockSensor>`, `std::vector<FakeSensor*>`), the
+  parameter that receives it is typed with the interface.
+- If the interface already exists in a header the test includes, nothing is
+  generated for it, and the parameter is still typed with it.
+- A double with several bases is attributed to the first one, with a note.
+- Put the `#include` of the interface's header in the test, as you must for the
+  test to compile: it says where `Sensor` goes.
+- Fakes and fixtures in an anonymous namespace are read like any other.
+
 ### Constness, pointers, smart pointers
 
 - A method called through a `const` reference, a `const` object or a `const`
@@ -204,8 +240,9 @@ qtest` settles it when nothing does.
 
 ### What is *not* generated
 
-Anything the test declares itself (fixtures, helper classes, enums, aliases), the
-standard library, Qt's classes and functions, GoogleTest, and every class or
+Anything the test declares itself (fixtures, doubles, helper classes, enums,
+aliases), the standard library, Qt's classes and functions, GoogleTest and gmock
+(`NiceMock`, `Test`, … are theirs under `using namespace testing;` too), and every class or
 function that an existing header the test includes declares (see below). List
 more with `external_types` and `external_functions`.
 
@@ -498,7 +535,10 @@ Honest list of what it does not do (yet):
   header differently are an error.
 - Templates (`Box<int>`) get a warning and a plain class; template function
   calls get `mt-unsupported`.
-- Inheritance, operators and conversion operators are not inferred from tests.
+- Inheritance is inferred only from test doubles (above); operators and
+  conversion operators are not inferred from tests.
+- `EXPECT_CALL(mock, f(...))` says nothing about `f`: declare what the code
+  under test calls by calling it.
 - Namespace-scope variables in a test file are not visited.
 - `TYPED_TEST` bodies are skipped (with a warning).
 - A constructor defined *outside* its class does not stop the member it

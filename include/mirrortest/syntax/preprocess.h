@@ -15,6 +15,9 @@
 // as the input and every line break is where it was. A blanked range keeps
 // its newlines, so a line and column reported against the output are the
 // line and column in the user's file, and diagnostics need no translation.
+// (One exception, and only for a macro that spans several lines: a mock
+// method that is expanded keeps its line breaks at the end of the range, so a
+// line is still a line, and a column on the last line of the macro is off.)
 //
 // What the macros meant is not lost. Each one that carries information the
 // model needs -- this class is a QObject, this section holds slots -- leaves
@@ -40,6 +43,10 @@ namespace mt::syntax {
 // blanked together with its balanced argument list; otherwise as object-like.
 struct MacroTable {
     std::vector<std::string> ignore;
+
+    // gmock's MOCK_METHOD macros become the member each declares (mock_macros.h): the
+    // reader of a test file wants it, a header's has no use for it.
+    bool expand_mock_methods = false;
 };
 
 struct QtMarker {

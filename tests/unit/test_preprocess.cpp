@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -550,6 +551,161 @@ TEST(PreprocessIntegration, LinesAndColumnsMatchTheOriginalFile) {
     EXPECT_TRUE(found);
 }
 
+// ---- gmock's MOCK_METHOD ---------------------------------------------------------
+
+namespace {
+
+MacroTable with_mocks() {
+    MacroTable table;
+    table.expand_mock_methods = true;
+    return table;
+}
+
+// What a mock method must keep when it is expanded: the length, every byte outside the macro, and the
+// number of line breaks inside it -- all at the end of it, after the declaration and the spaces.
+void expect_expansion(const std::string& in, const std::string& macro, const std::string& declaration) {
+    const std::size_t begin = in.find(macro);
+    ASSERT_NE(begin, std::string::npos);
+    const Preprocessed out = preprocess(in, with_mocks());
+    ASSERT_EQ(out.text.size(), in.size());
+    EXPECT_EQ(out.text.substr(0, begin), in.substr(0, begin));
+    EXPECT_EQ(out.text.substr(begin + macro.size()), in.substr(begin + macro.size()));
+
+    std::string span = out.text.substr(begin, macro.size());
+    const std::size_t breaks = static_cast<std::size_t>(std::count(macro.begin(), macro.end(), '\n'));
+    EXPECT_EQ(std::count(span.begin(), span.end(), '\n'), static_cast<std::ptrdiff_t>(breaks));
+    EXPECT_EQ(span.substr(span.size() - breaks), std::string(breaks, '\n')) << "the line breaks are at the end";
+    span.resize(span.size() - breaks);
+    EXPECT_EQ(span, declaration + std::string(span.size() - declaration.size(), ' '));
+}
+
+}  // namespace
+
+TEST(PreprocessMocks, AreLeftAloneUnlessAskedFor) {
+    const std::string in = "class M : public S {\npublic:\n    MOCK_METHOD(int, read, (), (override));\n};\n";
+    EXPECT_EQ(run(in).text, in);
+}
+
+TEST(PreprocessMocks, TheNewMacroBecomesItsDeclaration) {
+    expect_expansion("class M : public S {\npublic:\n    MOCK_METHOD(int, read, (), (override));\n};\n",
+                     "MOCK_METHOD(int, read, (), (override))", "int read() override");
+}
+
+TEST(PreprocessMocks, TheOldMacrosToo) {
+    expect_expansion("class M : public S {\n    MOCK_METHOD1(write, void(int));\n};\n", "MOCK_METHOD1(write, void(int))",
+                     "void write(int) override");
+    expect_expansion("class M : public S {\n    MOCK_CONST_METHOD0(ok, bool());\n};\n", "MOCK_CONST_METHOD0(ok, bool())",
+                     "bool ok() const override");
+}
+
+TEST(PreprocessMocks, ASemicolonIsAddedWhereTheMacroSuppliedIt) {
+    // The old macros end the declaration themselves: `MOCK_METHOD1(f, void(int))` needs no `;`.
+    expect_expansion("class M : public S {\n    MOCK_METHOD1(write, void(int))\n    int after;\n};\n",
+                     "MOCK_METHOD1(write, void(int))", "void write(int) override;");
+}
+
+TEST(PreprocessMocks, TheSemicolonThatIsThereIsNotDoubled) {
+    const Preprocessed out = preprocess("class M : public S { MOCK_METHOD(int, f, ()); }", with_mocks());
+    EXPECT_EQ(std::count(out.text.begin(), out.text.end(), ';'), 1);
+}
+
+TEST(PreprocessMocks, TheSemicolonIsFoundAfterABreakOrAComment) {
+    const Preprocessed out = preprocess("class M : public S { MOCK_METHOD(int, f, ())\n /* c */ ; }", with_mocks());
+    EXPECT_EQ(std::count(out.text.begin(), out.text.end(), ';'), 1);
+}
+
+TEST(PreprocessMocks, LineBreaksInTheArgumentsMoveToTheEnd) {
+    const std::string macro = "MOCK_METHOD(int,\n                 read,\n                 (),\n                 (override))";
+    expect_expansion("class M : public S {\npublic:\n    " + macro + ";\n    int after;\n};\n", macro, "int read() override");
+}
+
+TEST(PreprocessMocks, TheLinesAfterAMacroAreWhereTheyWere) {
+    const std::string in = "class M : public S {\n    MOCK_METHOD(void,\n        f,\n        (int));\n    int after;\n};\n";
+    const mt::syntax::Tree tree = mt::syntax::parse_cpp(preprocess(in, with_mocks()).text);
+    ASSERT_FALSE(tree.has_error());
+    const mt::syntax::Node body = tree.root().named_child(0).child_by_field("body");
+    ASSERT_EQ(body.named_child_count(), 2u);
+    EXPECT_EQ(body.named_child(0).line(), 2u);
+    EXPECT_EQ(body.named_child(1).line(), 5u);
+}
+
+TEST(PreprocessMocks, TheDeclarationIsRealCode) {
+    const std::string in =
+        "class M : public S {\npublic:\n"
+        "    MOCK_METHOD(int, read, (), (const, override));\n"
+        "    MOCK_METHOD(void, put, ((std::map<int, int>), int));\n"
+        "    MOCK_METHOD2(set, void(double, const std::string&));\n"
+        "    MOCK_CONST_METHOD1(at, const std::string&(int));\n"
+        "};\n";
+    const Preprocessed out = preprocess(in, with_mocks());
+    EXPECT_FALSE(mt::syntax::parse_cpp(out.text).has_error()) << out.text;
+}
+
+TEST(PreprocessMocks, SpacesAfterCommasGoWhenTheMacroIsTooShortForThem) {
+    // Written without spaces, the macro is shorter than the declaration with them: the first spaces
+    // go, as many as it takes to fit, and not one more.
+    const std::string macro = "MOCK_METHOD10(f,void(int,int,int,int,int,int,int,int,int,int))";
+    expect_expansion("class M : public S { " + macro + " };", macro, "void f(int,int,int,int,int, int, int, int, int, int) override;");
+}
+
+TEST(PreprocessMocks, AMacroItDoesNotUnderstandIsBlanked) {
+    const std::string macro = "MOCK_METHOD(int)";
+    const Preprocessed out = preprocess("class M : public S { " + macro + "; };", with_mocks());
+    EXPECT_EQ(out.text, "class M : public S { " + std::string(macro.size(), ' ') + "; };");
+}
+
+TEST(PreprocessMocks, ACommentOrALiteralInTheArgumentsBlanksTheMacro) {
+    for (const char* macro : {"MOCK_METHOD(int, f, (), (/* c */ override))", "MOCK_METHOD(int, f, (), (override // c\n))",
+                              "MOCK_METHOD(const char*, f, (), (Calltype(\"x\")))"}) {
+        const std::string in = std::string("class M : public S { ") + macro + " };";
+        const Preprocessed out = preprocess(in, with_mocks());
+        ASSERT_EQ(out.text.size(), in.size());
+        EXPECT_EQ(out.text.find("MOCK_METHOD"), std::string::npos) << macro;
+        EXPECT_EQ(out.text.find("f("), std::string::npos) << macro;
+    }
+}
+
+TEST(PreprocessMocks, AWordWithoutArgumentsIsLeftAlone) {
+    for (const char* in : {"int MOCK_METHOD1 = 3;", "MOCK_METHOD(unbalanced", "using M = MOCK_METHOD0;"}) {
+        EXPECT_EQ(preprocess(in, with_mocks()).text, in);
+    }
+}
+
+TEST(PreprocessMocks, InCommentsAndStringsAreLeftAlone) {
+    const std::string in = "// MOCK_METHOD(int, f, ());\n/* MOCK_METHOD0(f, int()); */\nconst char* s = \"MOCK_METHOD(int, f, ())\";\n";
+    EXPECT_EQ(preprocess(in, with_mocks()).text, in);
+}
+
+TEST(PreprocessMocks, OtherWordsThatStartAlikeAreLeftAlone) {
+    const std::string in = "class M { MOCK_METHODS(int, f, ()); MOCK_CONST_METHOD(int, f, ()); };";
+    EXPECT_EQ(preprocess(in, with_mocks()).text, in);
+}
+
+TEST(PreprocessMocks, AFollowingSignalsSectionStillWorks) {
+    // The ';' the macro stood for is a member boundary: `signals:` after it is a section label.
+    const Preprocessed out = preprocess("class M : public S {\n    Q_OBJECT\npublic:\n    MOCK_METHOD0(f, void())\nsignals:\n    void s();\n};\n",
+                                        with_mocks());
+    EXPECT_NE(out.text.find("public"), std::string::npos);
+    EXPECT_EQ(out.text.find("signals"), std::string::npos);
+    ASSERT_FALSE(out.markers.empty());
+    EXPECT_EQ(out.markers.back().kind, Kind::SignalsSection);
+}
+
+TEST(PreprocessMocks, IdempotentAndFree) {
+    const std::string in = "class M : public S {\n    MOCK_METHOD(int, read, (), (override));\n    MOCK_METHOD1(write, void(int));\n};\n";
+    const Preprocessed once = preprocess(in, with_mocks());
+    EXPECT_EQ(preprocess(once.text, with_mocks()).text, once.text);
+    EXPECT_NE(once.text, in);
+}
+
+TEST(PreprocessMocks, TheOtherMacrosStillWorkInTheSameFile) {
+    const std::string in = "class M : public S { Q_OBJECT\n MOCK_METHOD(int, f, ());\n Q_PROPERTY(int p READ f) };";
+    const Preprocessed out = preprocess(in, with_mocks());
+    EXPECT_EQ(out.text.find("Q_OBJECT"), std::string::npos);
+    EXPECT_EQ(out.text.find("Q_PROPERTY"), std::string::npos);
+    EXPECT_NE(out.text.find("int f()"), std::string::npos);
+}
+
 // ---- robustness -------------------------------------------------------------
 
 namespace {
@@ -600,5 +756,33 @@ TEST(PreprocessRobustness, InvariantsHoldOnTruncatedAndCorruptedInputs) {
                 ASSERT_LT(m.offset, in.size());
             }
         }
+    }
+}
+
+TEST(PreprocessRobustness, MockMethodsKeepTheLengthAndTheLineBreaksOnCorruptedInputs) {
+    const std::string original =
+        "class M : public S {\npublic:\n"
+        "    MOCK_METHOD(int, read, (), (const, override));\n"
+        "    MOCK_METHOD(void,\n        put,\n        ((std::map<int, int>), int),\n        (override));\n"
+        "    MOCK_METHOD2(set, void(double, const std::string&))\n"
+        "    MOCK_CONST_METHOD1_T(at, const T&(int));\n"
+        "    MOCK_METHOD3_WITH_CALLTYPE(STDMETHODCALLTYPE, f, int(int,int,int));\n"
+        "};\n";
+    const char noise[] = {'"', '\'', '(', ')', ',', '/', '*', '\n', '\r', '\\', ';', 'R', '\0', '\xEF'};
+
+    Lcg rng(777);
+    for (int round = 0; round < 400; ++round) {
+        std::string in = original.substr(0, rng.next(static_cast<unsigned>(original.size()) + 1));
+        const unsigned edits = rng.next(5);
+        for (unsigned e = 0; e < edits && !in.empty(); ++e) {
+            in[rng.next(static_cast<unsigned>(in.size()))] = noise[rng.next(sizeof noise)];
+        }
+        const Preprocessed out = preprocess(in, with_mocks());
+        ASSERT_EQ(out.text.size(), in.size()) << round;
+        for (char c : {'\n', '\r'}) {
+            ASSERT_EQ(std::count(out.text.begin(), out.text.end(), c), std::count(in.begin(), in.end(), c)) << round;
+        }
+        // Nothing the user wrote before the first macro changes, and a second pass changes nothing.
+        ASSERT_EQ(preprocess(out.text, with_mocks()).text, out.text) << round;
     }
 }

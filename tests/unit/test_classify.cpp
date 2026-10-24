@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -596,6 +597,203 @@ TEST(ClassifyWhole, ClassifyingTwiceGivesTheSameResultAndDiagnostics) {
     EXPECT_EQ(class_names(x), class_names(y));
     EXPECT_EQ(function_names(x), function_names(y));
     EXPECT_EQ(x.diagnostics.sorted(), y.diagnostics.sorted());
+}
+
+// ---- test doubles ------------------------------------------------------------------------------------------------
+
+namespace {
+
+std::vector<std::string> interface_of(const Outcome& r, const char* qualified) {
+    std::vector<std::string> out;
+    for (const ir::Method& m : the_class(r, qualified).interface_methods) {
+        std::string text = m.ret.spelling + " " + m.name + "(";
+        for (std::size_t i = 0; i < m.params.size(); ++i) text += (i == 0 ? "" : ", ") + m.params[i].type.spelling;
+        text += std::string(")") + (m.is_const ? " const" : "");
+        out.push_back(text);
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(ClassifyDoubles, HelpersAndFakesInAnAnonymousNamespaceAreTheFilesOwn) {
+    const Outcome r = classify(
+        "namespace {\n"
+        "int twice(int x) { return x * 2; }\n"
+        "struct Params { int a; };\n"
+        "class Fake : public Sensor { public: int read() override { return 1; } };\n"
+        "}\n"
+        "TEST(S, N) { Params p; Fake f; EXPECT_EQ(twice(2), 4); Foo foo(&f); }\n");
+    EXPECT_EQ(class_names(r), (std::vector<std::string>{"Sensor", "Foo"}));
+    EXPECT_TRUE(function_names(r).empty());
+}
+
+TEST(ClassifyDoubles, TheBaseOfAFakeIsAClassToGenerate) {
+    const Outcome r = classify(
+        "class FakeSensor : public Sensor { public: int read() override { return 5; } };\n"
+        "TEST(S, N) { FakeSensor f; }\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Sensor"});
+    EXPECT_EQ(r.result.doubles, (std::map<std::string, std::string>{{"FakeSensor", "Sensor"}}));
+}
+
+TEST(ClassifyDoubles, TheInterfaceIsWhatTheDoubleOverrides) {
+    const Outcome r = classify(
+        "class FakeSensor : public Sensor {\n"
+        "public:\n"
+        "    int read() override { return 5; }\n"
+        "    void set(double v, const std::string& unit) override {}\n"
+        "    bool ok() const override { return true; }\n"
+        "    int closed() final { return 0; }\n"
+        "    void helper() {}\n"
+        "    int virtual_but_not_override();\n"
+        "    static int count();\n"
+        "    ~FakeSensor() override {}\n"
+        "};\n");
+    EXPECT_EQ(interface_of(r, "Sensor"),
+              (std::vector<std::string>{"int read()", "void set(double, const std::string&)", "bool ok() const", "int closed()"}));
+    for (const ir::Method& m : the_class(r, "Sensor").interface_methods) {
+        EXPECT_TRUE(m.is_virtual) << m.name;
+        EXPECT_FALSE(m.is_pure) << m.name << ": inference decides that";
+        EXPECT_FALSE(m.is_override) << m.name;
+        EXPECT_FALSE(m.is_final) << m.name;
+        EXPECT_EQ(m.origin, ir::Origin::Declared) << m.name;
+    }
+}
+
+TEST(ClassifyDoubles, TheMacrosOfAMockSayTheSame) {
+    const Outcome r = classify(
+        "class MockSensor : public Sensor {\n"
+        "public:\n"
+        "    MOCK_METHOD(int, read, (), (override));\n"
+        "    MOCK_METHOD(void, set, (double, const std::string&), (const, override));\n"
+        "    MOCK_METHOD1(write, void(int));\n"
+        "    MOCK_CONST_METHOD0(ok, bool());\n"
+        "};\n");
+    EXPECT_EQ(interface_of(r, "Sensor"),
+              (std::vector<std::string>{"int read()", "void set(double, const std::string&) const", "void write(int)", "bool ok() const"}));
+}
+
+TEST(ClassifyDoubles, TwoDoublesOfOneClassAreOneInterface) {
+    const Outcome r = classify(
+        "class Fake : public Sensor { public: int read() override { return 1; } void a() override {} };\n"
+        "class Mock : public Sensor { public: MOCK_METHOD(int, read, (), (override)); MOCK_METHOD(void, b, (), (override)); };\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Sensor"});
+    EXPECT_EQ(interface_of(r, "Sensor"), (std::vector<std::string>{"int read()", "void a()", "void b()"}));
+    EXPECT_EQ(r.result.doubles.size(), 2u);
+}
+
+TEST(ClassifyDoubles, OverloadsAreDifferentFunctions) {
+    const Outcome r = classify(
+        "class Fake : public Sensor { public: void put(int) override {} void put(double) override {} void put(int) const override {} };\n");
+    EXPECT_EQ(interface_of(r, "Sensor"), (std::vector<std::string>{"void put(int)", "void put(double)", "void put(int) const"}));
+}
+
+TEST(ClassifyDoubles, TheFrameworkIsNotADoubleBase) {
+    const Outcome r = classify(
+        "class A : public ::testing::Test {};\n"
+        "class B : public testing::TestWithParam<int> {};\n"
+        "class C : public testing::WithParamInterface<int> {};\n"
+        "TEST_F(A, N) {}\n");
+    EXPECT_TRUE(class_names(r).empty());
+    EXPECT_TRUE(r.result.doubles.empty());
+}
+
+TEST(ClassifyDoubles, UnscopedFrameworkTypesNeedTheUsingDirective) {
+    const Outcome r = classify(
+        "using namespace testing;\n"
+        "class A : public Test {};\n"
+        "class B : public TestWithParam<int> {};\n"
+        "TEST_F(A, N) { NiceMock<Foo> m; }\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Foo"});
+    EXPECT_TRUE(r.result.doubles.empty());
+}
+
+TEST(ClassifyDoubles, AUsingDeclarationBringsOneFrameworkTypeIn) {
+    const Outcome r = classify("using testing::Test;\nclass A : public Test {};\nTEST_F(A, N) {}\n");
+    EXPECT_TRUE(class_names(r).empty());
+    EXPECT_TRUE(r.result.doubles.empty());
+}
+
+TEST(ClassifyDoubles, ADoubleOfAClassTheTestIncludesGeneratesNothing) {
+    frontend::ClassifyOptions options;
+    options.known.push_back(header("class Sensor { public: virtual int read() = 0; };\n"));
+    const Outcome r = classify("class Fake : public Sensor { public: int read() override { return 1; } };\n", options);
+    EXPECT_TRUE(class_names(r).empty());
+    EXPECT_EQ(r.result.doubles, (std::map<std::string, std::string>{{"Fake", "Sensor"}}));
+}
+
+TEST(ClassifyDoubles, ADoubleOfSomebodyElsesClassIsStillADouble) {
+    const Outcome r = classify(
+        "class MyError : public std::runtime_error { public: MyError() : std::runtime_error(\"x\") {} };\n"
+        "class FakeWidget : public QWidget {};\n");
+    EXPECT_TRUE(class_names(r).empty());
+    EXPECT_EQ(r.result.doubles, (std::map<std::string, std::string>{{"FakeWidget", "QWidget"}, {"MyError", "std::runtime_error"}}));
+}
+
+TEST(ClassifyDoubles, ADoubleOfADoubleStandsForTheOriginalBase) {
+    const Outcome r = classify(
+        "class FakeBase : public Sensor { public: int read() override { return 1; } };\n"
+        "class Fake : public FakeBase { public: bool ok() const override { return true; } };\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Sensor"});
+    EXPECT_EQ(r.result.doubles, (std::map<std::string, std::string>{{"Fake", "Sensor"}, {"FakeBase", "Sensor"}}));
+    EXPECT_EQ(interface_of(r, "Sensor"), (std::vector<std::string>{"int read()", "bool ok() const"}));
+}
+
+TEST(ClassifyDoubles, AFixtureOverAFakeIsNotADouble) {
+    const Outcome r = classify(
+        "class FakeSensor : public Sensor { public: int read() override { return 1; } };\n"
+        "class F : public ::testing::Test { protected: FakeSensor sensor; };\n"
+        "TEST_F(F, N) {}\n");
+    EXPECT_EQ(r.result.doubles, (std::map<std::string, std::string>{{"FakeSensor", "Sensor"}}));
+}
+
+TEST(ClassifyDoubles, ABaseInANamespaceIsGeneratedThere) {
+    const Outcome r = classify(
+        "class Fake : public acme::Sensor { public: int read() override { return 1; } };\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"acme::Sensor"});
+    EXPECT_EQ(interface_of(r, "acme::Sensor"), std::vector<std::string>{"int read()"});
+    EXPECT_EQ(r.result.doubles.at("Fake"), "acme::Sensor");
+}
+
+TEST(ClassifyDoubles, SeveralBasesAreOneInterfaceAndANote) {
+    const Outcome r = classify(
+        "class Fake : public Sensor, public Logger { public: int read() override { return 1; } void log() override {} };\n");
+    EXPECT_EQ(class_names(r), (std::vector<std::string>{"Sensor", "Logger"}));
+    EXPECT_EQ(interface_of(r, "Sensor"), (std::vector<std::string>{"int read()", "void log()"}));
+    EXPECT_TRUE(the_class(r, "Logger").interface_methods.empty());
+    EXPECT_EQ(notes(r), std::vector<std::string>{"mt-unsupported"});
+}
+
+TEST(ClassifyDoubles, AFrameworkBaseNextToTheRealOneIsNotASecondBase) {
+    const Outcome r = classify(
+        "class Fake : public Sensor, public testing::Test { public: int read() override { return 1; } };\n");
+    EXPECT_TRUE(notes(r).empty());
+    EXPECT_EQ(r.result.doubles.at("Fake"), "Sensor");
+}
+
+TEST(ClassifyDoubles, ADoubleWithoutOverridesStillStandsForItsBase) {
+    const Outcome r = classify("class Fake : public Sensor {};\nTEST(S, N) { Fake f; }\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Sensor"});
+    EXPECT_TRUE(the_class(r, "Sensor").interface_methods.empty());
+    EXPECT_EQ(r.result.doubles.at("Fake"), "Sensor");
+}
+
+TEST(ClassifyDoubles, AClassWithoutBasesIsNotADouble) {
+    const Outcome r = classify("struct Params { int a; };\nTEST(S, N) { Params p; }\n");
+    EXPECT_TRUE(r.result.doubles.empty());
+}
+
+TEST(ClassifyDoubles, ACycleInTheFilesOwnClassesDoesNotHang) {
+    const Outcome r = classify("class A : public B {};\nclass B : public A {};\n");
+    EXPECT_TRUE(r.result.doubles.empty());
+}
+
+TEST(ClassifyDoubles, GmockWrappersAreNotClassesWithUsingNamespaceTesting) {
+    const Outcome r = classify(
+        "using namespace testing;\n"
+        "class MockSensor : public Sensor { public: MOCK_METHOD(int, read, (), (override)); };\n"
+        "TEST(S, N) { NiceMock<MockSensor> a; StrictMock<MockSensor> b; NaggyMock<MockSensor> c; Controller k(&a); }\n");
+    EXPECT_EQ(class_names(r), (std::vector<std::string>{"Sensor", "Controller"}));
 }
 
 TEST(ClassifyWhole, NothingToClassifyIsFine) {

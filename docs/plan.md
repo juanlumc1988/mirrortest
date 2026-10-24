@@ -242,8 +242,11 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 
 - [x] **6.1** gen-tests with a fixture (`TEST_F`, `sut` member, `SetUp`). Opt-in
   with `gtest.fixture`; GoogleTest only (design 9.4).
-- [ ] **6.2** gen-impl from `MOCK_METHOD` in the test: generates the interface
-  with pure virtual methods (`Declared` signatures).
+- [x] **6.2** gen-impl from `MOCK_METHOD` in the test: generates the interface
+  with pure virtual methods (`Declared` signatures). Also hand-written fakes
+  (`override`), a virtual destructor, the type a double stands for in the
+  parameters that receive it (`NiceMock`/`StrictMock`/smart pointers), and the
+  anonymous namespaces of a test file, which were not read (design 7.13, 5.2, 6.1).
 - [ ] **6.3** gen-tests: gmock mocks for interfaces (all pure virtual
   functions), including the parentheses around types with commas
   (`MOCK_METHOD((std::map<int, int>), …)`).

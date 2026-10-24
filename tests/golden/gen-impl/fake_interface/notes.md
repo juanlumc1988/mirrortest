@@ -1,0 +1,1 @@
+A hand-written fake in an anonymous namespace, deriving from a class in a namespace, passed as a pointer and owned through a `unique_ptr`. No gmock. The fake's `override` functions are the interface; `acme::Scheduler` takes an `acme::Clock*` and `acme::Timer` a `std::unique_ptr<acme::Clock>`, never the fake's own type.

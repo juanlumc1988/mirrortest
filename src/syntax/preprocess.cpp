@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <limits>
+#include <string>
 #include <utility>
+
+#include "mirrortest/syntax/mock_macros.h"
 
 namespace mt::syntax {
 
@@ -367,6 +370,61 @@ private:
         return end;
     }
 
+    // `MOCK_METHOD(int, read, (), (override));` becomes `int read() override;`, so that the
+    // mock class is read like any class with virtual members. The text keeps its length: the
+    // declaration comes first, then spaces, then the line breaks the macro's arguments had
+    // (moved, but not lost, so that every line after the macro is where it was). Returns the
+    // index after the macro, or npos for a word that happens to look like one and has no
+    // argument list, which is left alone.
+    std::size_t mock_method(std::size_t i, std::size_t j, std::string_view word) {
+        const std::size_t open = next_significant(j);
+        if (open >= src_.size() || src_[open] != '(') {
+            return npos;
+        }
+        const std::size_t close = matching_paren(open);
+        if (close == npos) {
+            return npos;
+        }
+        const std::string_view arguments = src_.substr(open + 1, close - open - 1);
+        const std::size_t end = close + 1;
+        const std::size_t semicolon = next_significant(end);
+        const bool terminated = semicolon < src_.size() && src_[semicolon] == ';';
+
+        // Comments and literals inside the arguments are not part of the declaration the macro stands for.
+        std::string text;
+        if (arguments.find_first_of("\"'") == npos && arguments.find("//") == npos && arguments.find("/*") == npos) {
+            text = mock_method_declaration(word, arguments);
+        }
+        if (!terminated && !text.empty()) {
+            text += ';';
+        }
+        // The arguments' commas have a space after them in the declaration; the macro may not.
+        const std::size_t room = end - i;
+        for (std::size_t comma = text.find(", "); text.size() > room && comma != std::string::npos; comma = text.find(", ", comma + 1)) {
+            text.erase(comma + 1, 1);
+        }
+        if (text.empty() || text.size() > room) {
+            blank(i, end);   // not a macro this understands: gone, so that it cannot spoil the declarations around it
+            return end;
+        }
+
+        // The macro's own line breaks, in the order they had, go to the end of the span.
+        std::string breaks;
+        for (std::size_t k = i; k < end; ++k) {
+            if (src_[k] == '\n' || src_[k] == '\r') {
+                breaks += src_[k];
+            }
+        }
+        std::fill(result_.text.begin() + static_cast<long>(i), result_.text.begin() + static_cast<long>(end), ' ');
+        std::copy(text.begin(), text.end(), result_.text.begin() + static_cast<long>(i));
+        std::copy(breaks.begin(), breaks.end(), result_.text.begin() + static_cast<long>(end - breaks.size()));
+        result_.blanked.push_back({static_cast<unsigned>(i), static_cast<unsigned>(end)});
+        if (!terminated) {
+            prev_ = {";", end - 1};   // the one added; a ';' of the user's sets prev_ itself when it is reached
+        }
+        return end;
+    }
+
     // `slots:` / `signals:` and their Q_ spellings. Returns true if handled.
     //
     // Both are ordinary identifiers outside a class body, so they are only
@@ -475,6 +533,12 @@ private:
         }
         if (one_of(kBlankFunctions, word) || is_ignored(word)) {
             return function_like(i, j, word);
+        }
+        if (table_.expand_mock_methods && is_mock_method_macro(word)) {
+            const std::size_t end = mock_method(i, j, word);
+            if (end != npos) {
+                return end;
+            }
         }
         if ((word == "slots" || word == "Q_SLOTS" || word == "signals" || word == "Q_SIGNALS") &&
             section_label(i, j, word)) {

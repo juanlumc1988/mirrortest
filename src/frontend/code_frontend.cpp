@@ -110,9 +110,9 @@ std::string signature(const ir::Method& m) {
 class Reader {
 public:
     Reader(const syntax::Tree& tree, const std::vector<QtMarker>& markers, const std::string& file,
-           const std::string& header, ir::Model& model, core::Diagnostics& diagnostics)
+           const std::string& header, ir::Model& model, core::Diagnostics& diagnostics, bool anonymous_namespaces)
         : tree_(tree), markers_(markers), file_(file), header_(header), model_(model),
-          diagnostics_(diagnostics) {}
+          diagnostics_(diagnostics), anonymous_namespaces_(anonymous_namespaces) {}
 
     void run() {
         report_parse_errors();
@@ -224,7 +224,10 @@ private:
     void namespace_definition(const Node& node) {
         const Node name = node.child_by_field("name");
         if (name.is_null()) {
-            return;   // anonymous: internal linkage, unreachable from a test
+            // Internal linkage: unreachable from a test of a header, but the file's own helpers and
+            // doubles, when the file is a test.
+            if (anonymous_namespaces_) declarations(node.child_by_field("body"));
+            return;
         }
         std::vector<std::string> parts;
         std::string_view rest = name.text();
@@ -742,6 +745,7 @@ private:
     const std::string&               header_;
     ir::Model&                       model_;
     core::Diagnostics&               diagnostics_;
+    bool                             anonymous_namespaces_;
     std::vector<std::string>         ns_;
     std::vector<Branch>                          branches_;   // the #if branches the walk is inside of
     std::map<std::string, std::vector<Declared>> declared_;   // per class, what has been declared so far
@@ -751,8 +755,8 @@ private:
 
 void read_declarations(const syntax::Tree& tree, const std::vector<syntax::QtMarker>& markers,
                        const std::string& file, const std::string& include_path, ir::Model& model,
-                       core::Diagnostics& diagnostics) {
-    Reader(tree, markers, file, include_path, model, diagnostics).run();
+                       core::Diagnostics& diagnostics, bool anonymous_namespaces) {
+    Reader(tree, markers, file, include_path, model, diagnostics, anonymous_namespaces).run();
 }
 
 ir::Model read_header(const core::SourceFile& source, const std::string& include_path,

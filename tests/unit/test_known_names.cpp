@@ -48,6 +48,17 @@ TEST(KnownNames, StdTypes) {
     for (const char* name : {"String", "Vector", "Foo", "size_t", ""}) EXPECT_FALSE(is_std_type(name)) << name;
 }
 
+TEST(KnownNames, TestingTypes) {
+    for (const char* name : {"Test", "TestWithParam", "WithParamInterface", "Environment", "NiceMock", "NaggyMock", "StrictMock",
+                             "Mock", "Sequence", "InSequence", "Expectation", "Matcher", "Action", "Cardinality", "Types"}) {
+        EXPECT_TRUE(is_testing_type(name)) << name;
+    }
+    // The functions (Return, _, AtLeast) are another list; a name that merely starts alike is not here.
+    for (const char* name : {"TestFixture", "Mocks", "nice_mock", "Return", "string", "Foo", ""}) {
+        EXPECT_FALSE(is_testing_type(name)) << name;
+    }
+}
+
 TEST(KnownNames, CFunctionsAndTheKeywordLikeOperators) {
     for (const char* name : {"strlen", "memcpy", "memset", "abs", "printf", "snprintf", "malloc", "free", "sqrt",
                              "pow", "floor", "assert", "offsetof", "va_start", "alignof", "static_assert",

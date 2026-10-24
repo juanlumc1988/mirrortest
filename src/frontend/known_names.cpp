@@ -84,6 +84,15 @@ constexpr Name kStdFunctions[] = {
     "transform", "unique",
 };
 
+// Unscoped, for when the file says `using namespace testing;`.
+constexpr Name kTestingTypes[] = {
+    "Action", "ActionInterface", "AssertionResult", "Cardinality", "CardinalityInterface",
+    "Environment", "Expectation", "ExpectationSet", "InSequence", "Matcher", "MatcherInterface",
+    "Message", "Mock", "NaggyMock", "NiceMock", "Sequence", "StrictMock", "Test",
+    "TestEventListener", "TestInfo", "TestSuite", "TestWithParam", "Types", "UnitTest",
+    "WithParamInterface",
+};
+
 constexpr Name kFrameworkMembers[] = {
     "GetParam", "HasFailure", "HasFatalFailure", "HasNonfatalFailure", "IsSkipped", "RecordProperty",
     "SetUp", "SetUpTestCase", "SetUpTestSuite", "TearDown", "TearDownTestCase", "TearDownTestSuite",
@@ -98,6 +107,7 @@ static_assert(is_sorted_unique(kStandardCTypes), "kStandardCTypes must be sorted
 static_assert(is_sorted_unique(kStdTypes), "kStdTypes must be sorted and free of duplicates");
 static_assert(is_sorted_unique(kCFunctions), "kCFunctions must be sorted and free of duplicates");
 static_assert(is_sorted_unique(kStdFunctions), "kStdFunctions must be sorted and free of duplicates");
+static_assert(is_sorted_unique(kTestingTypes), "kTestingTypes must be sorted and free of duplicates");
 static_assert(is_sorted_unique(kFrameworkMembers), "kFrameworkMembers must be sorted and free of duplicates");
 static_assert(is_sorted_unique(kForeignNamespaces), "kForeignNamespaces must be sorted and free of duplicates");
 
@@ -125,6 +135,7 @@ bool is_standard_c_type(std::string_view name) { return contains(kStandardCTypes
 bool is_std_type(std::string_view name)        { return contains(kStdTypes, name); }
 bool is_c_function(std::string_view name)      { return contains(kCFunctions, name); }
 bool is_std_function(std::string_view name)    { return contains(kStdFunctions, name); }
+bool is_testing_type(std::string_view name)    { return contains(kTestingTypes, name); }
 bool is_framework_member(std::string_view name) { return contains(kFrameworkMembers, name); }
 bool is_foreign_namespace(std::string_view name) { return contains(kForeignNamespaces, name); }
 

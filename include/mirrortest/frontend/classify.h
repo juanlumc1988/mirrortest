@@ -62,6 +62,13 @@ struct ClassTarget {
     std::vector<std::size_t> constructions;
     std::vector<std::size_t> field_accesses;
 
+    // What the test's doubles of this class override: a fake or a mock that derives
+    // from it (`class MockSensor : public Sensor`) says which functions it is an
+    // interface of. Each as the double declares it, made virtual (inference makes it
+    // pure unless the test builds the class itself); one per signature, whichever
+    // double said it first.
+    std::vector<ir::Method>  interface_methods;
+
     std::string qualified() const;             // "acme::Foo"
 };
 
@@ -97,6 +104,13 @@ struct Classified {
 
     // The type a call constructs if it is a functional cast, else null.
     const TypeName* cast_of(const FactRef& call) const;
+
+    // The class each of the file's test doubles stands for, by the double's name, as the
+    // test writes it: "MockSensor" -> "Sensor". A double is a class of the file with a
+    // base that is neither one of the file's own classes nor part of the test framework.
+    // The code under test is written against the interface and the test hands it a
+    // double, so a parameter that receives one has the interface's type.
+    std::map<std::string, std::string> doubles;
 
     // config.overrides with the file's long-form annotations laid over them,
     // attribute by attribute: the annotation, being nearer the code, wins. Keyed

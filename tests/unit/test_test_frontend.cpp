@@ -1291,6 +1291,17 @@ TEST(TestFrontendFixture, StructFixturesWork) {
     EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Foo::go"}));
 }
 
+TEST(TestFrontendFixture, FixtureInAnAnonymousNamespaceIsFoundFromTheTest) {
+    const Read r = read(
+        "namespace {\n"
+        "class F : public ::testing::Test { protected: Foo foo_; };\n"
+        "}\n"
+        "TEST_F(F, N) { foo_.run(); }\n");
+    EXPECT_TRUE(warnings(r).empty());
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(r.facts.method_calls[0].receiver.name, "Foo");
+}
+
 TEST(TestFrontendFixture, FixtureInANamespaceIsFoundFromTheTest) {
     const Read r = read(
         "namespace t {\n"
@@ -1325,6 +1336,82 @@ TEST(TestFrontendFixture, ByValueMembersOfClassTypeAreConstructedWithTheFixture)
     }
     EXPECT_EQ(made, (std::vector<std::string>{"Foo:default:0", "Baz:brace:2", "Qux:functional:1",
                                               "std::unique_ptr:default:0"}));
+}
+
+TEST(TestFrontendFixture, ADefaultMemberInitialiserSeesTheOtherMembers) {
+    // `Controller controller{&sensor};` passes the member, not an unknown name.
+    const Read r = read(
+        "class F : public ::testing::Test {\n"
+        "protected:\n"
+        "    Controller controller{&sensor};\n"
+        "    Sensor sensor;\n"
+        "};\n");
+    const Construction* made = nullptr;
+    for (const Construction& c : r.facts.constructions) {
+        if (c.type.name == "Controller") made = &c;
+    }
+    ASSERT_NE(made, nullptr);
+    ASSERT_EQ(made->args.size(), 1u);
+    ASSERT_TRUE(made->args[0].type.has_value());
+    EXPECT_EQ(made->args[0].type->spelling, "Sensor*");
+}
+
+TEST(TestFrontendFixture, AMemberInitialiserAfterAMethodStillSeesTheMembers) {
+    // The scope of a method's body is gone by the time the next member is read.
+    const Read r = read(
+        "class F : public ::testing::Test {\n"
+        "protected:\n"
+        "    void SetUp() override { sensor.read(); }\n"
+        "    Controller controller{&sensor};\n"
+        "    Sensor sensor;\n"
+        "};\n");
+    const Construction* made = nullptr;
+    for (const Construction& c : r.facts.constructions) {
+        if (c.type.name == "Controller") made = &c;
+    }
+    ASSERT_NE(made, nullptr);
+    ASSERT_EQ(made->args.size(), 1u);
+    ASSERT_TRUE(made->args[0].type.has_value());
+    EXPECT_EQ(made->args[0].type->spelling, "Sensor*");
+}
+
+TEST(TestFrontendTypes, TheBasesOfAClassTheFileDefinesAreUses) {
+    const Read r = read(
+        "class MockSensor : public Sensor, private acme::Logger, public Base<int> {};\n"
+        "struct Plain : Other {};\n");
+    std::vector<std::string> names;
+    for (const frontend::TypeUse& t : r.facts.type_uses) names.push_back(t.type.qualified());
+    EXPECT_EQ(names, (std::vector<std::string>{"Sensor", "acme::Logger", "Base", "Other"}));
+}
+
+TEST(TestFrontendTypes, AVirtualBaseAndABaseInANamespaceAreUsesToo) {
+    const Read r = read("class D : public virtual ns::B {};\n");
+    std::vector<std::string> names;
+    for (const frontend::TypeUse& t : r.facts.type_uses) names.push_back(t.type.qualified());
+    EXPECT_EQ(names, (std::vector<std::string>{"ns::B"}));
+}
+
+TEST(TestFrontendTypes, ABaseUseCarriesItsPlaceAndNamespace) {
+    const Read r = read("namespace acme {\nclass M : public S {};\n}\n");
+    ASSERT_EQ(r.facts.type_uses.size(), 1u);
+    EXPECT_EQ(r.facts.type_uses[0].where.line, 2u);
+    EXPECT_EQ(r.facts.type_uses[0].ns, (std::vector<std::string>{"acme"}));
+}
+
+TEST(TestFrontendMocks, MockMethodsAreMembersOfTheMock) {
+    const Read r = read(
+        "class MockSensor : public Sensor {\n"
+        "public:\n"
+        "    MOCK_METHOD(int, read, (), (override));\n"
+        "    MOCK_METHOD(void, set, (double, const std::string&), (const, override));\n"
+        "    MOCK_METHOD1(write, void(int));\n"
+        "};\n");
+    EXPECT_TRUE(warnings(r).empty());
+    ASSERT_EQ(r.facts.local.classes.size(), 1u);
+    std::vector<std::string> methods;
+    for (const ir::Method& m : r.facts.local.classes[0].methods) methods.push_back(m.name + "/" + std::to_string(m.params.size()));
+    EXPECT_EQ(methods, (std::vector<std::string>{"read/0", "set/2", "write/1"}));
+    for (const ir::Method& m : r.facts.local.classes[0].methods) EXPECT_TRUE(m.is_override) << m.name;
 }
 
 TEST(TestFrontendFixture, ConstructorInitialisersConstructTheirMembers) {

@@ -1,0 +1,1 @@
+A mock written with `MOCK_METHOD`, held by a fixture as `NiceMock<MockSensor>` and used as `StrictMock<MockSensor>` in a test. The code under test is written against `Sensor`, so `Sensor` is generated as an interface (pure virtual functions as the mock declares them, and a virtual destructor) and `Controller` takes a `Sensor*`, not a `MockSensor*` or a `NiceMock<MockSensor>*`.

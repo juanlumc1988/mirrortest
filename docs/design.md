@@ -180,7 +180,8 @@ frontends depend on (the result of the spike).
 `syntax/preprocess.h`:
 
 ```cpp
-struct MacroTable { std::vector<std::string> ignore; };          // config.ignore_macros
+struct MacroTable { std::vector<std::string> ignore;              // config.ignore_macros
+                    bool expand_mock_methods = false; };          // gmock's macros: test files only (§7.13)
 struct QtMarker { enum class Kind { QObject, Gadget, SlotsSection, SignalsSection,
                                     Invokable, DisableCopy };
                   Kind kind; unsigned offset; };
@@ -197,7 +198,10 @@ Rules (all with unit tests):
 1. **Same length** as the input; the `\n` (and `\r`) inside an erased span are
    kept → the lines and columns of the diagnostics remain those of the original
    file. The invariant is checked in every test: `out.text.size() == in.size()`
-   and the same `\n` positions.
+   and the same `\n` positions. The one exception is a gmock method macro that
+   is expanded (below) over several lines: its line breaks are kept, in order,
+   at the *end* of its span, so every line after it is where it was, and only a
+   column on the macro's last line is off.
 2. A leading UTF-8 BOM → 3 spaces.
 3. A minimal lexical scanner that **does not touch**: `//` comments (with `\`
    continuation) and `/* */`; string and character literals with escapes; *raw
@@ -217,6 +221,7 @@ Rules (all with unit tests):
    | `signals`, `Q_SIGNALS` | only if followed by a single `:` and the previous token is an access specifier or a member boundary (`{` `}` `;` `:`). After a specifier (`public signals:`) → spaces, marker on the specifier. After a boundary → `public` + padding (the section must still see an access specifier), marker at the offset of `signals`. |
    | `Q_DECL_OVERRIDE`, `Q_DECL_FINAL`, `Q_DECL_NOEXCEPT`, `Q_DECL_CONSTEXPR`, `Q_NULLPTR` | `override`, `final`, `noexcept`, `constexpr`, `nullptr` + padding |
    | `Q_PROPERTY`, `Q_ENUM`, `Q_ENUMS`, `Q_FLAG`, `Q_FLAGS`, `Q_CLASSINFO`, `Q_INTERFACES`, `Q_DECLARE_METATYPE`, `Q_DECLARE_PRIVATE`, `Q_DECLARE_PUBLIC`, `Q_PRIVATE_SLOT`, `Q_DECL_DEPRECATED_X`, `Q_DISABLE_COPY`, `Q_DISABLE_COPY_MOVE` | function-like: identifier + balanced `( … )` (respecting strings, comments and raw strings inside) → spaces. Only **spaces or tabs** are allowed before the `(`, not line breaks: after `MY_ATTR⏎(void)f();` the `(` is a statement, not the arguments. `Q_DISABLE_COPY*` leaves a `DisableCopy` marker. If no `(` follows, or the parenthesis does not close, only the identifier is erased. |
+   | `MOCK_METHOD`, `MOCK_METHODn`, `MOCK_CONST_METHODn` (n from 0 to 20) and their `_T`, `_WITH_CALLTYPE` and `_T_WITH_CALLTYPE` forms — **only when `MacroTable::expand_mock_methods` is on** (the test-file reader sets it; a header's reader does not) | replaced by the member each declares, padded with spaces: `MOCK_METHOD(int, read, (), (const, override));` → `int read() const override;`; `MOCK_METHOD1(write, void(int))` → `void write(int) override;` (the old macros do not say `override`, but a mock method is there to override one). Done by `syntax/mock_macros` (text in, text out; the argument lists have a regular shape): parentheses that protect a comma (`(std::map<int, int>)`) are dropped, the specifiers (`const`, `ref(&)`, `noexcept`, `override`, `final`; `Calltype(...)` is ignored) are written in the order the language wants, and white space is one space. A `;` is added after a macro that has none (the old macros need none); the declaration is shortened to fit (the space after a comma goes first) and, if it still does not fit, or the arguments hold a comment or a literal, or are not what the macro takes, the macro is **erased** like any other, so that it cannot spoil the declarations around it. A word that looks like one of them but has no `( … )` is left alone. |
    | `config.ignore_macros` | object-like or function-like depending on whether `(` follows (same rule) |
    | Export macro: an identifier `[A-Z][A-Z0-9_]*` between `class`/`struct` and another identifier that is not `final` (`class FOO_EXPORT Widget :`) | spaces. `class FOO final` and `class FOO {` keep `FOO`: it is the name. |
 
@@ -285,8 +290,11 @@ why it reads **declarations**, not headers: any translation unit will do.
   `nested_namespace_specifier` `a::b`), `linkage_specification` (`extern "C"`,
   with or without braces), `preproc_if`/`preproc_ifdef`/`preproc_elif`/
   `preproc_else` (all branches, §6.5), `preproc_include` (path without
-  delimiters + `is_system`). Anonymous namespaces: skipped (internal linkage,
-  not testable from outside).
+  delimiters + `is_system`). Anonymous namespaces: skipped in a header
+  (internal linkage, not testable from outside); read, with the namespace around
+  them, in a test file (`read_declarations(…, anonymous_namespaces = true)`),
+  where the fakes, fixtures and helpers of the file are very often in one and
+  are the file's own (§7.7).
 - `class_specifier`/`struct_specifier` **with a body** → `Class`. Without a body
   (forward declaration, `class Foo* f();`) → ignored. `union` → ignored.
   `struct S { … } s;` defines `S` as well as declaring `s`. Inside a
@@ -613,7 +621,8 @@ Steps, in this order:
 5. exception types.
 
 **Class candidate**: it appears as the type of a declaration, member,
-parameter, return value, `catch` or alias (`TypeUse`), in `new N(…)`, as a
+parameter, return value, `catch` or alias (`TypeUse`), as a base class of a class
+the file defines (`class MockSensor : public Sensor`, §7.13), in `new N(…)`, as a
 template argument of `make_unique`/`make_shared`/a smart pointer, as the
 receiver of a call or of a field, in a construction, as `N(…)` when it is also a
 class through one of those routes (a functional *cast*), or as the scope of an
@@ -628,6 +637,9 @@ class through one of those routes (a functional *cast*), or as the scope of an
 - with `using namespace std;`, the names of the standard library's types
   (`string`, `vector`, `unique_ptr`, …); without it, `string` is just another
   name;
+- with `using namespace testing;`, the names of GoogleTest's and gmock's types
+  (`Test`, `TestWithParam`, `NiceMock`, `StrictMock`, `Matcher`, … —
+  `known_names.h`, `is_testing_type`); `testing::NiceMock<T>` needs no such line;
 - declared in the file itself (fixtures, helper structs, enums, aliases and
   `typedef`s) or a template parameter;
 - declared in an existing header that was analysed (§7.10): by simple name if it
@@ -986,6 +998,63 @@ Everything of §7.1–7.11 applies; what is particular to Qt Test is this.
   is not declared, and a class that has signals must be a `QObject`, which
   `gen-impl` does not generate yet); the `QTEST` column comparison (above).
   Each is a gap in what is generated, never a wrong guess.
+
+### 7.13 Test doubles: fakes and mocks
+
+A test of code that talks to an interface hands it a **double**: a class the file
+defines that derives from the interface (`class MockSensor : public Sensor`).
+The code under test is written against `Sensor`; a header cannot name
+`MockSensor`. Without this section the tool would generate `Controller(MockSensor*)`
+and an empty `sensor.h`.
+
+- **A double** is a class of the file (anonymous namespaces included, §6.1) with
+  a base class that is neither another class of the file nor part of the
+  framework (`testing::Test`, `TestWithParam<T>`, `WithParamInterface<T>`, and
+  those names unscoped under `using namespace testing;` or
+  `using testing::Test;`). The base it **stands for** is the first such base, as
+  the file writes it (`Sensor`, `acme::Sensor`, `std::runtime_error`,
+  `QWidget`); a double of one of the file's doubles stands for what that one
+  does. A base class is a use of its type (§7.7), so an interface nobody else
+  provides is a class to generate. A double with several bases adds the note
+  `mt-unsupported`: what it overrides is declared in the first.
+  `Classified::doubles` maps every double's name to the base it stands for.
+- **The interface**: the functions of a double marked `override` or `final`
+  —written out, or by `MOCK_METHOD` and its relatives (§5.2)— are what the class
+  it stands for must declare: pure virtual, as the double declares them
+  (`ClassTarget::interface_methods`; return type, parameter types and names,
+  `const`, `noexcept`; `Declared` origin, so nothing is guessed). One per
+  signature, however many doubles say it (name, parameter types and `const`:
+  `put(int)` and `put(double)` are two). Not constructors, destructors, statics
+  or templates; a function without `override` is the double's own.
+- **In the model** (`Inference::build_interface`): the interface's functions
+  replace an inferred function of the same name and arity (a call made through
+  the interface says less than the double), the others are added, and the class
+  gets `virtual ~Foo() = default;` (note: "virtual because the test derives
+  'MockSensor' from it"), which a class deleted through a pointer to it needs.
+  A class the test also builds itself (`Foo foo;`, `new Foo`, next to a
+  `class TestableFoo : public Foo`) cannot be abstract: its functions are
+  virtual, not pure, and get stubs like any other.
+  Types written with `using namespace std;` are qualified like any other.
+  Nothing is generated for a base the file's includes or the configuration
+  provide (§7.10), or that is somebody else's (`QWidget`, `std::runtime_error`).
+- **Types**: an argument whose type is a double has the type it stands for
+  (`Inference::through_double`): `&mock` → `Sensor*`, `fake` → `const Sensor&`,
+  `std::move(owner)` → `std::unique_ptr<Sensor>` by value, a template argument
+  too (`std::vector<FakeSensor*>` → `std::vector<Sensor*>`; a name is replaced
+  whole, so `FakeSensorFactory` is not touched and `t::Fake` goes with its
+  qualifier). gmock's wrappers are the mock they wrap: `NiceMock<M>`,
+  `NaggyMock<M>` and `StrictMock<M>` (with or without `testing::`) of a double
+  are that double; of anything else, they are left as written. Two doubles given
+  to the same parameter are one type, not a conflict. The same goes for the type
+  a call's result is compared with (`EXPECT_EQ(c.sensor(), &fake)` → `Sensor*`).
+- **Where the type comes from**: a variable (`MockSensor m;`,
+  `NiceMock<MockSensor> m;`, a fixture's member), `new MockSensor` (→ `Sensor*`)
+  and `auto p = std::make_unique<MockSensor>();` (→ `std::unique_ptr<Sensor>`).
+  `EXPECT_CALL(mock, f(...))` and `ON_CALL` are macros (R21): they are not read
+  as calls of `f`, which the mock declares. What a double does with its
+  arguments, and what the code under test does with the interface, are not
+  checked: the round trips of §16.3 do, by compiling a real gmock mock against
+  the generated interface.
 
 ---
 
@@ -1779,11 +1848,13 @@ Implemented in `core/templates.h` (`TemplateStore`) and
 3. **Round trip** (CTest + `cmake -P tests/roundtrip/run_case.cmake`):
    - gen-impl (`tests/roundtrip/run_case.cmake`, cases `basic_class`,
      `fixture_members`, `namespaces`, `multi_class_includes`, `no_exceptions`,
-     whose test and arguments are those of the golden case): generate → compile
-     the stubs with `-std=c++11 -Wall -Wextra -Wpedantic -Werror` (plus
-     `-fno-exceptions -fno-rtti` for `abort`) and the test with
+     `mock_interface`, `mock_legacy_macros`, `mock_known_interface`,
+     `fake_interface`, whose test and arguments are those of the golden case):
+     generate → compile the stubs with `-std=c++11 -Wall -Wextra -Wpedantic
+     -Werror` (plus `-fno-exceptions -fno-rtti` for `abort`; the case's
+     `input/include` is on `-I`) and the test with
      `-std=c++14 -Wall -Wextra -Werror` (R27) → link against the main build's
-     GoogleTest (compiler command lines, not a nested CMake project: no network
+     GoogleTest and gmock (compiler command lines, not a nested CMake project: no network
      and a second per case) → run with `--gtest_output=json` → require
      `tests > 0` and **`failures == tests`** (all red; with the `abort` policy
      the process dies, so each test is run alone and must die) → run again with

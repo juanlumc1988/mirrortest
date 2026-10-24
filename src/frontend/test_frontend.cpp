@@ -326,6 +326,12 @@ private:
         if (name.is_null() || body.is_null()) return;
         const ir::Class* cls = local_class(std::string(name.text()));
 
+        // `class MockSensor : public Sensor`: Sensor is a class somebody has to provide.
+        for (const Node& clause : spec.named_children()) {
+            if (clause.type() != "base_class_clause") continue;
+            for (const Node& base : clause.named_children()) add_type_uses(base);
+        }
+
         // `Fixture() : foo_(3) {}` constructs foo_ itself; the declaration
         // `Foo foo_;` must not also ask for a default constructor.
         ctor_initialised_.clear();
@@ -348,7 +354,10 @@ private:
                             initialiser_list(member));
                 }
             } else if (member.type() == "field_declaration") {
+                // A default member initialiser sees the other members: `Controller controller{&sensor};`
+                begin_scope(cls);
                 field_declaration(member);
+                end_scope();
             }
             // Members under #if are not visited: the code frontend read them for the
             // symbol table, and their bodies are too rare to be worth the nesting.
@@ -478,8 +487,8 @@ private:
         }
     }
 
-    void analyse(const Node& body, const Node& params, const ir::Class* owner,
-                 std::optional<ir::Type> param_type, const Node& initialisers = Node()) {
+    // The members of `owner` (and of its bases in the file), as the outermost scope.
+    void begin_scope(const ir::Class* owner, std::optional<ir::Type> param_type = std::nullopt) {
         symbols_.clear();
         owner_ = owner;
         param_type_ = std::move(param_type);
@@ -490,12 +499,21 @@ private:
             declare_members(*owner, visited);
         }
         symbols_.push();
-        declare_parameters(params);
-        member_initialisers(initialisers);
-        statement(body);
+    }
+
+    void end_scope() {
         symbols_.clear();
         owner_ = nullptr;
         param_type_.reset();
+    }
+
+    void analyse(const Node& body, const Node& params, const ir::Class* owner,
+                 std::optional<ir::Type> param_type, const Node& initialisers = Node()) {
+        begin_scope(owner, std::move(param_type));
+        declare_parameters(params);
+        member_initialisers(initialisers);
+        statement(body);
+        end_scope();
     }
 
     // The parameters of a function, lambda or catch clause: each type is a use,
@@ -1647,7 +1665,10 @@ private:
 
 TestFileFacts read_test_file(const core::SourceFile& source, const TestFrontendOptions& options,
                              core::Diagnostics& diagnostics) {
-    const syntax::Preprocessed pre = syntax::preprocess(source.text, options.macros);
+    // A mock class says what its interface is in MOCK_METHOD macros: only a test file has them.
+    syntax::MacroTable macros = options.macros;
+    macros.expand_mock_methods = true;
+    const syntax::Preprocessed pre = syntax::preprocess(source.text, macros);
     const syntax::Tree tree = syntax::parse_cpp(pre.text);
 
     TestFileFacts facts;
@@ -1656,7 +1677,7 @@ TestFileFacts read_test_file(const core::SourceFile& source, const TestFrontendO
     // also reports the parse errors, once.
     facts.local = [&] {
         ir::Model model;
-        read_declarations(tree, pre.markers, source.path, std::string(), model, diagnostics);
+        read_declarations(tree, pre.markers, source.path, std::string(), model, diagnostics, true);
         return model;
     }();
     facts.includes = facts.local.includes;

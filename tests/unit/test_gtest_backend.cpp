@@ -275,6 +275,26 @@ TEST(GtestBackendFixture, EachPartIsThereOnlyIfItHasSomethingToSay) {
     EXPECT_EQ(fixture_lines(build({plan})), (Lines{"class FooTest : public ::testing::Test {", "protected:", "};"}));
 }
 
+TEST(GtestBackendFixture, NoBlankLineBeforeTheEndWhenThereAreNoMembers) {
+    // The blank line separates the methods from the members: no members, nothing to separate.
+    ir::TestPlan plan = plan_of({test_case("t", {})});
+    ir::Fixture f = fixture_of("FooTest");
+    f.set_up = {stmt(Stmt::Kind::Code, "a()")};
+    plan.suites[0].fixture = f;
+    EXPECT_EQ(fixture_lines(build({plan})), (Lines{
+        "class FooTest : public ::testing::Test {", "protected:", "    void SetUp() override {", "        a();", "    }", "};"}));
+}
+
+TEST(GtestBackendFixture, ABlankLineInAMethodHasNoIndentation) {
+    ir::TestPlan plan = plan_of({test_case("t", {})});
+    ir::Fixture f = fixture_of("FooTest");
+    f.set_up = {stmt(Stmt::Kind::Code, "a()"), stmt(Stmt::Kind::Blank), stmt(Stmt::Kind::Code, "b()")};
+    plan.suites[0].fixture = f;
+    EXPECT_EQ(fixture_lines(build({plan})), (Lines{
+        "class FooTest : public ::testing::Test {", "protected:", "    void SetUp() override {", "        a();", "", "        b();", "    }",
+        "};"}));
+}
+
 TEST(GtestBackendFixture, SeveralInitialisersAreOneList) {
     ir::TestPlan plan = plan_of({test_case("t", {})});
     ir::Fixture f = fixture_of("FooTest");

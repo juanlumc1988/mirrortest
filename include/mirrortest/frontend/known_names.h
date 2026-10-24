@@ -44,6 +44,11 @@ bool is_c_function(std::string_view name);
 // for when the file says `using namespace std;`.
 bool is_std_function(std::string_view name);
 
+// Test, TestWithParam, NiceMock, Matcher: the types of GoogleTest and gmock, for
+// when the file says `using namespace testing;` (or `using testing::Test;`,
+// which is handled elsewhere).
+bool is_testing_type(std::string_view name);
+
 // SetUp, TearDown, GetParam, RecordProperty: what a GoogleTest fixture
 // inherits from ::testing::Test and its relatives.
 bool is_framework_member(std::string_view name);

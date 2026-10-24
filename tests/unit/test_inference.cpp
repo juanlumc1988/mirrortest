@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "mirrortest/frontend/classify.h"
+#include "mirrortest/frontend/code_frontend.h"
 #include "mirrortest/frontend/inference.h"
 #include "mirrortest/frontend/test_frontend.h"
 
@@ -836,6 +837,243 @@ TEST(InferenceWhole, EveryPrefixOfAFileIsInferredWithoutIncident) {
         const Outcome o = infer_text(text.substr(0, n));
         EXPECT_LE(o.model.classes.size(), 3u) << "cut at " << n;
     }
+}
+
+// ---- test doubles --------------------------------------------------------------------------------------------------------
+
+namespace {
+
+const char* const kFakeSensor =
+    "class FakeSensor : public Sensor {\n"
+    "public:\n"
+    "    int read() override { return 5; }\n"
+    "    void set(double v, const std::string& unit) override {}\n"
+    "    bool ok() const override { return true; }\n"
+    "};\n";
+
+std::vector<std::string> signatures(const ir::Class& c) {
+    std::vector<std::string> out;
+    for (const ir::Method& m : c.methods) {
+        std::string text;
+        if (m.is_virtual) text += "virtual ";
+        if (m.kind == ir::MethodKind::Constructor || m.kind == ir::MethodKind::Destructor) text += m.name;
+        else text += m.ret.spelling + " " + m.name;
+        text += "(";
+        for (std::size_t i = 0; i < m.params.size(); ++i) text += (i == 0 ? "" : ", ") + m.params[i].type.spelling;
+        text += std::string(")") + (m.is_const ? " const" : "") + (m.is_pure ? " = 0" : "") + (m.is_defaulted ? " = default" : "");
+        out.push_back(text);
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(InferenceDoubles, TheBaseOfAFakeIsAnInterface) {
+    const Outcome o = infer_text(std::string(kFakeSensor) + "TEST(S, N) { FakeSensor f; }\n");
+    EXPECT_EQ(signatures(the_class(o, "Sensor")),
+              (std::vector<std::string>{"virtual ~Sensor() = default", "virtual int read() = 0",
+                                        "virtual void set(double, const std::string&) = 0", "virtual bool ok() const = 0"}));
+    EXPECT_TRUE(errors(o).empty());
+    EXPECT_TRUE(warnings(o).empty());
+}
+
+TEST(InferenceDoubles, TheVirtualDestructorSaysWhy) {
+    const Outcome o = infer_text(std::string(kFakeSensor));
+    const ir::Method& destructor = the_class(o, "Sensor").methods.front();
+    ASSERT_EQ(destructor.kind, ir::MethodKind::Destructor);
+    EXPECT_EQ(destructor.name, "~Sensor");
+    EXPECT_TRUE(destructor.is_virtual);
+    EXPECT_TRUE(destructor.is_defaulted);
+    EXPECT_EQ(destructor.origin, ir::Origin::Inferred);
+    EXPECT_TRUE(has_note(destructor.notes, "'FakeSensor'"));
+}
+
+TEST(InferenceDoubles, TheDeclaredSignatureIsKeptAsDeclared) {
+    const Outcome o = infer_text(std::string(kFakeSensor));
+    const ir::Method& set = method(o, "Sensor", "set", 2);
+    EXPECT_EQ(param_types(set), (std::vector<std::string>{"double", "const std::string&"}));
+    EXPECT_EQ(param_names(set), (std::vector<std::string>{"v", "unit"}));
+    EXPECT_EQ(set.origin, ir::Origin::Declared);
+    EXPECT_EQ(set.ret.spelling, "void");
+    EXPECT_TRUE(set.notes.empty()) << "nothing is guessed here";
+    EXPECT_EQ(set.access, ir::Access::Public);
+}
+
+TEST(InferenceDoubles, AMockSaysTheSame) {
+    const Outcome o = infer_text(
+        "class MockSensor : public Sensor {\n"
+        "public:\n"
+        "    MOCK_METHOD(int, read, (), (override));\n"
+        "    MOCK_METHOD(std::string, name, (), (const, override));\n"
+        "    MOCK_METHOD1(write, void(int));\n"
+        "};\n");
+    EXPECT_EQ(signatures(the_class(o, "Sensor")),
+              (std::vector<std::string>{"virtual ~Sensor() = default", "virtual int read() = 0", "virtual std::string name() const = 0",
+                                        "virtual void write(int) = 0"}));
+}
+
+TEST(InferenceDoubles, AParameterThatReceivesAPointerToTheDoubleHasTheInterfaceType) {
+    const Outcome o = infer_text(std::string(kFakeSensor) + "TEST(S, N) { FakeSensor f; Controller c(&f); }\n");
+    const auto ctors = constructors(the_class(o, "Controller"));
+    ASSERT_EQ(ctors.size(), 1u);
+    EXPECT_EQ(param_types(*ctors[0]), std::vector<std::string>{"Sensor*"});
+    EXPECT_EQ(param_names(*ctors[0]), std::vector<std::string>{"f"});
+}
+
+TEST(InferenceDoubles, AndAReferenceToIt) {
+    const Outcome o = infer_text(std::string(kFakeSensor) + "TEST(S, N) { FakeSensor f; Controller c; c.attach(f); }\n");
+    EXPECT_EQ(param_types(method(o, "Controller", "attach", 1)), std::vector<std::string>{"const Sensor&"});
+}
+
+TEST(InferenceDoubles, TheWrappersOfGmockAreTheMockTheyWrap) {
+    const Outcome o = infer_text(
+        "class MockSensor : public Sensor { public: MOCK_METHOD(int, read, (), (override)); };\n"
+        "TEST(S, N) {\n"
+        "    testing::NiceMock<MockSensor> a;\n"
+        "    ::testing::StrictMock<MockSensor> b;\n"
+        "    testing::NaggyMock<MockSensor> c;\n"
+        "    Controller k;\n"
+        "    k.one(&a);\n"
+        "    k.two(&b);\n"
+        "    k.three(&c);\n"
+        "    k.four(a);\n"
+        "}\n");
+    EXPECT_EQ(param_types(method(o, "Controller", "one", 1)), std::vector<std::string>{"Sensor*"});
+    EXPECT_EQ(param_types(method(o, "Controller", "two", 1)), std::vector<std::string>{"Sensor*"});
+    EXPECT_EQ(param_types(method(o, "Controller", "three", 1)), std::vector<std::string>{"Sensor*"});
+    EXPECT_EQ(param_types(method(o, "Controller", "four", 1)), std::vector<std::string>{"const Sensor&"});
+    EXPECT_TRUE(errors(o).empty());
+    for (const std::string& code : warnings(o)) EXPECT_EQ(code, "mt-unused-result") << "no class template NiceMock, no conflict";
+}
+
+TEST(InferenceDoubles, AWrapperOfSomethingThatIsNotADoubleIsLeftAlone) {
+    const Outcome o = infer_text(
+        "TEST(S, N) { testing::NiceMock<RealMock> a; Controller k; k.one(&a); }\n");
+    EXPECT_EQ(param_types(method(o, "Controller", "one", 1)), std::vector<std::string>{"testing::NiceMock<RealMock>*"});
+}
+
+TEST(InferenceDoubles, ADoubleInsideATemplateArgumentIsReplacedToo) {
+    const Outcome o = infer_text(
+        std::string(kFakeSensor) +
+        "TEST(S, N) { std::unique_ptr<FakeSensor> p; Controller k; k.adopt(std::move(p)); std::vector<FakeSensor*> v; k.all(v); }\n");
+    EXPECT_EQ(param_types(method(o, "Controller", "adopt", 1)), std::vector<std::string>{"std::unique_ptr<Sensor>"});
+    EXPECT_EQ(param_types(method(o, "Controller", "all", 1)), std::vector<std::string>{"const std::vector<Sensor*>&"});
+}
+
+TEST(InferenceDoubles, ANameThatMerelyContainsTheDoublesNameIsNotReplaced) {
+    const Outcome o = infer_text(
+        std::string(kFakeSensor) +
+        "TEST(S, N) { FakeSensorFactory f; Controller k; k.take(&f); ns::FakeSensors g; k.more(&g); }\n");
+    EXPECT_EQ(param_types(method(o, "Controller", "take", 1)), std::vector<std::string>{"FakeSensorFactory*"});
+    EXPECT_EQ(param_types(method(o, "Controller", "more", 1)), std::vector<std::string>{"ns::FakeSensors*"});
+}
+
+TEST(InferenceDoubles, AQualifiedNameOfADoubleIsReplacedWhole) {
+    const Outcome o = infer_text(
+        std::string(kFakeSensor) + "TEST(S, N) { FakeSensor f; Controller k; k.take(&f); }\n"
+        "namespace t { class Fake : public acme::Sensor { public: int read() override { return 1; } }; }\n"
+        "TEST(S, M) { t::Fake f; Controller k; k.put(&f); }\n");
+    EXPECT_EQ(param_types(method(o, "Controller", "put", 1)), std::vector<std::string>{"acme::Sensor*"});
+}
+
+TEST(InferenceDoubles, TwoDoublesPassedToOneParameterAgree) {
+    const Outcome o = infer_text(
+        "class Fake : public Sensor { public: int read() override { return 1; } };\n"
+        "class Mock : public Sensor { public: MOCK_METHOD(int, read, (), (override)); };\n"
+        "TEST(S, A) { Fake f; Controller c(&f); }\n"
+        "TEST(S, B) { testing::NiceMock<Mock> m; Controller c(&m); }\n");
+    const auto ctors = constructors(the_class(o, "Controller"));
+    ASSERT_EQ(ctors.size(), 1u);
+    EXPECT_EQ(param_types(*ctors[0]), std::vector<std::string>{"Sensor*"});
+    EXPECT_TRUE(warnings(o).empty()) << "one type, not a conflict between two doubles";
+}
+
+TEST(InferenceDoubles, ACallThroughTheInterfaceGivesWayToTheDeclaredSignature) {
+    const Outcome o = infer_text(
+        std::string(kFakeSensor) +
+        "TEST(S, N) { FakeSensor f; Sensor* s = &f; auto r = s->read(); EXPECT_EQ(s->read(), 7L); s->read(); }\n");
+    std::size_t reads = 0;
+    for (const ir::Method& m : the_class(o, "Sensor").methods) reads += m.name == "read" ? 1 : 0;
+    EXPECT_EQ(reads, 1u);
+    EXPECT_EQ(method(o, "Sensor", "read").ret.spelling, "int") << "the double says int; the test only compares";
+    EXPECT_TRUE(method(o, "Sensor", "read").is_pure);
+}
+
+TEST(InferenceDoubles, ACallWithAnotherArityIsAnotherFunction) {
+    const Outcome o = infer_text(
+        "class Fake : public Sensor { public: void put(int v) override {} };\n"
+        "TEST(S, N) { Fake f; Sensor* s = &f; s->put(1, 2); }\n");
+    EXPECT_NE(find_method(the_class(o, "Sensor"), "put", 1), nullptr);
+    EXPECT_NE(find_method(the_class(o, "Sensor"), "put", 2), nullptr);
+    EXPECT_TRUE(find_method(the_class(o, "Sensor"), "put", 1)->is_pure);
+    EXPECT_FALSE(find_method(the_class(o, "Sensor"), "put", 2)->is_pure);
+}
+
+TEST(InferenceDoubles, UsingNamespaceStdIsSpelledOutInTheInterface) {
+    const Outcome o = infer_text(
+        "using namespace std;\n"
+        "class Fake : public Sensor { public: string name() const override { return \"\"; } void set(const vector<int>& v) override {} };\n");
+    EXPECT_EQ(signatures(the_class(o, "Sensor")),
+              (std::vector<std::string>{"virtual ~Sensor() = default", "virtual std::string name() const = 0",
+                                        "virtual void set(const std::vector<int>&) = 0"}));
+}
+
+TEST(InferenceDoubles, ADoubleOfAKnownClassStillGivesTheInterfaceType) {
+    std::vector<ir::Model> known;
+    core::Diagnostics diag;
+    known.push_back(frontend::read_header({"sensor.h", "class Sensor { public: virtual ~Sensor(); virtual int read() = 0; };\n"},
+                                          "sensor.h", {}, diag));
+    const Outcome o = infer_text(std::string(kFakeSensor) + "TEST(S, N) { FakeSensor f; Controller c(&f); }\n", {}, known);
+    ASSERT_EQ(o.model.classes.size(), 1u);
+    EXPECT_EQ(o.model.classes[0].name, "Controller");
+    EXPECT_EQ(param_types(*constructors(o.model.classes[0])[0]), std::vector<std::string>{"Sensor*"});
+}
+
+TEST(InferenceDoubles, ADoubleOfSomebodyElsesClassGivesItsType) {
+    const Outcome o = infer_text(
+        "class MyError : public std::runtime_error { public: MyError() : std::runtime_error(\"x\") {} };\n"
+        "TEST(S, N) { MyError e; Handler h; h.handle(e); }\n");
+    EXPECT_EQ(param_types(method(o, "Handler", "handle", 1)), std::vector<std::string>{"const std::runtime_error&"});
+}
+
+TEST(InferenceDoubles, ALocalClassWithoutABaseKeepsItsOwnType) {
+    const Outcome o = infer_text(
+        "struct Params { int a; };\n"
+        "TEST(S, N) { Params p; Controller c(p); }\n");
+    EXPECT_EQ(param_types(*constructors(the_class(o, "Controller"))[0]), std::vector<std::string>{"const Params&"});
+}
+
+TEST(InferenceDoubles, ANonInterfaceClassHasNoVirtualDestructor) {
+    const Outcome o = body("Foo f(1); f.run();\n");
+    for (const ir::Method& m : the_class(o, "Foo").methods) EXPECT_NE(m.kind, ir::MethodKind::Destructor);
+}
+
+TEST(InferenceDoubles, AClassTheTestAlsoBuildsIsNotAbstract) {
+    // The "testable subclass" pattern: Foo is built on its own, so its virtual functions get stubs.
+    const Outcome o = infer_text(
+        "class TestableFoo : public Foo { public: int hook() override { return 1; } };\n"
+        "TEST(S, N) { Foo foo; TestableFoo t; EXPECT_EQ(foo.size(), 3u); }\n");
+    EXPECT_EQ(signatures(the_class(o, "Foo")),
+              (std::vector<std::string>{"virtual ~Foo() = default", "unsigned int size()", "virtual int hook()"}));
+}
+
+TEST(InferenceDoubles, AClassTheTestBuildsThroughANewExpressionIsNotAbstractEither) {
+    const Outcome o = infer_text(
+        "class TestableFoo : public Foo { public: int hook() override { return 1; } };\n"
+        "TEST(S, N) { Foo* foo = new Foo(); delete foo; }\n");
+    EXPECT_FALSE(method(o, "Foo", "hook").is_pure);
+}
+
+TEST(InferenceDoubles, TheReturnTypeOfAFunctionThatGivesBackADoubleIsTheInterface) {
+    const Outcome o = infer_text(
+        std::string(kFakeSensor) +
+        "TEST(S, N) { FakeSensor f; Controller c(&f); EXPECT_EQ(c.sensor(), &f); }\n");
+    EXPECT_EQ(method(o, "Controller", "sensor").ret.spelling, "Sensor*");
+}
+
+TEST(InferenceDoubles, AnInterfaceWithoutOverridesIsStillGenerated) {
+    const Outcome o = infer_text("class Fake : public Sensor {};\nTEST(S, N) { Fake f; }\n");
+    EXPECT_EQ(signatures(the_class(o, "Sensor")), std::vector<std::string>{});
 }
 
 }  // namespace

@@ -539,7 +539,6 @@ private:
             suite.cases.push_back(plan_case(c, *testable[i], names[i]));
             moves = moves || uses_move_;
         }
-        fixture_sut_.reset();
 
         ir::TestPlan plan;
         plan.file = core::expand_pattern(qtest() ? options_.config.naming.qtest_file : options_.config.naming.gtest_file,
@@ -556,7 +555,7 @@ private:
     core::Diagnostics&            diag_;
     std::vector<const ir::Model*> models_;
     bool                          uses_move_ = false;
-    std::optional<Sut>            fixture_sut_;   // set while the cases of a class with a fixture are planned
+    std::optional<Sut>            fixture_sut_;   // set by plan_fixture() for each class; read only when fixture() is on
 };
 
 }  // namespace

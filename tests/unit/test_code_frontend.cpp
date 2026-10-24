@@ -273,6 +273,44 @@ TEST(CodeFrontendScopes, AnAnonymousNamespaceIsInvisibleToTests) {
     EXPECT_TRUE(r.model.functions.empty());
 }
 
+namespace {
+
+// A translation unit read the way a test file is.
+ir::Model read_test_unit(const std::string& text) {
+    const syntax::Preprocessed pre = syntax::preprocess(text);
+    const syntax::Tree tree = syntax::parse_cpp(pre.text);
+    ir::Model model;
+    core::Diagnostics d;
+    frontend::read_declarations(tree, pre.markers, "t.cpp", "", model, d, true);
+    return model;
+}
+
+}  // namespace
+
+TEST(CodeFrontendScopes, AnAnonymousNamespaceOfATestFileIsItsOwn) {
+    const ir::Model model = read_test_unit("namespace { class Fake {}; int helper(int); }\nclass Visible {};");
+    ASSERT_EQ(model.classes.size(), 2u);
+    EXPECT_EQ(model.classes[0].name, "Fake");
+    EXPECT_TRUE(model.classes[0].ns.empty());
+    EXPECT_EQ(model.classes[1].name, "Visible");
+    ASSERT_EQ(model.functions.size(), 1u);
+    EXPECT_EQ(model.functions[0].name, "helper");
+}
+
+TEST(CodeFrontendScopes, TheNamespaceAroundAnAnonymousOneIsKept) {
+    const ir::Model model = read_test_unit("namespace acme { namespace { class Fake {}; } class Out {}; }\nclass Visible {};");
+    ASSERT_EQ(model.classes.size(), 3u);
+    EXPECT_EQ(model.classes[0].ns, std::vector<std::string>{"acme"});
+    EXPECT_EQ(model.classes[1].ns, std::vector<std::string>{"acme"});
+    EXPECT_TRUE(model.classes[2].ns.empty());
+}
+
+TEST(CodeFrontendScopes, AnAnonymousNamespaceInsideAnAnonymousOne) {
+    const ir::Model model = read_test_unit("namespace { namespace { class Deep {}; } }");
+    ASSERT_EQ(model.classes.size(), 1u);
+    EXPECT_EQ(model.classes[0].name, "Deep");
+}
+
 TEST(CodeFrontendScopes, ExternC) {
     const Read r = read("extern \"C\" { int c_api(int); }\nextern \"C\" int c_one(void);");
     ASSERT_EQ(r.model.functions.size(), 2u);

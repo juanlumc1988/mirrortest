@@ -89,6 +89,7 @@ public:
         resolve_free_calls();
         resolve_pending_calls();
         check_exception_types();
+        collect_doubles();
 
         // Everything was found in processing order; report it in source order.
         const auto by_first_use = [](const auto& a, const auto& b) { return before(a.first_use, b.first_use); };
@@ -97,6 +98,7 @@ public:
 
         Classified out;
         out.overrides = merged_overrides();
+        out.doubles = std::move(doubles_);
         out.casts = std::move(casts_);
         out.scoped_casts = std::move(scoped_casts_);
         out.facts = std::move(facts_);
@@ -158,6 +160,7 @@ private:
             if (parts.empty()) continue;
             add_namespaces(parts);
             if (join(parts) == "std") using_std_ = true;
+            if (join(parts) == "testing") using_testing_ = true;
             if (is_foreign_namespace(parts.front())) continue;
             if (std::find(usings_.begin(), usings_.end(), parts) == usings_.end()) usings_.push_back(parts);
         }
@@ -213,6 +216,7 @@ private:
         if (t.scope.empty()) {
             if (is_qt_class(t.name) || is_standard_c_type(t.name) || using_foreign_.count(t.name) != 0) return true;
             if (using_std_ && is_std_type(t.name)) return true;
+            if (using_testing_ && is_testing_type(t.name)) return true;
             if (local_classes_.count(t.name) != 0 || local_types_.count(t.name) != 0) return true;
         } else {
             // Outer::Inner where Outer is not ours: a nested type of somebody else's class.
@@ -606,6 +610,91 @@ private:
         }
     }
 
+    // ---- test doubles -------------------------------------------------------------------------------------------------------
+
+    const ir::Class* local_class(const std::string& name) const {
+        for (const ir::Class& c : facts_.local.classes) {
+            if (c.name == name) return &c;
+        }
+        return nullptr;
+    }
+
+    // `: public testing::Test` makes a fixture, not a double.
+    bool is_framework_base(const TypeName& t) const {
+        if (!t.scope.empty()) return t.scope.front() == "testing";
+        return is_testing_type(t.name) && (using_testing_ || using_foreign_.count(t.name) != 0);
+    }
+
+    // The base a double stands for: the first that is not the file's own class and not the
+    // framework's. A double of one of the file's doubles stands for what that one does.
+    const ir::BaseSpec* double_base(const ir::Class& c, std::set<std::string>& visited) const {
+        if (!visited.insert(c.name).second) return nullptr;
+        for (const ir::BaseSpec& b : c.bases) {
+            const TypeName t = parse_type_name(b.name);
+            if (is_framework_base(t)) continue;
+            if (const ir::Class* own = local_class(t.name)) {
+                if (const ir::BaseSpec* deeper = double_base(*own, visited)) return deeper;
+                continue;
+            }
+            return &b;
+        }
+        return nullptr;
+    }
+
+    static std::string signature_key(const ir::Method& m) {
+        std::string key = m.name + "(";
+        for (const ir::Param& p : m.params) key += p.type.spelling + ",";
+        return key + (m.is_const ? ")const" : ")");
+    }
+
+    // A function the double overrides, as the interface must declare it.
+    static bool is_overrider(const ir::Method& m) {
+        return (m.is_override || m.is_final) && !m.is_static && m.kind != ir::MethodKind::Constructor &&
+               m.kind != ir::MethodKind::Destructor && !m.is_template;
+    }
+
+    void collect_doubles() {
+        for (const ir::Class& c : facts_.local.classes) {
+            std::set<std::string> visited;
+            const ir::BaseSpec* base = double_base(c, visited);
+            if (base == nullptr) continue;
+            doubles_[c.name] = base->name;
+
+            const TypeName stands_for = parse_type_name(base->name);
+            std::string others;
+            for (const ir::BaseSpec& b : c.bases) {
+                const TypeName t = parse_type_name(b.name);
+                if (&b == base || is_framework_base(t) || local_class(t.name) != nullptr) continue;
+                others += (others.empty() ? "'" : ", '") + b.name + "'";
+            }
+            if (!others.empty() && reported_.insert("double:" + c.name).second) {
+                diag_.note(core::code::unsupported,
+                           "the test double '" + c.name + "' has more than one base class; the functions it overrides are "
+                           "declared in '" + base->name + "', not in " + others,
+                           c.where);
+            }
+
+            if (is_external_type(stands_for)) continue;   // somebody else's class: not ours to declare
+            const std::size_t ci = find_class(stands_for.name, stands_for.scope, !stands_for.scope.empty());
+            if (ci == kNone) continue;
+            std::vector<ir::Method>& interface = classes_[ci].interface_methods;
+            for (const ir::Method& m : c.methods) {
+                if (!is_overrider(m)) continue;
+                const std::string key = signature_key(m);
+                if (std::any_of(interface.begin(), interface.end(), [&](const ir::Method& have) { return signature_key(have) == key; })) {
+                    continue;
+                }
+                ir::Method declared = m;
+                declared.is_virtual = true;
+                declared.is_pure = false;   // inference decides: a class the test builds itself cannot be abstract
+                declared.is_override = false;
+                declared.is_final = false;
+                declared.access = ir::Access::Public;
+                interface.push_back(std::move(declared));
+            }
+        }
+    }
+
     struct QualifiedName {
         Ns          ns;
         std::string name;
@@ -624,6 +713,7 @@ private:
     std::map<std::string, std::vector<std::string>> bases_;
     std::vector<Ns>                                usings_;
     bool                                           using_std_ = false;
+    bool                                           using_testing_ = false;
     std::set<std::string>                          ns_names_;
     std::set<std::string>                          using_foreign_;       // names `using std::x;` brought in
     Ns                                             default_ns_;
@@ -639,6 +729,7 @@ private:
     std::vector<bool>                              external_cast_;       // per free call: a cast to somebody else's type
     std::map<std::size_t, TypeName>                casts_;
     std::map<std::size_t, TypeName>                scoped_casts_;
+    std::map<std::string, std::string>             doubles_;
 };
 
 }  // namespace

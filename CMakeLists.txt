@@ -77,6 +77,7 @@ add_library(mt_core STATIC
     src/ir/classify.cpp
     src/ir/type.cpp
     src/syntax/extract.cpp
+    src/syntax/mock_macros.cpp
     src/syntax/preprocess.cpp
     src/syntax/tree.cpp
     "${MT_EMBEDDED_TEMPLATES}")
@@ -122,6 +123,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_diagnostics.cpp
         tests/unit/test_diff.cpp
         tests/unit/test_merge.cpp
+        tests/unit/test_mock_macros.cpp
         tests/unit/test_naming.cpp
         tests/unit/test_pipeline.cpp
         tests/unit/test_qtest_backend.cpp
@@ -184,7 +186,8 @@ if(MT_BUILD_TESTS)
     # nothing. Driven by compiler command lines, not a nested CMake project, so
     # the cases are fast and need no network; GoogleTest is the main build's.
     if(NOT MSVC)
-        foreach(case basic_class fixture_members namespaces multi_class_includes no_exceptions)
+        foreach(case basic_class fixture_members namespaces multi_class_includes no_exceptions
+                     mock_interface mock_legacy_macros mock_known_interface fake_interface)
             set(mode throw)
             if(case STREQUAL "no_exceptions")
                 set(mode abort)
@@ -197,8 +200,8 @@ if(MT_BUILD_TESTS)
                     -DMT_MODE=${mode}
                     -DMT_CXX=${CMAKE_CXX_COMPILER}
                     "-DMT_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
-                    "-DMT_GTEST_INCLUDE=$<TARGET_PROPERTY:GTest::gtest,INTERFACE_INCLUDE_DIRECTORIES>"
-                    "-DMT_GTEST_LIBS=$<TARGET_FILE:GTest::gtest_main>$<SEMICOLON>$<TARGET_FILE:GTest::gtest>"
+                    "-DMT_GTEST_INCLUDE=$<TARGET_PROPERTY:GTest::gtest,INTERFACE_INCLUDE_DIRECTORIES>$<SEMICOLON>$<TARGET_PROPERTY:GTest::gmock,INTERFACE_INCLUDE_DIRECTORIES>"
+                    "-DMT_GTEST_LIBS=$<TARGET_FILE:GTest::gmock>$<SEMICOLON>$<TARGET_FILE:GTest::gtest_main>$<SEMICOLON>$<TARGET_FILE:GTest::gtest>"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/run_case.cmake")
             set_tests_properties(roundtrip.${case} PROPERTIES TIMEOUT 300)
         endforeach()

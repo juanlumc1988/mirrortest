@@ -13,7 +13,7 @@
 #   1. gen-impl over the test of a golden case, into <work>/gen
 #   2. the stubs compiled as the strictest embedded code would be: C++11,
 #      -Wall -Wextra -Wpedantic -Werror (plus -fno-exceptions -fno-rtti for the
-#      abort policy)
+#      abort policy), with the headers the case brings (input/include) on -I
 #   3. the test compiled as the project's tests are: C++14, -Wall -Wextra -Werror
 #   4. run: every test must fail. With stubs that throw, GoogleTest reports the
 #      failures, so `failures == tests` in its JSON. With stubs that abort the
@@ -93,7 +93,7 @@ set(objects "")
 set(index 0)
 foreach(stub IN LISTS stubs)
     set(object "${MT_WORK}/stub${index}.o")
-    run("compiling ${stub}" 0 "${MT_CXX}" ${shared} ${stub_flags} "-I${gen}" -c "${stub}" -o "${object}")
+    run("compiling ${stub}" 0 "${MT_CXX}" ${shared} ${stub_flags} "-I${gen}" "-I${input}/include" -c "${stub}" -o "${object}")
     list(APPEND objects "${object}")
     math(EXPR index "${index} + 1")
 endforeach()

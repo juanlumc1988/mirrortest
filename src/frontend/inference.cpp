@@ -55,6 +55,49 @@ std::string qualify_std_names(const std::string& spelling) {
     return out;
 }
 
+bool is_name_start(char c) { return std::isalpha(static_cast<unsigned char>(c)) != 0 || c == '_'; }
+bool is_name_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; }
+
+// `testing::NiceMock<MockSensor>` -> "MockSensor": gmock's wrappers are the mock they wrap, as far as
+// the code under test is concerned. Anything else comes back as it is.
+std::string_view without_mock_wrapper(std::string_view base) {
+    if (starts_with(base, "::")) base.remove_prefix(2);
+    if (starts_with(base, "testing::")) base.remove_prefix(9);
+    for (const std::string_view wrapper : {"NiceMock", "NaggyMock", "StrictMock"}) {
+        if (starts_with(base, wrapper) && base.size() > wrapper.size() + 2 && base[wrapper.size()] == '<' && base.back() == '>') {
+            return base.substr(wrapper.size() + 1, base.size() - wrapper.size() - 2);
+        }
+    }
+    return base;
+}
+
+// Every name `names` knows, written as `Name` or `ns::Name`, replaced by what it maps to.
+std::string replace_names(const std::string& spelling, const std::map<std::string, std::string>& names) {
+    std::string out;
+    std::size_t i = 0;
+    while (i < spelling.size()) {
+        if (!is_name_start(spelling[i])) {
+            out += spelling[i++];
+            continue;
+        }
+        std::size_t end = i;
+        std::size_t last = i;
+        for (;;) {
+            while (end < spelling.size() && is_name_char(spelling[end])) ++end;
+            if (end + 2 < spelling.size() && spelling[end] == ':' && spelling[end + 1] == ':' && is_name_start(spelling[end + 2])) {
+                end += 2;
+                last = end;
+                continue;
+            }
+            break;
+        }
+        const auto found = names.find(spelling.substr(last, end - last));
+        out += found != names.end() ? found->second : spelling.substr(i, end - i);
+        i = end;
+    }
+    return out;
+}
+
 // The words of a fundamental type in one canonical spelling, so that
 // `unsigned` and `unsigned int`, or `long int` and `long`, are recognised as
 // the same thing when two uses are compared. Anything else comes back as it is.
@@ -234,6 +277,23 @@ private:
                                               [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)) != 0; });
     }
 
+    // The code under test is written against the interface and the test hands it a double: a
+    // parameter that receives `&mock` is a `Sensor*`, never a `MockSensor*`, which no header could
+    // name. The doubles inside a template argument too (`std::unique_ptr<MockSensor>`).
+    ir::Type through_double(const ir::Type& t) const {
+        if (c_.doubles.empty() || t.empty()) return t;
+        std::string base(t.base);
+        const std::string_view inner = without_mock_wrapper(base);
+        if (c_.doubles.count(std::string(inner)) != 0) base = std::string(inner);
+        base = replace_names(base, c_.doubles);
+        if (base == t.base) return t;
+        ir::Type out = ir::make_type(base, t.is_const, t.ref, t.pointer_depth);
+        out.origin = t.origin;
+        out.reason = t.reason;
+        out.where = t.where;
+        return out;
+    }
+
     // The type of a parameter that receives this argument (design 7.9).
     std::optional<Evidence> param_evidence(const ValueInfo& v, bool propagate = true) {
         if (v.is_null_pointer) return std::nullopt;   // a pointer of unknown type
@@ -277,7 +337,7 @@ private:
             return std::nullopt;
         }
 
-        ir::Type t = *v.type;
+        ir::Type t = through_double(*v.type);
         if (t.empty() || t.base.find('[') != std::string::npos) return std::nullopt;   // arrays decay in ways the text does not show
         e.reason = t.reason;
 
@@ -509,7 +569,7 @@ private:
                                       use.kind == UseKind::Assigned || use.kind == UseKind::AutoBound;
             if (carries_hint && use.hint && !use.hint->empty()) {
                 Evidence e;
-                e.type = return_type_for(*use.hint);
+                e.type = return_type_for(through_double(*use.hint));
                 e.where = use.hint->where.known() ? use.hint->where : call->where;
                 e.reason = use.hint->reason.empty() ? std::string("its use") : use.hint->reason;
                 e.warnings = use.hint_warnings;
@@ -765,9 +825,59 @@ private:
         build_constructors(target, cls);
         build_methods(plan, cls);
         build_fields(plan, cls);
+        build_interface(target, cls);
 
         cls.is_struct = cls.methods.empty() && !cls.fields.empty();
         return cls;
+    }
+
+    // "'MockSensor', 'FakeSensor'": the doubles that stand for the class.
+    std::string doubles_of(const std::string& name) const {
+        std::string out;
+        for (const auto& entry : c_.doubles) {
+            const std::string& base = entry.second;
+            const std::size_t sep = base.rfind("::");
+            const std::size_t open = base.find('<');
+            const std::size_t from = sep == std::string::npos || (open != std::string::npos && sep > open) ? 0 : sep + 2;
+            if (base.substr(from, open == std::string::npos ? std::string::npos : open - from) == name) {
+                out += (out.empty() ? "'" : ", '") + entry.first + "'";
+            }
+        }
+        return out;
+    }
+
+    // A class the test's doubles derive from is an interface: the functions they override, pure
+    // virtual and as they declare them (a call of the same name and arity made through the
+    // interface says less, and gives way), and a virtual destructor, which a class that is
+    // deleted through a pointer to it needs. A class the test also builds itself (`Foo foo;`
+    // next to `class TestableFoo : public Foo`) cannot be abstract: its functions are virtual
+    // and get stubs like any other.
+    void build_interface(const ClassTarget& target, ir::Class& cls) {
+        if (target.interface_methods.empty()) return;
+        const bool abstract = target.constructions.empty();
+        for (ir::Method declared : target.interface_methods) {
+            declared.is_pure = abstract;
+            declared.ret = qualified(declared.ret);
+            for (ir::Param& p : declared.params) p.type = qualified(p.type);
+            const auto inferred = std::find_if(cls.methods.begin(), cls.methods.end(), [&](const ir::Method& m) {
+                return m.kind != ir::MethodKind::Constructor && m.name == declared.name && m.params.size() == declared.params.size();
+            });
+            if (inferred != cls.methods.end()) {
+                *inferred = std::move(declared);
+            } else {
+                cls.methods.push_back(std::move(declared));
+            }
+        }
+
+        ir::Method destructor;
+        destructor.name = "~" + cls.name;
+        destructor.kind = ir::MethodKind::Destructor;
+        destructor.is_virtual = true;
+        destructor.is_defaulted = true;
+        destructor.origin = ir::Origin::Inferred;
+        destructor.where = target.first_use;
+        destructor.notes.push_back("virtual because the test derives " + doubles_of(target.name) + " from it");
+        cls.methods.insert(cls.methods.begin(), std::move(destructor));
     }
 
     // One constructor per arity used. The default one only if another exists too:

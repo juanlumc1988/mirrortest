@@ -1,0 +1,1 @@
+The macros before gmock 1.10 (`MOCK_METHODn`, `MOCK_CONST_METHODn`). They do not say `override`, but a mock method is there to override one, so the interface has all three functions. The mock is passed by reference: `Display` takes a `Gauge&`.

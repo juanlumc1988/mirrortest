@@ -44,9 +44,14 @@ namespace mt::frontend {
 // A class defined more than once -- typically under both branches of an #if --
 // is one class: the members are merged and a signature already present is not
 // added twice.
+//
+// The contents of an anonymous namespace have internal linkage, so a test of a
+// header cannot reach them and they are skipped. A test file's own fakes and
+// helpers are often in one: `anonymous_namespaces` reads them (with the
+// namespace around the anonymous one).
 void read_declarations(const syntax::Tree& tree, const std::vector<syntax::QtMarker>& markers,
                        const std::string& file, const std::string& include_path, ir::Model& model,
-                       core::Diagnostics& diagnostics);
+                       core::Diagnostics& diagnostics, bool anonymous_namespaces = false);
 
 // Preprocesses (Qt macros), parses and reads one file.
 ir::Model read_header(const core::SourceFile& source, const std::string& include_path,
