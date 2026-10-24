@@ -23,6 +23,7 @@
 #define MT_CORE_INCLUDE_SEARCH_H
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -63,6 +64,15 @@ struct IncludeSearch {
 // that belong to a framework, to Qt or to the standard library. A quoted
 // include of one of them must not be mistaken for a header to generate.
 bool is_foreign_include(std::string_view path);
+
+// The path of `file` below `dir`, spelt with '/', if it is below it: the way a
+// header is included from an `-I` directory. Purely lexical -- the caller makes
+// both absolute (and resolves symlinks) first. Not below it, the same place as
+// `dir`, or paths that cannot be compared (one absolute, one not) give nothing.
+//
+//   ("/p/include/acme/foo.h", "/p/include")  -> "acme/foo.h"
+//   ("/p/include/acme/foo.h", "/p/other")    -> nothing
+std::optional<std::string> path_below(const std::filesystem::path& file, const std::filesystem::path& dir);
 
 // Sorts the includes of a test. System includes (`<...>`) are looked up like
 // the others but are never targets: if nothing has them they are somebody

@@ -1,4 +1,0 @@
-gen-tests
-${IN}/foo.h
---out
-${OUT}

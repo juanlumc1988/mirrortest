@@ -1,0 +1,6 @@
+gen-tests
+${IN}/lamp.h
+--out
+${OUT}
+--placeholder
+skip

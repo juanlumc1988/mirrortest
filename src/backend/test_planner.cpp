@@ -351,12 +351,12 @@ private:
     void plan_constructor(const ir::Class& c, const ir::Method& m, Names& names, std::vector<Stmt>& body) {
         const Args args = make_args(c, m.params, names);
         const bool buildable = args.ok && !is_abstract(c);
-        add_locals(body, args.locals, !buildable);
-        uses_move_ = uses_move_ || (buildable && args.uses_move);
-        body.push_back(comment("Act"));
         if (!args.ok) body.push_back(comment("TODO(mt): " + args.why));
         if (is_abstract(c)) body.push_back(comment("TODO(mt): '" + c.name + "' is abstract: construct a class derived from it instead"));
+        add_locals(body, args.locals, !buildable);
+        uses_move_ = uses_move_ || (buildable && args.uses_move);
         if (!args.left_out.empty()) body.push_back(comment("TODO(mt): " + args.left_out));
+        body.push_back(comment("Act"));
         const std::string declaration = args.expressions.empty() ? c.name + " sut" : c.name + " sut(" + join(args.expressions, ", ") + ")";
         body.push_back(code(declaration, !buildable));
         body.push_back(code("(void)sut", !buildable));
@@ -371,6 +371,8 @@ private:
         body.push_back(code(sut.available ? sut.declaration : c.name + " sut", !sut.available));
         body.push_back(comment("Act"));
         body.push_back(comment("sut is destroyed when the test ends"));
+        // A trivial object that nothing uses is an unused variable, and a warning.
+        body.push_back(code("(void)sut", !sut.available));
         body.push_back(comment("Assert"));
         body.push_back(comment("TODO(mt): check what the destructor releases"));
     }

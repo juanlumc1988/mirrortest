@@ -388,15 +388,6 @@ TEST(CliConfig, ABadConfigFileIsAConfigErrorNamingTheFile) {
     EXPECT_EQ(p.err, "bad.json: error: unknown configuration key 'colour' [mt-config]\n");
 }
 
-// ---- running ---------------------------------------------------------------------------------------
-
-TEST(CliRun, GenTestsReportsThatItIsNotImplementedYet) {
-    const Invocation tests = invoke({"gen-tests", "h.h", "--out", "o"});
-    EXPECT_EQ(tests.code, 1);
-    EXPECT_EQ(tests.err, "mirrortest: error: gen-tests is not implemented yet (see docs/plan.md) [mt-unsupported]\n");
-    EXPECT_EQ(tests.out, "");
-}
-
 // ---- finishing a run ----------------------------------------------------------------------------------
 
 namespace {

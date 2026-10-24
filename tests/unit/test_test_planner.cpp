@@ -294,7 +294,7 @@ TEST(TestPlannerBody, ADestructorIsACase) {
     EXPECT_EQ(case_names(p), Lines{"Destructs"});
     EXPECT_EQ(body(p, "Destructs"), (Lines{
         "placeholder: TODO(mt): write the test for Foo::~Foo()", "blank", "// Arrange", "Foo sut;", "// Act",
-        "// sut is destroyed when the test ends", "// Assert", "// TODO(mt): check what the destructor releases"}));
+        "// sut is destroyed when the test ends", "(void)sut;", "// Assert", "// TODO(mt): check what the destructor releases"}));
 }
 
 TEST(TestPlannerBody, ACopyConstructorBuildsItsSourceWhenTheClassCanBeDefaultConstructed) {
@@ -347,7 +347,8 @@ TEST(TestPlannerSut, AnAbstractClassCannotBeBuilt) {
 TEST(TestPlannerSut, ConstructorTestsOfAnAbstractClassAreCommentedOut) {
     const Planned p = plan("class Shape { public: Shape(); virtual double area() const = 0; };");
     const std::vector<std::string> lines = body(p, "Constructs");
-    EXPECT_EQ(lines[4], "// TODO(mt): 'Shape' is abstract: construct a class derived from it instead");
+    EXPECT_EQ(lines[3], "// TODO(mt): 'Shape' is abstract: construct a class derived from it instead");
+    EXPECT_EQ(lines[4], "// Act");
     EXPECT_EQ(lines[5], "// Shape sut;");
 }
 
@@ -531,8 +532,8 @@ TEST(TestPlannerBody, ConstructorsWithUnbuildableArgumentsAreCommentedOut) {
     const Planned p = plan("class Foo { public: Foo(int a, Mystery m, std::string&& s); };");
     EXPECT_EQ(body(p, "Constructs"), (Lines{
         "placeholder: TODO(mt): write the test for Foo::Foo(int, Mystery, std::string&&)", "blank", "// Arrange",
-        "// int a{};", "// Mystery m{};", "// std::string s{};", "// Act",
-        "// TODO(mt): an argument of type 'Mystery' cannot be built here", "// Foo sut(a, m, std::move(s));", "// (void)sut;",
+        "// TODO(mt): an argument of type 'Mystery' cannot be built here", "// int a{};", "// Mystery m{};",
+        "// std::string s{};", "// Act", "// Foo sut(a, m, std::move(s));", "// (void)sut;",
         "// Assert", "// TODO(mt): check the state of sut"}));
     ASSERT_EQ(p.plans.size(), 1u);
     EXPECT_EQ(p.plans[0].includes.size(), 2u);
@@ -541,8 +542,8 @@ TEST(TestPlannerBody, ConstructorsWithUnbuildableArgumentsAreCommentedOut) {
 TEST(TestPlannerBody, ConstructorsLeaveOutTheirDefaultsAndSayIt) {
     const Planned p = plan("class Foo { public: Foo(int a, int b = 3); };");
     EXPECT_EQ(body(p, "Constructs"), (Lines{
-        "placeholder: TODO(mt): write the test for Foo::Foo(int, int)", "blank", "// Arrange", "int a{};", "// Act",
-        "// TODO(mt): the arguments that have default values are left out", "Foo sut(a);", "(void)sut;", "// Assert",
+        "placeholder: TODO(mt): write the test for Foo::Foo(int, int)", "blank", "// Arrange", "int a{};",
+        "// TODO(mt): the arguments that have default values are left out", "// Act", "Foo sut(a);", "(void)sut;", "// Assert",
         "// TODO(mt): check the state of sut"}));
 }
 
@@ -600,7 +601,7 @@ TEST(TestPlannerSut, TheDestructorOfAClassThatCannotBeBuiltIsCommentedOut) {
     EXPECT_EQ(body(p, "Destructs"), (Lines{
         "placeholder: TODO(mt): write the test for Foo::~Foo()", "blank", "// Arrange",
         "// TODO(mt): 'Foo' has no public constructor that can be called with default values: build sut by hand",
-        "// Foo sut;", "// Act", "// sut is destroyed when the test ends", "// Assert",
+        "// Foo sut;", "// Act", "// sut is destroyed when the test ends", "// (void)sut;", "// Assert",
         "// TODO(mt): check what the destructor releases"}));
 }
 

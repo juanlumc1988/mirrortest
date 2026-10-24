@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -191,6 +192,43 @@ TEST(IncludeSearchResolve, ADirectoryOfThatNameIsNotAHeader) {
 TEST(IncludeSearchResolve, AnEmptyPathIsSkipped) {
     const Tree tree;
     EXPECT_TRUE(core::resolve_includes({quoted("")}, tree.search()).empty());
+}
+
+// ---- path_below -----------------------------------------------------------------------------------------------
+
+TEST(IncludeSearchPathBelow, AFileBelowTheDirectoryIsTheRestOfItsPath) {
+    EXPECT_EQ(core::path_below("/p/include/acme/foo.h", "/p/include"), std::optional<std::string>("acme/foo.h"));
+    EXPECT_EQ(core::path_below("/p/include/foo.h", "/p/include"), std::optional<std::string>("foo.h"));
+    EXPECT_EQ(core::path_below("/p/include/a/b/c/foo.h", "/p/include/a"), std::optional<std::string>("b/c/foo.h"));
+}
+
+TEST(IncludeSearchPathBelow, TrailingSlashesAndDotsDoNotMatter) {
+    EXPECT_EQ(core::path_below("/p/include/acme/foo.h", "/p/include/"), std::optional<std::string>("acme/foo.h"));
+    EXPECT_EQ(core::path_below("/p/./include/acme/../acme/foo.h", "/p/src/../include"), std::optional<std::string>("acme/foo.h"));
+}
+
+TEST(IncludeSearchPathBelow, AFileOutsideTheDirectoryIsNotBelowIt) {
+    EXPECT_EQ(core::path_below("/p/include/foo.h", "/p/other"), std::nullopt);
+    EXPECT_EQ(core::path_below("/p/include/foo.h", "/p/include/acme"), std::nullopt) << "the directory is deeper than the file";
+    EXPECT_EQ(core::path_below("/p/include/foo.h", "/q"), std::nullopt);
+    EXPECT_EQ(core::path_below("/p/include-more/foo.h", "/p/include"), std::nullopt) << "a prefix of the name is not a parent";
+}
+
+TEST(IncludeSearchPathBelow, TheDirectoryItselfIsNotBelowItself) {
+    EXPECT_EQ(core::path_below("/p/include", "/p/include"), std::nullopt);
+    EXPECT_EQ(core::path_below("/p/include/", "/p/include"), std::nullopt);
+}
+
+TEST(IncludeSearchPathBelow, PathsThatCannotBeComparedGiveNothing) {
+    EXPECT_EQ(core::path_below("include/foo.h", "/p/include"), std::nullopt) << "one relative, one absolute";
+    EXPECT_EQ(core::path_below("/p/include/foo.h", "include"), std::nullopt);
+    EXPECT_EQ(core::path_below("", "/p/include"), std::nullopt) << "what could not be resolved is empty";
+    EXPECT_EQ(core::path_below("/p/include/foo.h", ""), std::nullopt);
+}
+
+TEST(IncludeSearchPathBelow, RelativePathsCompareLexically) {
+    EXPECT_EQ(core::path_below("include/acme/foo.h", "include"), std::optional<std::string>("acme/foo.h"));
+    EXPECT_EQ(core::path_below("include/foo.h", "other"), std::nullopt);
 }
 
 }  // namespace

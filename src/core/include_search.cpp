@@ -103,4 +103,11 @@ std::vector<ResolvedInclude> resolve_includes(const std::vector<ir::Include>& in
     return out;
 }
 
+std::optional<std::string> path_below(const std::filesystem::path& file, const std::filesystem::path& dir) {
+    const std::filesystem::path relative = file.lexically_normal().lexically_relative(dir.lexically_normal());
+    // Empty: no way from one to the other. "." : the same place. "..": it is outside.
+    if (relative.empty() || relative == "." || *relative.begin() == "..") return std::nullopt;
+    return relative.generic_string();
+}
+
 }  // namespace mt::core

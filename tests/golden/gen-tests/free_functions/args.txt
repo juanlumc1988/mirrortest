@@ -1,0 +1,4 @@
+gen-tests
+${IN}/math.h
+--out
+${OUT}

@@ -1,0 +1,4 @@
+gen-tests
+${IN}/sink2.h
+--out
+${OUT}

@@ -19,6 +19,7 @@
 
 #include "mirrortest/backend/impl_backend.h"
 #include "mirrortest/backend/impl_merge.h"
+#include "mirrortest/cli/plan_collector.h"
 #include "mirrortest/cli/run.h"
 #include "mirrortest/core/include_search.h"
 #include "mirrortest/core/source.h"
@@ -135,7 +136,7 @@ int run_gen_impl(const Options& options, const Env& env) {
     std::optional<fs::path> template_dir;
     if (options.templates_dir) template_dir = resolve(env, *options.templates_dir);
     const core::TemplateStore templates(core::embedded_templates(), template_dir, diagnostics);
-    if (options.verbose && !options.quiet) {
+    if (options.verbose) {
         for (const std::string& name : templates.overridden()) {
             *env.err << "mirrortest: using template '" << name << "' from '" << *options.templates_dir << "'\n";
         }
@@ -144,25 +145,12 @@ int run_gen_impl(const Options& options, const Env& env) {
 
     // One plan for all the test files. Two files that generate the same path
     // agree or the run stops: there is no merging of what two tests infer yet.
-    core::OutputPlan plan;
-    std::map<std::string, std::pair<std::string, std::size_t>> origin;   // path -> (input, index in plan.files)
+    PlanCollector collector;
     for (const std::string& input : options.inputs) {
-        for (core::OutputFile& file : process_input(options, env, templates, input, diagnostics).plan.files) {
-            const auto seen = origin.find(file.path);
-            if (seen == origin.end()) {
-                origin[file.path] = {input, plan.files.size()};
-                plan.files.push_back(std::move(file));
-            } else if (plan.files[seen->second.second].content != file.content) {
-                ir::SourceLoc where;
-                where.file = input;
-                diagnostics.error(core::code::unsupported,
-                                  "'" + seen->second.first + "' and '" + input + "' both generate '" + file.path +
-                                      "' with different content; generating one header from several test files is not supported yet, "
-                                      "run them one at a time",
-                                  where);
-            }
-        }
+        collector.add(input, process_input(options, env, templates, input, diagnostics).plan.files,
+                      "generating one header from several test files is not supported yet, run them one at a time", diagnostics);
     }
+    const core::OutputPlan plan = collector.take();
 
     if (options.strict) diagnostics.promote_warnings();
     if (diagnostics.has_errors()) return finish_run(options, env, diagnostics, nullptr);

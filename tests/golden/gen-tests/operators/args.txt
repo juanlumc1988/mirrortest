@@ -1,0 +1,4 @@
+gen-tests
+${IN}/vec.h
+--out
+${OUT}

@@ -7,13 +7,15 @@ saying it in a way the tool can read — and what to do when that is not
 possible.
 
 The rules below are the user's view of [docs/design.md](design.md), section 7,
-which is the authority for every detail.
+which is the authority for every detail. The other direction, `gen-tests`, has
+its own [section](#test-skeletons-from-a-header).
 
 - [What it needs from a test](#what-it-needs-from-a-test)
 - [Which files it writes, and where](#which-files-it-writes-and-where)
 - [Merging](#merging)
 - [Annotations](#annotations)
 - [What the stubs do](#what-the-stubs-do)
+- [Test skeletons from a header](#test-skeletons-from-a-header)
 - [Configuration](#configuration)
 - [Diagnostics](#diagnostics)
 - [Limits](#limits)
@@ -346,6 +348,44 @@ unsigned int size() const;
 and everything between `// <mt:begin ...>` and `// <mt:end ...>` markers belongs
 to the tool, which is what lets a later run find its own output again.
 
+## Test skeletons from a header
+
+```console
+$ mirrortest gen-tests include/acme/foo.h -I include --out tests/
+created tests/foo_test.cpp
+```
+
+One file per class (`naming.gtest_file`, `{stem}_test.cpp`), one `TEST` per public
+constructor, destructor and method, in the namespace of the class and a suite
+called after it (`FooTest`). Overloads are told apart by their types
+(`set_int`, `set_std_string`), operators have names (`OperatorEq`,
+`ConversionToBool`).
+
+Every test starts with `FAIL() << "TODO(mt): write the test for ..."` (with
+`--placeholder skip`, `GTEST_SKIP()`), so a skeleton is red until somebody writes
+it. What follows the placeholder is **compiled but never run**: it builds the
+object (`Foo sut;`, or through the simplest public constructor), declares one
+local per argument (`int count{};`), makes the call and leaves the assertion as a
+`TODO(mt)`. It checks that the API still has this shape without ever calling a
+legacy method with zero values.
+
+Where it cannot do that, it says so and keeps the work as a comment: an
+argument of a type it does not know (`// TODO(mt): an argument of type 'Mystery'
+cannot be built here`, then the `sut`, the locals and the call commented out
+together, every argument named), an abstract class, a class with no constructor
+it can call. Say that a type can be built with `default_constructible_types` in
+the configuration.
+
+How the test includes the header: `--include-as PATH`, else the path below the
+first `-I` directory that contains it, else the file name.
+
+Not tested, and why: signals; deleted, protected and private members; member
+templates and class templates (they need instantiations); free functions (the
+run prints a note). A member declared under `#if` is tested as if it always
+existed, so the test builds only in a configuration that declares it. Existing
+files are never overwritten: a differing one gets a `.new` beside it, and
+`--overwrite merge` does the same for tests for now.
+
 ## Configuration
 
 `--config FILE.json` (comments allowed). Precedence: built-in defaults, then the
@@ -410,8 +450,8 @@ differences.
 
 Honest list of what it does not do (yet):
 
-- GoogleTest only. QTest files are rejected with `mt-unsupported`; `gen-tests` is
-  not implemented.
+- GoogleTest only. QTest files are rejected with `mt-unsupported`, and so is
+  `gen-tests --framework qtest`.
 - Merging adds members; it does not reconcile a changed one (a mismatch is
   reported) and never removes a member the tests no longer mention.
 - One test file per header, in practice: two files that would write the same

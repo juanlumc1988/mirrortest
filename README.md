@@ -6,13 +6,13 @@ Bidirectional C++ test/code generator: derives class and function stubs from
 GoogleTest/QTest tests (TDD), and generates test skeletons from existing
 classes. The command it builds is `mirrortest`.
 
-**Status: `gen-impl` works for GoogleTest; `gen-tests` and QTest are next.**
-`gen-impl` is complete end to end — parsing, inference, headers and stubs,
-`.new` files, merging into earlier output, `--dry-run`/`--check` — and verified
-by unit tests, golden files, compile-and-run round trips and a syntax check of
-every generated stub as strict C++11. `gen-tests` and QTest are designed and not
-written yet; see [docs/plan.md](docs/plan.md) for what is done and what comes next. The
-`gen-tests` lines under [Usage](#usage) describe the target behaviour.
+**Status: `gen-impl` and `gen-tests` work for GoogleTest; QTest is next.**
+Both commands are complete end to end — parsing, inference or planning, output,
+`.new` files, `--dry-run`/`--check`, and for `gen-impl` merging into earlier
+output — and verified by unit tests, golden files, compile-and-run round trips
+and a syntax check of every generated stub as strict C++11. QTest is designed and
+not written yet; see [docs/plan.md](docs/plan.md) for what is done and what comes
+next. The QTest line under [Usage](#usage) describes the target behaviour.
 
 ## What it does
 
@@ -48,6 +48,10 @@ created src/acme/foo.h
 created src/acme/foo.cpp
 
 # Legacy code: test skeletons for an existing class.
+$ mirrortest gen-tests include/acme/foo.h -I include --out tests/
+created tests/foo_test.cpp
+
+# The same for QTest (not written yet).
 $ mirrortest gen-tests include/acme/foo.h -I include --out tests/ --framework qtest
 created tests/tst_foo.cpp
 ```
@@ -70,6 +74,28 @@ TEST(FooTest, StartsWithThreeItems) {
 test calls them on a `const` object, `unsigned int` because of the `3u` — and
 a source file whose stubs throw `std::logic_error`. The test now compiles and
 fails, which is exactly where TDD wants you.
+
+From that header, `gen-tests` writes this for `size()` (and one test like it for
+every other public member):
+
+```cpp
+TEST(FooTest, size) {
+    FAIL() << "TODO(mt): write the test for acme::Foo::size() const";
+
+    // Arrange
+    int arg1{};
+    Foo sut(arg1);
+    // Act
+    const Foo& const_sut = sut;
+    const unsigned int result = const_sut.size();
+    (void)result;
+    // Assert
+    // TODO(mt): compare result with the expected value
+}
+```
+
+It fails until you write it; everything after the `FAIL()` is compiled, though,
+so the skeleton already checks that the API has the shape it was generated from.
 
 The conventions that make tests readable by the tool — no `auto` on results of
 the API under test, literal suffixes where the type matters, optional

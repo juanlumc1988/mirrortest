@@ -212,12 +212,16 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   (§9.4), `fail`/`skip` placeholders. (`output_path`, `escape_literal` and the
   namespace lines moved to `core/output.h` and `backend/cxx_format.h`, where both
   backends use them.)
-- [ ] **4.4 The `gen-tests` subcommand** + goldens (`tests/golden/gen-tests/`):
+- [x] **4.4 The `gen-tests` subcommand** + goldens (`tests/golden/gen-tests/`):
   `simple_class`, `const_noexcept`, `static`, `overloads`, `operators`,
   `non_default_ctor`, `abstract`, `nested_types`, `namespaces`,
   `unknown_arg_type` (commented-out call), `qt_header_gtest`, `ifdef_branches`,
-  `template_skipped`, `placeholder_skip`.
-- [ ] **4.5 gen-tests/GTest round trip** — example implementation in the case;
+  `template_skipped`, `placeholder_skip`; and, for what the wiring adds,
+  `default_constructible`, `cannot_build`, `lifecycle`, `defaults_and_variadic`,
+  `rvalue_arguments`, `include_path`, `include_as`, `free_functions`,
+  `multiple_headers`, `same_class_twice`, `existing_file`, `nothing_public`.
+  (`PlanCollector` now serves both commands for the files of several inputs.)
+- [x] **4.5 gen-tests/GTest round trip** — example implementation in the case;
   require compilation and `failures == tests` / `skipped == tests`.
 
 ## Phase 5 — QTest in both directions

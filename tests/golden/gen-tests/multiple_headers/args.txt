@@ -1,0 +1,5 @@
+gen-tests
+${IN}/a.h
+${IN}/b.h
+--out
+${OUT}

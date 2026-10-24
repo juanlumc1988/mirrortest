@@ -51,13 +51,16 @@ before committing.
 | `<Suite>.<Test>` | unit tests of every module (`tests/unit/`), C++ fragments as strings |
 | `golden.*` | the real command line against the files in `tests/golden/` (output, stderr, exit code, determinism) |
 | `roundtrip.<case>` | generates from the test of a golden case, compiles the stubs as strict C++11 and the test as C++14, links, runs, requires every test red, and requires a second run to change nothing (`tests/roundtrip/run_case.cmake`) |
+| `roundtrip.gen_tests.<case>` | the same for gen-tests: generates tests from the header of a golden case, compiles an example implementation (C++11, strict) and the tests (C++14, `-Werror`), runs them and requires every one to fail, or to be skipped with `--placeholder skip` (`tests/roundtrip/run_gen_tests_case.cmake`, the implementations in `tests/roundtrip/gen-tests/`) |
 | `roundtrip.merge` | the TDD session: generate, implement a method, grow the test, `--overwrite merge`; the work survives and passes, the new stubs are red (`tests/roundtrip/run_merge.cmake`) |
 | `stubs.host.<case>` | the stubs of *every* gen-impl golden compile with `-fsyntax-only` as strict C++11 (`tests/roundtrip/syntax_case.cmake`) |
 | `stubs.arm.<case>` | the same with a cross compiler, if `-DMT_ARM_CXX=arm-linux-gnueabihf-g++` is given (CI does) |
 
 A new gen-impl golden case is a new `stubs.host.*` test the next time CMake
 configures; add it to the `roundtrip.*` list in `CMakeLists.txt` when it should be
-compiled, linked and run.
+compiled, linked and run. A new gen-tests golden case is a new
+`roundtrip.gen_tests.*` test as soon as `tests/roundtrip/gen-tests/<case>.cpp`
+exists (CMake finds it when it configures).
 
 ## Conventions
 

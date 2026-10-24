@@ -1125,6 +1125,15 @@ rest of the slots.
   with nothing public to test gets an `mt-unsupported` note and no plan. Both
   are the only diagnostics the planner emits: what a header cannot give the
   skeleton is said in the skeleton itself, as a `TODO(mt)`.
+- **Members under `#if`** (§6.5) are all tested, as if each existed: the
+  generated test compiles only in a configuration that declares the member it
+  calls. Guarding the test with the same condition is a possible extension; the
+  `ifdef_branches` golden documents the current behaviour and has no round
+  trip for that reason.
+- **Free functions get no tests** (gen-tests covers classes). `gen-tests` says so
+  with one `mt-unsupported` note per header, located at the first function and
+  counting them; they are an extension for a later phase, not an omission by
+  accident.
 - One `ir::TestPlan` per class: the file is `config.naming.gtest_file` expanded
   with the class (`{stem}` = its `snake_case`), the suite lives in the class's
   namespace.
@@ -1192,6 +1201,10 @@ TEST(FooTest, size) {
 - Operators are called by name: `sut.operator==(o)`, `sut.operator[](i)`,
   `const_sut.operator bool()`: it is the one spelling that is valid for all of
   them, and it keeps the case about the member, not about an expression.
+- Every `TODO(mt)` about the setup (an argument that cannot be built, a
+  default or variadic argument left out, an abstract class) sits under
+  `// Arrange`, before the locals it is about, in constructor cases as in method
+  cases.
 - Result: `const R result = …;` if `R` is a value; `R result = …;` if `R` is a
   reference; `R const result = …;` if it is a pointer (a leading `const` would
   make the pointee const); `auto result = …;` for what cannot be spelled before
@@ -1203,9 +1216,13 @@ TEST(FooTest, size) {
 ### 9.3 Includes of the test
 
 The framework (`<gtest/gtest.h>` / `<QtTest>`), the header under test **as the
-user would include it** (the path relative to the first `-I` that contains it;
-otherwise the name; `--include-as` to force it), `<utility>` if `std::move` is
-used.
+user would include it**, `<utility>` if `std::move` is used.
+
+How the header is spelt (`cli/gen_tests.cpp`): `--include-as` if given; else the
+path below the **first** `-I` directory that contains it (both resolved, so
+`./include/`, `src/../include` and an absolute `-I` are the same directory); a
+directory that does not contain it, or does not exist, is skipped; with none,
+the file's name alone.
 
 ### 9.4 GoogleTest
 
@@ -1444,7 +1461,12 @@ and ignored option.
   Without inputs → usage error.
 - **Output**: `gen-impl` needs `--out`, or `--out-include` and `--out-src`;
   `--out-include`/`--out-src` each fall back separately to `--out`
-  (`Options::header_dir()` / `source_dir()`). `gen-tests` needs `--out`.
+  (`Options::header_dir()` / `source_dir()`). `gen-tests` needs `--out`; it
+  writes one file per class, named by `naming.gtest_file`. Two headers that
+  would write the same test file with different content (two `Foo`s) are an
+  `mt-unsupported` error and nothing is written; the same content twice is one
+  file. `--overwrite merge` has no merge function for tests yet, so it degrades
+  to a `.new` beside the file with the warning of §10.
 - **Repeatable options** (`-I`, `--tests`, `--header`): one value per
   occurrence, all occurrences accumulated. CLI11 makes them greedy by default
   (`-I inc test.cpp` would swallow `test.cpp` as a second directory and leave
@@ -1654,8 +1676,22 @@ Implemented in `core/templates.h` (`TemplateStore`) and
      CTest names `stubs.host.<case>`): `-fsyntax-only` with the flags above,
      each source including its own header first, so headers must be
      self-contained.
-   - gen-tests: compile the example implementation + generated tests → require
-     `failures == tests` (`fail`) or `skipped == tests` (`skip`).
+   - gen-tests (`tests/roundtrip/run_gen_tests_case.cmake`, CTest names
+     `roundtrip.gen_tests.<case>`; a case is a `.cpp` in
+     `tests/roundtrip/gen-tests/` named after a golden case of `gen-tests`, with an
+     optional `<case>.prelude.h` forced into every translation unit for the types
+     the header relies on and the tool cannot know): generate from the header of
+     the golden case → compile the example implementation with
+     `-std=c++11 -Wall -Wextra -Wpedantic -Werror` and each generated test file
+     with `-std=c++14 -Wall -Wextra -Werror` (so an unused variable in a skeleton
+     is a failure; this is how the destructor case learnt its `(void)sut;`) →
+     link, run → `failures == tests` (`fail`) or, with `--placeholder skip`,
+     `skipped == tests` and exit 0 → run again with `--check` and require exit 0.
+     Not covered: `qt_header_gtest` (needs Qt), `ifdef_branches` (the tests call
+     members of both branches, §9.1), `include_as` (names a header that is not
+     there), and the cases that write nothing. The implementations matter even
+     though a compiler drops the code after `FAIL()`'s `return`: they are what
+     makes the declarations in the headers, and so the calls, real.
    - QTest (if `find_package(Qt6|Qt5 COMPONENTS Test)` finds it; otherwise the
      CTest test is marked *skipped* with `SKIP_RETURN_CODE`): gen-tests → no
      `PASS   : TestX::<slot>()` line for a generated slot and the number of

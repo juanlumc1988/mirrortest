@@ -1,0 +1,4 @@
+gen-tests
+${IN}/account.h
+--out
+${OUT}

@@ -1,0 +1,412 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of mirrortest -- bidirectional C++ test/code generator.
+//
+// gen-tests as the user runs it: headers in a directory, a command line, what
+// lands on disk and what is printed. What the generated text looks like is
+// pinned by the golden cases; these are about the wiring.
+
+#include <gtest/gtest.h>
+
+#include <filesystem>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "mirrortest/cli/run.h"
+#include "test_support.h"
+
+using namespace mt;
+using mt::test::read_file;
+using mt::test::TempDir;
+using mt::test::write_file;
+
+namespace {
+
+namespace fs = std::filesystem;
+
+struct Outcome {
+    int         code = -1;
+    std::string out;
+    std::string err;
+};
+
+Outcome gen_tests(const TempDir& dir, std::vector<std::string> args) {
+    std::ostringstream out, err;
+    cli::Env env;
+    env.cwd = dir.path();
+    env.out = &out;
+    env.err = &err;
+    args.insert(args.begin(), "gen-tests");
+    Outcome r;
+    r.code = cli::run(args, env);
+    r.out = out.str();
+    r.err = err.str();
+    return r;
+}
+
+bool contains(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
+bool exists(const TempDir& dir, const std::string& relative) { return fs::exists(dir.path() / relative); }
+std::string read(const TempDir& dir, const std::string& relative) { return read_file(dir.path() / relative); }
+
+const char* kFooHeader =
+    "namespace acme {\n"
+    "class Foo {\n"
+    "public:\n"
+    "    unsigned size() const;\n"
+    "};\n"
+    "}\n";
+
+void write_foo(const TempDir& dir, const std::string& where = "include/acme/foo.h") {
+    write_file(dir.path() / where, kFooHeader);
+}
+
+// ---- the basic run ------------------------------------------------------------------------------------------
+
+TEST(GenTests, WritesOneTestFilePerClassAndSaysSo) {
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created tests/foo_test.cpp\n");
+    EXPECT_EQ(r.out, "");
+    const std::string text = read(dir, "tests/foo_test.cpp");
+    EXPECT_TRUE(contains(text, "from include/acme/foo.h.")) << text;
+    EXPECT_TRUE(contains(text, "TEST(FooTest, size) {"));
+    EXPECT_TRUE(contains(text, "namespace acme {"));
+}
+
+TEST(GenTests, TheHeaderAlsoComesWithDashDashHeader) {
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome r = gen_tests(dir, {"--header", "include/acme/foo.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(exists(dir, "tests/foo_test.cpp"));
+}
+
+TEST(GenTests, ASecondRunChangesNothingAndLeavesTheFilesAlone) {
+    const TempDir dir;
+    write_foo(dir);
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "tests"}).code, 0);
+    const auto before = fs::last_write_time(dir.path() / "tests/foo_test.cpp");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0);
+    EXPECT_EQ(r.err, "unchanged tests/foo_test.cpp\n");
+    EXPECT_EQ(fs::last_write_time(dir.path() / "tests/foo_test.cpp"), before);
+}
+
+TEST(GenTests, TestsTheUserHasWrittenAreNeverTouched) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "tests/foo_test.cpp", "// my own tests\n");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0);
+    EXPECT_TRUE(contains(r.err, "wrote tests/foo_test.cpp.new (tests/foo_test.cpp exists and differs)")) << r.err;
+    EXPECT_EQ(read(dir, "tests/foo_test.cpp"), "// my own tests\n");
+    EXPECT_TRUE(exists(dir, "tests/foo_test.cpp.new"));
+}
+
+TEST(GenTests, ForceOverwrites) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "tests/foo_test.cpp", "// mine\n");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--overwrite", "force"});
+    EXPECT_EQ(r.code, 0);
+    EXPECT_TRUE(contains(r.err, "overwrote tests/foo_test.cpp")) << r.err;
+    EXPECT_TRUE(contains(read(dir, "tests/foo_test.cpp"), "TEST(FooTest, size)"));
+}
+
+TEST(GenTests, MergeIsNotSupportedForTestsYetAndFallsBackToDotNew) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "tests/foo_test.cpp", "// mine\n");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--overwrite", "merge"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(r.err, "[mt-unsupported]")) << r.err;
+    EXPECT_EQ(read(dir, "tests/foo_test.cpp"), "// mine\n");
+    EXPECT_TRUE(exists(dir, "tests/foo_test.cpp.new"));
+}
+
+TEST(GenTests, DryRunPrintsTheDiffAndWritesNothing) {
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--dry-run"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(r.out, "+TEST(FooTest, size) {")) << r.out;
+    EXPECT_TRUE(contains(r.err, "would create tests/foo_test.cpp"));
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
+TEST(GenTests, CheckSaysWhetherAnythingWouldChange) {
+    const TempDir dir;
+    write_foo(dir);
+    EXPECT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--check"}).code, 4);
+    EXPECT_FALSE(exists(dir, "tests"));
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "tests"}).code, 0);
+    EXPECT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--check"}).code, 0);
+}
+
+// ---- how the test includes the header -------------------------------------------------------------------------
+
+std::string include_line(const TempDir& dir, const std::vector<std::string>& args) {
+    fs::remove_all(dir.path() / "tests");   // each call starts from nothing: an existing file would only get a .new
+    std::vector<std::string> a = args;
+    a.insert(a.end(), {"--out", "tests"});
+    const Outcome r = gen_tests(dir, a);
+    EXPECT_EQ(r.code, 0) << r.err;
+    const std::string text = read(dir, "tests/foo_test.cpp");
+    const std::size_t at = text.find("#include \"");
+    return at == std::string::npos ? "<none>" : text.substr(at, text.find('\n', at) - at);
+}
+
+TEST(GenTestsInclude, WithoutAnIncludeDirectoryItIsTheFileName) {
+    const TempDir dir;
+    write_foo(dir);
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h"}), "#include \"foo.h\"");
+}
+
+TEST(GenTestsInclude, ItIsThePathBelowTheIncludeDirectoryThatHoldsTheHeader) {
+    const TempDir dir;
+    write_foo(dir);
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "include"}), "#include \"acme/foo.h\"");
+}
+
+TEST(GenTestsInclude, TheFirstIncludeDirectoryThatContainsItWins) {
+    const TempDir dir;
+    write_foo(dir);
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "elsewhere", "-I", "include/acme", "-I", "include"}), "#include \"foo.h\"");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "elsewhere", "-I", "include", "-I", "include/acme"}), "#include \"acme/foo.h\"");
+}
+
+TEST(GenTestsInclude, ADirectoryThatDoesNotContainTheHeaderIsNoHelp) {
+    const TempDir dir;
+    write_foo(dir);
+    fs::create_directories(dir.path() / "other");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "other"}), "#include \"foo.h\"");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "include/acme/missing"}), "#include \"foo.h\"");
+}
+
+TEST(GenTestsInclude, ASpellingOfTheDirectoryWithDotsOrASlashIsTheSameDirectory) {
+    const TempDir dir;
+    write_foo(dir);
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "./include/"}), "#include \"acme/foo.h\"");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "src/../include"}), "#include \"acme/foo.h\"");
+    EXPECT_EQ(include_line(dir, {"./include/acme/../acme/foo.h", "-I", "include"}), "#include \"acme/foo.h\"");
+}
+
+TEST(GenTestsInclude, AnAbsoluteIncludeDirectoryWorksToo) {
+    const TempDir dir;
+    write_foo(dir);
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", (dir.path() / "include").string()}), "#include \"acme/foo.h\"");
+}
+
+// A symbolic link is the directory it points to: the compiler finds the header by the real path as well.
+bool link_to(const TempDir& dir, const std::string& target, const std::string& link) {
+    std::error_code ec;
+    fs::create_directory_symlink(dir.path() / target, dir.path() / link, ec);
+    return !ec;
+}
+
+TEST(GenTestsInclude, AnIncludeDirectoryThatIsALinkIsTheDirectoryItPointsTo) {
+    const TempDir dir;
+    write_foo(dir);
+    if (!link_to(dir, "include", "include_link")) GTEST_SKIP() << "no symbolic links here";
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "include_link"}), "#include \"acme/foo.h\"");
+}
+
+TEST(GenTestsInclude, AHeaderReachedThroughALinkIsTheHeaderItPointsTo) {
+    const TempDir dir;
+    write_foo(dir);
+    if (!link_to(dir, "include", "include_link")) GTEST_SKIP() << "no symbolic links here";
+    EXPECT_EQ(include_line(dir, {"include_link/acme/foo.h", "-I", "include"}), "#include \"acme/foo.h\"");
+}
+
+TEST(GenTestsInclude, IncludeAsSaysItOutright) {
+    const TempDir dir;
+    write_foo(dir);
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "include", "--include-as", "vendor/foo.h"}), "#include \"vendor/foo.h\"");
+}
+
+// ---- configuration and options ----------------------------------------------------------------------------------
+
+TEST(GenTestsOptions, ThePlaceholderCanBeASkip) {
+    const TempDir dir;
+    write_foo(dir);
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--placeholder", "skip"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "tests/foo_test.cpp"), "GTEST_SKIP() << \"TODO(mt)"));
+    EXPECT_FALSE(contains(read(dir, "tests/foo_test.cpp"), "FAIL()"));
+}
+
+TEST(GenTestsOptions, TheConfigurationNamesTheFilesAndTheSuites) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "mt.json",
+               R"({"naming": {"gtest_file": "test_{stem}.cc", "suite": "{Class}Spec"}, "file_header": "// (c) acme"})");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--config", "mt.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    const std::string text = read(dir, "tests/test_foo.cc");
+    EXPECT_TRUE(contains(text, "TEST(FooSpec, size)")) << text;
+    EXPECT_EQ(text.rfind("// (c) acme\n", 0), 0u) << text;
+}
+
+TEST(GenTestsOptions, ATemplateOfTheUserReplacesTheDefault) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "tpl/gtest/test_file.inja", "tests of {{ source }}\n");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--templates", "tpl"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(read(dir, "tests/foo_test.cpp"), "tests of include/acme/foo.h\n");
+}
+
+TEST(GenTestsOptions, VerboseSaysWhichTemplatesAreTheUsers) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "tpl/gtest/test_file.inja", "x\n");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--templates", "tpl", "--verbose"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(r.err, "mirrortest: using template 'gtest/test_file.inja' from 'tpl'")) << r.err;
+    EXPECT_FALSE(contains(gen_tests(dir, {"include/acme/foo.h", "--out", "tests2", "--templates", "tpl"}).err, "using template"))
+        << "only with --verbose";
+}
+
+TEST(GenTestsOptions, ABrokenTemplateIsAnErrorAndNothingIsWritten) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "tpl/gtest/test_file.inja", "{{ nope }}\n");
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--templates", "tpl"});
+    EXPECT_EQ(r.code, 1);
+    EXPECT_FALSE(exists(dir, "tests"));
+    EXPECT_FALSE(r.err.empty());
+}
+
+// The templates are checked before any header is read: a template that cannot work is the first thing the
+// user hears, not the last of a list that also has the warnings of every header.
+TEST(GenTestsOptions, ATemplateThatCannotWorkIsReportedBeforeTheHeadersAreRead) {
+    const TempDir dir;
+    write_file(dir.path() / "box.h", "template <typename T> class Box { public: void put(T); };\n");
+    write_file(dir.path() / "tpl/gtest/test_file.inja", "{% if unclosed %}\n");
+    const Outcome r = gen_tests(dir, {"box.h", "--out", "tests", "--templates", "tpl"});
+    EXPECT_EQ(r.code, 1);
+    EXPECT_FALSE(contains(r.err, "is skipped")) << "box.h was never read: " << r.err;
+}
+
+TEST(GenTestsOptions, ATemplatesDirectoryThatIsNotThereStopsTheRunBeforeTheHeadersAreRead) {
+    const TempDir dir;
+    write_file(dir.path() / "box.h", "template <typename T> class Box { public: void put(T); };\n");
+    const Outcome r = gen_tests(dir, {"box.h", "--out", "tests", "--templates", "no_such_dir"});
+    EXPECT_NE(r.code, 0);
+    EXPECT_TRUE(contains(r.err, "no_such_dir")) << r.err;
+    EXPECT_FALSE(contains(r.err, "is skipped")) << "box.h was never read: " << r.err;
+}
+
+TEST(GenTestsOptions, TheIgnoreMacrosListReachesTheFrontend) {
+    const TempDir dir;
+    write_file(dir.path() / "api.h", "class Foo { public: void f() MY_ATTR(a); void g(); };\n");
+    write_file(dir.path() / "mt.json", R"({"ignore_macros": ["MY_ATTR"]})");
+
+    const Outcome plain = gen_tests(dir, {"api.h", "--out", "plain"});
+    EXPECT_TRUE(contains(plain.err, "[mt-parse]")) << "a macro nobody told us about confuses the parser: " << plain.err;
+    EXPECT_TRUE(contains(read(dir, "plain/foo_test.cpp"), "TEST(FooTest, MY_ATTR)"));
+
+    const Outcome r = gen_tests(dir, {"api.h", "--out", "tests", "--config", "mt.json"});
+    EXPECT_EQ(r.err, "created tests/foo_test.cpp\n");
+    const std::string text = read(dir, "tests/foo_test.cpp");
+    EXPECT_TRUE(contains(text, "TEST(FooTest, f)"));
+    EXPECT_FALSE(contains(text, "MY_ATTR"));
+}
+
+TEST(GenTestsOptions, QTestIsNotSupportedYet) {
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--framework", "qtest"});
+    EXPECT_EQ(r.code, 1);
+    EXPECT_TRUE(contains(r.err, "--framework qtest is not supported yet")) << r.err;
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
+// ---- what goes wrong -------------------------------------------------------------------------------------------
+
+TEST(GenTestsFailures, AHeaderThatIsNotThereIsAnIoError) {
+    const TempDir dir;
+    const Outcome r = gen_tests(dir, {"missing.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 3);
+    EXPECT_TRUE(contains(r.err, "missing.h")) << r.err;
+    EXPECT_TRUE(contains(r.err, "[mt-io]"));
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
+TEST(GenTestsFailures, OneBadHeaderStopsTheWholeRunBeforeAnythingIsWritten) {
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "missing.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 3);
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
+TEST(GenTestsFailures, StrictMakesTheWarningsErrors) {
+    const TempDir dir;
+    write_file(dir.path() / "box.h", "template <typename T> class Box { public: void put(T); };\nclass Ok { public: void go(); };\n");
+    const Outcome lax = gen_tests(dir, {"box.h", "--out", "tests"});
+    EXPECT_EQ(lax.code, 0) << lax.err;
+    EXPECT_TRUE(contains(lax.err, "warning: the class template 'Box' is skipped"));
+    EXPECT_TRUE(exists(dir, "tests/ok_test.cpp"));
+
+    const TempDir strict_dir;
+    write_file(strict_dir.path() / "box.h", "template <typename T> class Box { public: void put(T); };\nclass Ok { public: void go(); };\n");
+    const Outcome strict = gen_tests(strict_dir, {"box.h", "--out", "tests", "--strict"});
+    EXPECT_EQ(strict.code, 1);
+    EXPECT_FALSE(exists(strict_dir, "tests"));
+}
+
+TEST(GenTestsFailures, TwoHeadersThatWantTheSameFileWithDifferentContentAreRefused) {
+    const TempDir dir;
+    write_file(dir.path() / "one/foo.h", "class Foo { public: void a(); };\n");
+    write_file(dir.path() / "two/foo.h", "class Foo { public: void b(); };\n");
+    const Outcome r = gen_tests(dir, {"one/foo.h", "two/foo.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 1);
+    EXPECT_TRUE(contains(r.err, "'one/foo.h' and 'two/foo.h' both generate 'tests/foo_test.cpp' with different content; "
+                               "give the headers different output directories, or run them one at a time"))
+        << r.err;
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
+TEST(GenTestsFailures, TheSameHeaderTwiceIsTheSameFileOnce) {
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "include/acme/foo.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created tests/foo_test.cpp\n");
+}
+
+TEST(GenTestsFailures, AHeaderWithNothingToTestIsNotAnError) {
+    const TempDir dir;
+    write_file(dir.path() / "empty.h", "// nothing here\n");
+    const Outcome r = gen_tests(dir, {"empty.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "");
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
+TEST(GenTestsFailures, FreeFunctionsAreSaidToGetNoTestsAndQuietHidesTheNote) {
+    const TempDir dir;
+    write_file(dir.path() / "math.h", "int add(int a, int b);\nint sub(int a, int b);\n");
+    const Outcome r = gen_tests(dir, {"math.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0);
+    EXPECT_EQ(r.err, "math.h:1:5: note: 2 free function(s) in this header get no tests: gen-tests covers classes (docs/design.md, section 9.1) [mt-unsupported]\n");
+    EXPECT_EQ(gen_tests(dir, {"math.h", "--out", "tests", "--quiet"}).err, "");
+}
+
+TEST(GenTestsFailures, OneFreeFunctionIsCountedToo) {
+    const TempDir dir;
+    write_file(dir.path() / "math.h", "int add(int a, int b);\n");
+    EXPECT_TRUE(contains(gen_tests(dir, {"math.h", "--out", "tests"}).err, "1 free function(s) in this header"));
+}
+
+TEST(GenTestsFailures, TheModelIsReadFromTheHeaderEvenWhenItIsBigAndTheFilesAreSortedByClass) {
+    const TempDir dir;
+    write_file(dir.path() / "two.h", "class Zeta { public: void z(); };\nclass Alpha { public: void a(); };\n");
+    const Outcome r = gen_tests(dir, {"two.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created tests/zeta_test.cpp\ncreated tests/alpha_test.cpp\n") << "in the order of the header";
+}
+
+}  // namespace
