@@ -150,6 +150,9 @@ struct Class {
     // of the class they must be written Foo::Item; the backends qualify any
     // signature that mentions one.
     std::vector<std::string> nested_types;
+    // The public enums among nested_types. A value of one is `Foo::Mode m{};`,
+    // which is all a test skeleton needs to know about it.
+    std::vector<std::string> nested_enums;
     // The classes and structs declared inside this one, read like any other.
     // They are not Classes of the Model -- Foo::Item is reached through Foo --
     // but a planner that wants to know whether an Item can be default

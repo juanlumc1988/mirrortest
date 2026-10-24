@@ -320,7 +320,7 @@ why it reads **declarations**, not headers: any translation unit will do.
 | `virtual` (anonymous token), `static`, `virtual_specifier` `override`/`final`, `const`, `noexcept`, ref-qualifier | flags |
 | `template_declaration` inside the class | method with `is_template` |
 | `field_declaration` with a non-function declarator (includes `int (*cb)(int)`, arrays, bitfields, `static constexpr`) | `Field` (one per declarator: `int a, *b;`) |
-| `field_declaration` with no declarator whose type is a class/enum, `type_definition`, `alias_declaration` | name goes to `nested_types`; a nested class or struct with a body is also read, like any other, into `Class::nested_classes` (with `nested_access`, and the outer class's `ns`): it is not a `Class` of the model, so nothing that iterates `Model::classes` sees it, but a planner can ask whether `Foo::Item` is default-constructible. Unions and anonymous structs are not read |
+| `field_declaration` with no declarator whose type is a class/enum, `type_definition`, `alias_declaration` | name goes to `nested_types` (and, for a public enum, to `nested_enums` too: `Foo::Mode m{};` is all a test needs of it); a nested class or struct with a body is also read, like any other, into `Class::nested_classes` (with `nested_access`, and the outer class's `ns`): it is not a `Class` of the model, so nothing that iterates `Model::classes` sees it, but a planner can ask whether `Foo::Item` is default-constructible. Unions and anonymous structs are not read |
 | `friend_declaration`, `using_declaration`, `static_assert_declaration` | not members |
 
 A method already present (same signature) is not added twice. The return type is
@@ -1118,7 +1118,16 @@ rest of the slots.
   (`{Class}Test`) in the class's namespace.
 - One case per public constructor (`Constructs`, and if there are several
   `Constructs_<types>`), per public method that is not deleted, and per
-  destructor, and per Qt signal (QTest: a `QSignalSpy` skeleton).
+  destructor, and per Qt signal (QTest: a `QSignalSpy` skeleton). A deleted
+  member, a member template (it needs instantiations, phase 7) and, until phase
+  5, a signal get no case.
+- A class template is skipped with an `mt-unsupported` warning (phase 7); a class
+  with nothing public to test gets an `mt-unsupported` note and no plan. Both
+  are the only diagnostics the planner emits: what a header cannot give the
+  skeleton is said in the skeleton itself, as a `TODO(mt)`.
+- One `ir::TestPlan` per class: the file is `config.naming.gtest_file` expanded
+  with the class (`{stem}` = its `snake_case`), the suite lives in the class's
+  namespace.
 - Names (`core/naming.h`): the method's; operators through a table
   (`operator==`→`OperatorEq`, `operator[]`→`OperatorIndex`,
   `operator()`→`OperatorCall`, `operator bool`→`ConversionToBool`,
@@ -1150,22 +1159,44 @@ TEST(FooTest, size) {
   the rest compiles against the real API but does not run. GCC and Clang do not
   warn about unreachable code with `-Wall -Wextra`; MSVC does (C4702 at `/W4`):
   a documented limitation, MSVC is not a target.
-- `sut`: `Foo sut;` if it is default-constructible (§6.3); otherwise the public
-  constructor whose parameters are all *constructible* and that has the fewest
-  parameters (tie: declaration order) with locals; if none → a commented-out
-  line + TODO. `static` methods → no `sut`.
+- `sut`: `Foo sut;` if it is default-constructible by a public, non-deleted
+  constructor (`ir::is_default_constructible`: `T name{};` is direct-list
+  initialisation, so an `explicit` default constructor does); otherwise the
+  public constructor whose parameters are all *constructible* and that has the
+  fewest parameters (tie: declaration order), as `Foo sut(a, b);` with a local
+  per argument; if none → a commented-out line + TODO. An abstract class has no
+  `sut` either (TODO: derive a test double). `static` methods → no `sut`.
+- The constructor cases are `Foo sut(args);` + `(void)sut;`; the destructor case
+  builds a `sut` like any other and says that it is destroyed when the test ends.
 - Arguments: one local per mandatory parameter `T name{};` with `T` = the
   parameter's type without the top-level `const`/`&`; name = the parameter's (or
   `argN`), without collisions. `T&&` → `std::move(name)` (+ `<utility>`).
   Parameters with a default value: omitted (with a comment saying so).
-- *Constructible* type: fundamental, enum, pointer, known `std::`/Qt value
-  types, default-constructible classes of the same model,
-  `config.default_constructible_types`. If any argument is not → the call is
-  emitted commented out (`Stmt::commented_out`) with a TODO.
+- *Constructible* type: fundamental, enum (also the public ones nested in a
+  class: `Foo::Mode`), pointer, known `std::`/Qt value types,
+  default-constructible classes of the same model (nested ones included, when
+  public), `config.default_constructible_types`. A function pointer, an array or
+  `auto` never is.
+- If any argument is not constructible, **everything the call needs is emitted
+  commented out** (`Stmt::commented_out`) after a `TODO(mt): an argument of
+  type 'X' cannot be built here` that names the first such type (without `const`
+  or `&`): the `sut`, the `const_sut`, the locals of *all* the arguments and the
+  call, with every argument named. Nothing is left half-compiled: a local
+  that only the commented-out call used would be an unused-variable warning in a
+  file built with the project's own flags. The person writing the test fixes the
+  one line that cannot be built and uncomments the block. A `std::move` in a
+  commented-out call does not add `<utility>`.
 - `const` methods → through `const Foo& const_sut = sut;`.
-- `noexcept` → `static_assert(noexcept(<call>), "…")`.
+- `noexcept` → `static_assert(noexcept(<call>), "…")` under `// Assert`
+  (commented out with the call if the call is).
+- Operators are called by name: `sut.operator==(o)`, `sut.operator[](i)`,
+  `const_sut.operator bool()`: it is the one spelling that is valid for all of
+  them, and it keeps the case about the member, not about an expression.
 - Result: `const R result = …;` if `R` is a value; `R result = …;` if `R` is a
-  reference; `void` → just the call. Always `(void)result;`.
+  reference; `R const result = …;` if it is a pointer (a leading `const` would
+  make the pointee const); `auto result = …;` for what cannot be spelled before
+  the name (function pointers, arrays); `void` → just the call. Always
+  `(void)result;`. A conversion operator's result is the type it converts to.
 - Nested types of the class in signatures → qualified `Foo::Item` (the tests are
   already inside the class's namespace).
 

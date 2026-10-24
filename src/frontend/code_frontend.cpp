@@ -596,8 +596,13 @@ private:
             // `struct N { ... };` and `enum class E { ... };` inside a class.
             const Node type = node.child_by_field("type");
             if (!type.is_null() && (is_class_like(type.type()) || type.type() == "enum_specifier")) {
-                add_nested(state.cls, std::string(type.child_by_field("name").text()));
+                const std::string name(type.child_by_field("name").text());
+                add_nested(state.cls, name);
                 if (is_class_like(type.type())) nested_class(type, state);
+                if (type.type() == "enum_specifier" && state.access == ir::Access::Public && !name.empty() &&
+                    std::find(state.cls.nested_enums.begin(), state.cls.nested_enums.end(), name) == state.cls.nested_enums.end()) {
+                    state.cls.nested_enums.push_back(name);
+                }
             }
             return;
         }

@@ -828,6 +828,23 @@ TEST(CodeFrontendNested, ANestedClassIsReadLikeAnyOther) {
     EXPECT_EQ(method_names(outer), std::vector<std::string>{"make"});
 }
 
+TEST(CodeFrontendNested, OnlyThePublicEnumsAreNestedEnums) {
+    const Read r = read(
+        "class A {\n"
+        "    enum class Hidden { X };\n"
+        "public:\n"
+        "    enum class Mode { A, B };\n"
+        "    enum Plain { P };\n"
+        "    enum { Anonymous };\n"
+        "    struct S { int x; };\n"
+        "protected:\n"
+        "    enum Guarded { G };\n"
+        "};");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_EQ(a.nested_enums, (std::vector<std::string>{"Mode", "Plain"}));
+    EXPECT_EQ(a.nested_types, (std::vector<std::string>{"Hidden", "Mode", "Plain", "S", "Guarded"}));
+}
+
 TEST(CodeFrontendNested, NestingGoesAsDeepAsTheCode) {
     const Read r = read("class A { public: class B { public: class C { public: void deep(); }; }; };");
     const ir::Class& a = the_class(r, "A");

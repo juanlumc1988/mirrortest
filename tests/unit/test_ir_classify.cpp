@@ -271,6 +271,18 @@ TEST(IrClassifyReturnable, AGeneratedClassNeedsABraceConstructor) {
     EXPECT_TRUE(returnable("Foo", {&both}));
 }
 
+TEST(IrClassifyReturnable, ADefaultConstructorThatIsNotPublicIsNoUse) {
+    ir::Method hidden = ctor(0);
+    hidden.access = ir::Access::Private;
+    const ir::Model model = model_with({hidden});
+    EXPECT_FALSE(returnable("Foo", {&model}));
+    EXPECT_FALSE(ir::is_default_constructible(ir::type_from_spelling("Foo"), {&model}, {}));
+    ir::Method protected_ctor = ctor(0);
+    protected_ctor.access = ir::Access::Protected;
+    const ir::Model other = model_with({protected_ctor, ctor(0)});
+    EXPECT_TRUE(returnable("Foo", {&other})) << "a public one beside it";
+}
+
 TEST(IrClassifyReturnable, DeletedAndAbstractClassesAreNot) {
     ir::Method deleted = ctor(0);
     deleted.is_deleted = true;
@@ -307,6 +319,106 @@ TEST(IrClassifyReturnable, EnumsAreValueInitialisable) {
 TEST(IrClassifyReturnable, TemplateInstancesOfAKnownClassFollowTheClass) {
     const ir::Model model = model_with({});
     EXPECT_TRUE(returnable("Foo<int>", {&model}));
+}
+
+// ---- is_default_constructible -------------------------------------------------------------------------------------
+
+bool constructible(const std::string& spelling, const std::vector<const ir::Model*>& models = {},
+                   const std::vector<std::string>& user = {}) {
+    return ir::is_default_constructible(ir::type_from_spelling(spelling), models, user);
+}
+
+TEST(IrClassifyConstructible, ReferencesAndConstAreIgnoredBecauseTheCallerDropsThem) {
+    EXPECT_TRUE(constructible("int&"));
+    EXPECT_TRUE(constructible("const std::string&"));
+    EXPECT_TRUE(constructible("const double"));
+    EXPECT_TRUE(constructible("std::vector<int>&&"));
+    EXPECT_FALSE(constructible("Mystery&"));
+    EXPECT_FALSE(constructible("void"));
+    EXPECT_FALSE(constructible(""));
+}
+
+TEST(IrClassifyConstructible, AnExplicitDefaultConstructorIsFineForDirectListInitialisation) {
+    const ir::Model explicit_default = model_with({ctor(0, true)});
+    EXPECT_FALSE(returnable("Foo", {&explicit_default}));
+    EXPECT_TRUE(constructible("Foo", {&explicit_default}));
+    EXPECT_TRUE(constructible("const Foo&", {&explicit_default}));
+}
+
+TEST(IrClassifyConstructible, ConstructorsThatNeedArgumentsOrAreDeletedOrAbstractAreNot) {
+    ir::Method deleted = ctor(0);
+    deleted.is_deleted = true;
+    ir::Method pure;
+    pure.name = "run";
+    pure.is_pure = true;
+    const ir::Model needs_args = model_with({ctor(1)});
+    const ir::Model deleted_default = model_with({deleted});
+    const ir::Model abstract = model_with({pure});
+    EXPECT_FALSE(constructible("Foo", {&needs_args}));
+    EXPECT_FALSE(constructible("Foo", {&deleted_default}));
+    EXPECT_FALSE(constructible("Foo", {&abstract}));
+}
+
+TEST(IrClassifyConstructible, PointersAndTheConfigurationsTypes) {
+    EXPECT_TRUE(constructible("Mystery*"));
+    EXPECT_TRUE(constructible("const char*"));
+    EXPECT_FALSE(constructible("Mystery"));
+    EXPECT_TRUE(constructible("Mystery", {}, {"Mystery"}));
+}
+
+TEST(IrClassifyConstructible, APublicNestedClassIsFoundThroughItsOuter) {
+    ir::Model model = model_with({});
+    ir::Class item;
+    item.name = "Item";
+    item.ns = {"acme"};
+    item.nested_access = ir::Access::Public;
+    ir::Class secret = item;
+    secret.name = "Secret";
+    secret.nested_access = ir::Access::Private;
+    ir::Class needs;
+    needs.name = "Needs";
+    needs.ns = {"acme"};
+    needs.methods = {ctor(1)};
+    ir::Class deep;
+    deep.name = "Deep";
+    deep.ns = {"acme"};
+    item.nested_classes = {deep};
+    model.classes[0].ns = {"acme"};
+    model.classes[0].nested_classes = {item, secret, needs};
+
+    EXPECT_TRUE(constructible("Foo::Item", {&model}));
+    EXPECT_TRUE(constructible("acme::Foo::Item", {&model}));
+    EXPECT_TRUE(constructible("const Foo::Item&", {&model}));
+    EXPECT_TRUE(constructible("Foo::Item::Deep", {&model}));
+    EXPECT_FALSE(constructible("Foo::Secret", {&model})) << "private";
+    EXPECT_FALSE(constructible("Foo::Needs", {&model})) << "needs an argument";
+    EXPECT_TRUE(constructible("Item", {&model})) << "a name matches by its suffix, as inside the outer class's own signatures";
+    EXPECT_FALSE(constructible("Other::Item", {&model}));
+}
+
+TEST(IrClassifyConstructible, APublicNestedEnumIsFoundThroughItsOuter) {
+    ir::Model model = model_with({});
+    model.classes[0].ns = {"acme"};
+    model.classes[0].nested_enums = {"Mode"};
+    ir::Class item;
+    item.name = "Item";
+    item.ns = {"acme"};
+    item.nested_access = ir::Access::Public;
+    item.nested_enums = {"Kind"};
+    ir::Class hidden = item;
+    hidden.name = "Hidden";
+    hidden.nested_access = ir::Access::Private;
+    model.classes[0].nested_classes = {item, hidden};
+
+    EXPECT_TRUE(constructible("Foo::Mode", {&model}));
+    EXPECT_TRUE(constructible("acme::Foo::Mode", {&model}));
+    EXPECT_TRUE(constructible("const Foo::Mode&", {&model}));
+    EXPECT_TRUE(constructible("Foo::Item::Kind", {&model}));
+    EXPECT_FALSE(constructible("Foo::Hidden::Kind", {&model})) << "its class is private";
+    EXPECT_FALSE(constructible("Foo::Other", {&model})) << "not an enum of the class";
+    EXPECT_TRUE(constructible("Kind", {&model})) << "a name matches by its suffix, as for the nested classes";
+    EXPECT_FALSE(constructible("Other::Kind", {&model}));
+    EXPECT_FALSE(constructible("Foo::Mode", {})) << "without the model it is nobody";
 }
 
 TEST(IrClassifyReturnable, ANullModelIsSkipped) {

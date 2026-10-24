@@ -47,6 +47,7 @@ add_library(mt_core STATIC
     src/backend/cxx_format.cpp
     src/backend/impl_backend.cpp
     src/backend/impl_merge.cpp
+    src/backend/test_planner.cpp
     src/cli/commands.cpp
     src/cli/gen_impl.cpp
     src/cli/run.cpp
@@ -122,6 +123,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_source.cpp
         tests/unit/test_syntax_tree.cpp
         tests/unit/test_test_frontend.cpp
+        tests/unit/test_test_planner.cpp
         tests/unit/test_templates.cpp
         tests/unit/test_writer.cpp
         tests/unit/test_type.cpp)

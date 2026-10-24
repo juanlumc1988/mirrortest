@@ -55,6 +55,15 @@ std::vector<std::string> mentioned_names(std::string_view spelling);
 bool is_default_returnable(const Type& type, const std::vector<const Model*>& models,
                            const std::vector<std::string>& user_types);
 
+// Can `T name{};` declare a value of this type? That is what a generated test
+// does for each argument. References and a top-level `const` are ignored (the
+// caller declares the type without them), and an `explicit` default
+// constructor will do, since direct-list-initialisation may use it. Otherwise
+// the same rules as is_default_returnable, plus the public nested classes and
+// enums of the classes of `models` (Foo::Item, Foo::Mode).
+bool is_default_constructible(const Type& type, const std::vector<const Model*>& models,
+                              const std::vector<std::string>& user_types);
+
 }  // namespace mt::ir
 
 #endif  // MT_IR_CLASSIFY_H

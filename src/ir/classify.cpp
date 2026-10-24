@@ -171,23 +171,57 @@ bool matches_class(const std::string& written, const std::string& qualified) {
     return qualified == written || ends_with(qualified, "::" + written);
 }
 
-// Can `{}` build this class without naming a constructor? That is what
-// `return {};` does: copy-list-initialisation, which an `explicit` default
-// constructor refuses.
-bool brace_constructible(const Class& c) {
+// Can `{}` build this class without naming a constructor? `return {};` is
+// copy-list-initialisation, which an `explicit` default constructor refuses;
+// `T name{};` is direct-list-initialisation, which does not.
+bool brace_constructible(const Class& c, bool allow_explicit) {
     bool any_ctor = false;
     for (const Method& m : c.methods) {
         if (m.is_pure) return false;
         if (m.kind != MethodKind::Constructor) continue;
         any_ctor = true;
-        if (m.is_deleted || m.is_explicit) continue;
+        if (m.is_deleted || m.access != Access::Public || (m.is_explicit && !allow_explicit)) continue;
         const bool all_defaulted = std::all_of(m.params.begin(), m.params.end(), [](const Param& p) { return p.default_value.has_value(); });
         if (all_defaulted) return true;
     }
     return !any_ctor;
 }
 
-bool value_returnable(const std::string& base, const std::vector<const Model*>& models, const std::vector<std::string>& user_types) {
+// The class a written name refers to, nested classes included. A nested class
+// is found as `Outer::Inner` (or by any suffix of its qualified name) and only
+// if it is public.
+const Class* find_class_like(const Class& c, const std::string& qualified, const std::string& written) {
+    if (matches_class(written, qualified)) return &c;
+    for (const Class& n : c.nested_classes) {
+        if (n.nested_access != Access::Public) continue;
+        if (const Class* found = find_class_like(n, qualified + "::" + n.name, written)) return found;
+    }
+    return nullptr;
+}
+
+// Is `written` a public enum nested in `c` (or in a public class nested in it)?
+bool has_nested_enum(const Class& c, const std::string& qualified, const std::string& written) {
+    for (const std::string& e : c.nested_enums) {
+        if (matches_class(written, qualified + "::" + e)) return true;
+    }
+    for (const Class& n : c.nested_classes) {
+        if (n.nested_access == Access::Public && has_nested_enum(n, qualified + "::" + n.name, written)) return true;
+    }
+    return false;
+}
+
+const Class* find_class_in(const std::vector<const Model*>& models, const std::string& written) {
+    for (const Model* model : models) {
+        if (model == nullptr) continue;
+        for (const Class& c : model->classes) {
+            if (const Class* found = find_class_like(c, qualified_name(c.ns, c.name), written)) return found;
+        }
+    }
+    return nullptr;
+}
+
+bool value_returnable(const std::string& base, const std::vector<const Model*>& models, const std::vector<std::string>& user_types,
+                      bool allow_explicit) {
     const std::string written(strip_global(base));
     for (const std::string& u : user_types) {
         if (std::string(strip_global(u)) == written) return true;
@@ -208,9 +242,10 @@ bool value_returnable(const std::string& base, const std::vector<const Model*>& 
         if (starts_with(bare, "chrono::")) return true;
         if (bare == "nullptr_t" || bare == "byte") return true;
         if (bare == "pair" || bare == "tuple") {
-            return std::all_of(args.begin(), args.end(), [&](const std::string& a) { return value_returnable(a, models, user_types); });
+            return std::all_of(args.begin(), args.end(),
+                               [&](const std::string& a) { return value_returnable(a, models, user_types, allow_explicit); });
         }
-        if (bare == "array") return !args.empty() && value_returnable(args.front(), models, user_types);
+        if (bare == "array") return !args.empty() && value_returnable(args.front(), models, user_types, allow_explicit);
         // Containers, strings, smart pointers, function, optional: all
         // default-constructible whatever they hold.
         static const std::set<std::string> always = {
@@ -225,10 +260,14 @@ bool value_returnable(const std::string& base, const std::vector<const Model*>& 
         for (const Enum& e : model->enums) {
             if (matches_class(name, qualified_name(e.ns, e.name))) return true;
         }
+    }
+    for (const Model* model : models) {
+        if (model == nullptr) continue;
         for (const Class& c : model->classes) {
-            if (matches_class(name, qualified_name(c.ns, c.name))) return brace_constructible(c);
+            if (has_nested_enum(c, qualified_name(c.ns, c.name), name)) return true;
         }
     }
+    if (const Class* c = find_class_in(models, name)) return brace_constructible(*c, allow_explicit);
     return false;
 }
 
@@ -289,7 +328,13 @@ std::vector<std::string> mentioned_names(std::string_view spelling) {
 bool is_default_returnable(const Type& type, const std::vector<const Model*>& models, const std::vector<std::string>& user_types) {
     if (type.empty() || type.is_void() || type.ref != RefKind::None) return false;
     if (type.pointer_depth > 0) return true;
-    return value_returnable(type.base, models, user_types);
+    return value_returnable(type.base, models, user_types, false);
+}
+
+bool is_default_constructible(const Type& type, const std::vector<const Model*>& models, const std::vector<std::string>& user_types) {
+    if (type.empty() || type.is_void()) return false;
+    if (type.pointer_depth > 0) return true;
+    return value_returnable(type.base, models, user_types, true);
 }
 
 }  // namespace mt::ir

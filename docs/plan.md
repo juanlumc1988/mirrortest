@@ -204,9 +204,10 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   when two branches declare the same (name, arity) with different signatures
   (§6.5), complete nested classes, and the `mt-unsupported` cases of §6.4
   (specialisations, `using Base::Base`, `concept`). Tests.
-- [ ] **4.2 Planner** — `backend/test_planner` (§9.1–9.3): cases, names, `sut`,
+- [x] **4.2 Planner** — `backend/test_planner` (§9.1–9.3): cases, names, `sut`,
   locals, `const_sut`, `noexcept`, result, commented-out, includes. *Model →
-  plan* tests.
+  plan* tests. (Needed `ir::is_default_constructible` and `Class::nested_enums`:
+  the planner has to know that `Foo::Mode m{};` and `Foo::Item i{};` are valid.)
 - [ ] **4.3 GTest backend** — `backend/gtest_backend` + `gtest/test_file.inja`
   (§9.4), `fail`/`skip` placeholders.
 - [ ] **4.4 The `gen-tests` subcommand** + goldens (`tests/golden/gen-tests/`):
