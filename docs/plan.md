@@ -208,8 +208,10 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   locals, `const_sut`, `noexcept`, result, commented-out, includes. *Model →
   plan* tests. (Needed `ir::is_default_constructible` and `Class::nested_enums`:
   the planner has to know that `Foo::Mode m{};` and `Foo::Item i{};` are valid.)
-- [ ] **4.3 GTest backend** — `backend/gtest_backend` + `gtest/test_file.inja`
-  (§9.4), `fail`/`skip` placeholders.
+- [x] **4.3 GTest backend** — `backend/gtest_backend` + `gtest/test_file.inja`
+  (§9.4), `fail`/`skip` placeholders. (`output_path`, `escape_literal` and the
+  namespace lines moved to `core/output.h` and `backend/cxx_format.h`, where both
+  backends use them.)
 - [ ] **4.4 The `gen-tests` subcommand** + goldens (`tests/golden/gen-tests/`):
   `simple_class`, `const_noexcept`, `static`, `overloads`, `operators`,
   `non_default_ctor`, `abstract`, `nested_types`, `namespaces`,

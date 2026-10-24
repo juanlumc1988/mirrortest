@@ -54,15 +54,6 @@ bool has_return_type(const ir::Method& m) {
     return m.kind != ir::MethodKind::Constructor && m.kind != ir::MethodKind::Destructor && m.kind != ir::MethodKind::Conversion;
 }
 
-std::string escape_literal(const std::string& text) {
-    std::string out;
-    for (char c : text) {
-        if (c == '"' || c == '\\') out += '\\';
-        out += c;
-    }
-    return out;
-}
-
 std::string types_text(const std::vector<ir::Param>& params) {
     std::string out;
     for (std::size_t i = 0; i < params.size(); ++i) {
@@ -73,6 +64,33 @@ std::string types_text(const std::vector<ir::Param>& params) {
 }
 
 }  // namespace
+
+std::string escape_literal(const std::string& text) {
+    std::string out;
+    for (char c : text) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out += c;
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> namespace_open(const std::vector<std::string>& ns) {
+    std::vector<std::string> lines;
+    for (const std::string& n : ns) lines.push_back("namespace " + n + " {");
+    return lines;
+}
+
+std::vector<std::string> namespace_close(const std::vector<std::string>& ns) {
+    std::vector<std::string> lines;
+    for (auto it = ns.rbegin(); it != ns.rend(); ++it) lines.push_back("}  // namespace " + *it);
+    return lines;
+}
 
 std::string declare(const ir::Type& type, const std::string& name) {
     if (name.empty()) return type.spelling;

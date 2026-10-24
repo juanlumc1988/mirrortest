@@ -341,4 +341,19 @@ TEST(CxxFormatStub, ConstructorsAndDestructorsAreEmptyWhateverThePolicy) {
     }
 }
 
+TEST(CxxFormatText, AStringLiteralKeepsItsQuotesBackslashesAndLineBreaksInside) {
+    EXPECT_EQ(backend::escape_literal("plain text (int, const char*)"), "plain text (int, const char*)");
+    EXPECT_EQ(backend::escape_literal("say \"hi\""), "say \\\"hi\\\"");
+    EXPECT_EQ(backend::escape_literal("a\\b"), "a\\\\b");
+    EXPECT_EQ(backend::escape_literal("one\ntwo\r\tthree"), "one\\ntwo\\r\\tthree");
+    EXPECT_EQ(backend::escape_literal(""), "");
+}
+
+TEST(CxxFormatText, NamespacesOpenOutsideInAndCloseInsideOut) {
+    EXPECT_EQ(backend::namespace_open({"a", "b"}), (std::vector<std::string>{"namespace a {", "namespace b {"}));
+    EXPECT_EQ(backend::namespace_close({"a", "b"}), (std::vector<std::string>{"}  // namespace b", "}  // namespace a"}));
+    EXPECT_TRUE(backend::namespace_open({}).empty());
+    EXPECT_TRUE(backend::namespace_close({}).empty());
+}
+
 }  // namespace

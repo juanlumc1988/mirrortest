@@ -267,18 +267,6 @@ private:
         const ir::Class*  generated = nullptr;   // set when the header is one of ours
     };
 
-    static json namespace_open(const std::vector<std::string>& ns) {
-        json lines = json::array();
-        for (const std::string& n : ns) lines.push_back("namespace " + n + " {");
-        return lines;
-    }
-
-    static json namespace_close(const std::vector<std::string>& ns) {
-        json lines = json::array();
-        for (auto it = ns.rbegin(); it != ns.rend(); ++it) lines.push_back("}  // namespace " + *it);
-        return lines;
-    }
-
     static json member(const std::vector<std::string>& notes, const std::string& line) {
         json m;
         json todo = json::array();
@@ -686,11 +674,6 @@ private:
 
 }  // namespace
 
-std::string output_path(const std::string& dir, const std::string& relative) {
-    if (dir.empty() || dir == ".") return relative;
-    return dir.back() == '/' ? dir + relative : dir + "/" + relative;
-}
-
 std::vector<ImplViews> build_impl_views(const ir::Model& model, const ImplOptions& options, core::Diagnostics& diagnostics) {
     return Builder(model, options, diagnostics).run();
 }
@@ -700,11 +683,11 @@ core::OutputPlan generate_impl(const ir::Model& model, const ImplOptions& option
     core::OutputPlan plan;
     for (const ImplViews& v : build_impl_views(model, options, diagnostics)) {
         if (auto text = templates.render("impl/header.inja", v.header_view, diagnostics)) {
-            plan.files.push_back({output_path(options.out_include, v.header_path), *text});
+            plan.files.push_back({core::output_path(options.out_include, v.header_path), *text});
         }
         if (!v.source_path.empty()) {
             if (auto text = templates.render("impl/source.inja", v.source_view, diagnostics)) {
-                plan.files.push_back({output_path(options.out_src, v.source_path), *text});
+                plan.files.push_back({core::output_path(options.out_src, v.source_path), *text});
             }
         }
     }

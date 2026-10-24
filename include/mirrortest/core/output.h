@@ -28,6 +28,14 @@ struct OutputPlan {
     std::vector<OutputFile> files;   // in the order they are reported
 };
 
+// Where a generated file lands: `dir` joined with the path below it, "" and "."
+// meaning the working directory ("out" + "acme/foo.h" -> "out/acme/foo.h"). Text
+// only: the path is shown to the user as built, never resolved.
+inline std::string output_path(const std::string& dir, const std::string& relative) {
+    if (dir.empty() || dir == ".") return relative;
+    return dir.back() == '/' ? dir + relative : dir + "/" + relative;
+}
+
 }  // namespace mt::core
 
 #endif  // MT_CORE_OUTPUT_H

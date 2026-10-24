@@ -61,6 +61,17 @@ std::string function_declaration(const ir::Function& function);
 // `int add(int /*arg1*/, int /*arg2*/)`
 std::string function_definition_head(const ir::Function& function);
 
+// ---- text -----------------------------------------------------------------------------------------------------
+
+// The inside of a string literal: `"`, `\`, newline, carriage return and tab
+// escaped, everything else as it is.
+std::string escape_literal(const std::string& text);
+
+// `namespace a {` for each level, outermost first; and `}  // namespace a` for
+// each, innermost first. Empty for the global namespace.
+std::vector<std::string> namespace_open(const std::vector<std::string>& ns);
+std::vector<std::string> namespace_close(const std::vector<std::string>& ns);
+
 // ---- messages -------------------------------------------------------------------------------------------------
 
 // A signature as a person says it, for the message of a stub: qualified, the

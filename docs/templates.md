@@ -123,5 +123,30 @@ definitions}`, the region markers and an array of definitions. A definition is
 `    throw ...;`, `}`), because how a signature and a body are spelt is decided in
 C++ and tested there.
 
-More templates (`gtest/test_file.inja`, `qtest/test_file.inja`) are documented
-here as the backends that use them land.
+### `gtest/test_file.inja`
+
+One generated GoogleTest file (`gen-tests`). It starts with
+`{% include "common/file_header.inja" %}`, so it receives that template's
+variables too.
+
+| Variable | Type | Meaning |
+|---|---|---|
+| `file_header`, `source` | string | as for `common/file_header.inja`; `source` is the header the tests were made from |
+| `includes` | array of string | whole `#include` lines: system headers alphabetically (`<gtest/gtest.h>`, `<utility>`), then local ones (the header under test) |
+| `sections` | array | one per namespace, in order of first appearance |
+
+A section has `open` and `close` (the `namespace x {` and `}  // namespace x`
+lines; empty for the global namespace) and `tests`: an array of
+`{suite, name, lines}`. `lines` is the whole test, complete and indented
+(`TEST(FooTest, size) {`, `    FAIL() << "...";`, `}`), because how a statement is
+spelt -- the placeholder as `FAIL()` or `GTEST_SKIP()`, a statement that could
+not be built as a comment, a `static_assert` -- is decided in C++ and tested
+there. `suite` and `name` are for a template that wants to lay tests out
+differently (a header comment per test, say).
+
+The default puts a blank line after the file header, none between the
+includes, one around the namespace braces and one between tests; nothing inside
+the namespace is indented.
+
+More templates (`qtest/test_file.inja`) are documented here as the backends that
+use them land.

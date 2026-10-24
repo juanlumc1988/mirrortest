@@ -12,6 +12,7 @@
 
 #include "mirrortest/backend/impl_backend.h"
 #include "mirrortest/core/merge.h"
+#include "mirrortest/core/output.h"
 #include "mirrortest/core/regions.h"
 #include "mirrortest/frontend/code_frontend.h"
 #include "mirrortest/ir/type.h"
@@ -517,7 +518,7 @@ std::optional<core::MergeResult> ImplMerger::merge(const core::OutputFile& gener
         }
         std::string header_text;
         if (!header_include.empty()) {
-            const std::string path = output_path(out_include_, header_include);
+            const std::string path = core::output_path(out_include_, header_include);
             const auto merged = merged_headers_.find(path);
             if (merged != merged_headers_.end()) {
                 header_text = merged->second;

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "mirrortest/core/output.h"
 #include "mirrortest/core/writer.h"
 #include "test_support.h"
 
@@ -472,4 +473,15 @@ TEST(OverwriteMode, SpellingsRoundTrip) {
     }
     EXPECT_FALSE(parse_overwrite_mode("always").has_value());
     EXPECT_FALSE(parse_overwrite_mode("").has_value());
+}
+
+TEST(OutputPath, JoinsTheDirectoryAndThePathBelowIt) {
+    EXPECT_EQ(output_path("out", "acme/foo.h"), "out/acme/foo.h");
+    EXPECT_EQ(output_path("out/", "foo.h"), "out/foo.h") << "no doubled slash";
+    EXPECT_EQ(output_path("/abs/out", "foo.h"), "/abs/out/foo.h");
+}
+
+TEST(OutputPath, TheWorkingDirectoryAddsNothing) {
+    EXPECT_EQ(output_path("", "foo.h"), "foo.h");
+    EXPECT_EQ(output_path(".", "acme/foo.h"), "acme/foo.h");
 }

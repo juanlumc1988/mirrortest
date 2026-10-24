@@ -45,6 +45,7 @@ mt_embed_templates("${MT_EMBEDDED_TEMPLATES}" "${CMAKE_CURRENT_SOURCE_DIR}/templ
 
 add_library(mt_core STATIC
     src/backend/cxx_format.cpp
+    src/backend/gtest_backend.cpp
     src/backend/impl_backend.cpp
     src/backend/impl_merge.cpp
     src/backend/test_planner.cpp
@@ -106,6 +107,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_dependencies.cpp
         tests/unit/test_extract.cpp
         tests/unit/test_gen_impl.cpp
+        tests/unit/test_gtest_backend.cpp
         tests/unit/test_include_search.cpp
         tests/unit/test_impl_backend.cpp
         tests/unit/test_impl_merge.cpp
