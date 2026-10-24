@@ -31,6 +31,30 @@ bool starts_with(std::string_view s, std::string_view prefix) { return s.compare
 
 // ---- spellings -------------------------------------------------------------------------------------------
 
+// `using namespace std;` lets a test write `string` and `vector<string>`. A
+// header must not carry that directive, so the declarations generated from
+// such a test have to say `std::string` themselves. A name already qualified
+// (`std::string`, `other::string`, `::string`) is left alone.
+std::string qualify_std_names(const std::string& spelling) {
+    std::string out;
+    std::size_t i = 0;
+    while (i < spelling.size()) {
+        const unsigned char c = static_cast<unsigned char>(spelling[i]);
+        if (!(std::isalpha(c) || c == '_')) {
+            out += spelling[i++];
+            continue;
+        }
+        std::size_t end = i;
+        while (end < spelling.size() && (std::isalnum(static_cast<unsigned char>(spelling[end])) || spelling[end] == '_')) ++end;
+        const std::string word = spelling.substr(i, end - i);
+        const bool scoped = !out.empty() && out.back() == ':';
+        if (!scoped && is_std_type(word)) out += "std::";
+        out += word;
+        i = end;
+    }
+    return out;
+}
+
 // The words of a fundamental type in one canonical spelling, so that
 // `unsigned` and `unsigned int`, or `long int` and `long`, are recognised as
 // the same thing when two uses are compared. Anything else comes back as it is.
@@ -138,6 +162,10 @@ struct Returned {
     bool                     had_evidence = false;
 };
 
+// What a result belongs to; it decides the words of the messages, and that a
+// field can never be void.
+enum class Subject { Method, Function, Field };
+
 class Inference {
 public:
     Inference(const Classified& classified, const core::Config& config, const std::vector<ir::Model>& known,
@@ -147,6 +175,7 @@ public:
         for (const ir::Model& m : known) {
             for (const ir::Enum& e : m.enums) enums_.insert(e.name);
         }
+        using_std_ = std::find(c_.facts.using_namespaces.begin(), c_.facts.using_namespaces.end(), "std") != c_.facts.using_namespaces.end();
         for (const std::string& t : config_.by_value_types) by_value_.insert(canonical_base(t));
         for (const auto& entry : config_.type_map) type_map_[canonical_base(entry.first)] = entry.second;
     }
@@ -326,10 +355,25 @@ private:
         }
     }
 
+    // The spelling a header can use: names the test took from `std` through a
+    // using-directive get their prefix back.
+    ir::Type qualified(const ir::Type& t) const {
+        if (!using_std_ || t.empty()) return t;
+        const std::string spelling = qualify_std_names(t.spelling);
+        if (spelling == t.spelling) return t;
+        ir::Type out = ir::type_from_spelling(spelling);
+        out.origin = t.origin;
+        out.reason = t.reason;
+        out.where = t.where;
+        return out;
+    }
+
+    // type_map wins over qualification: its right-hand side is what the user
+    // wants written, verbatim.
     ir::Type mapped(ir::Type t) const {
-        if (t.origin > ir::Origin::Inferred || is_exotic(t) || t.empty()) return t;
+        if (t.origin > ir::Origin::Inferred || is_exotic(t) || t.empty()) return qualified(t);
         const auto found = type_map_.find(canonical_base(t.base));
-        if (found == type_map_.end()) return t;
+        if (found == type_map_.end()) return qualified(t);
         ir::Type out = ir::make_type(found->second, t.is_const, t.ref, t.pointer_depth);
         out.origin = t.origin;
         out.reason = t.reason + " (type_map)";
@@ -445,9 +489,10 @@ private:
     // ---- return types ----------------------------------------------------------------------------------------------------------------------
 
     Returned infer_return(const std::string& subject, const std::vector<const Call*>& calls,
-                          const core::MemberOverride& over, bool is_function_like) {
+                          const core::MemberOverride& over, Subject kind) {
         Returned out;
-        const std::string what = "the return type of '" + subject + "'";
+        const std::string noun = kind == Subject::Field ? "type" : "return type";
+        const std::string what = "the " + noun + " of '" + subject + "'";
         std::vector<Evidence> evidence;
         if (over.returns) evidence.push_back(annotated(*over.returns, calls.front()->where, "annotation"));
 
@@ -476,41 +521,41 @@ private:
         if (const Evidence* best = choose(evidence, what)) {
             out.type = mapped(best->type);
             out.had_evidence = true;
-            note_inferred(out.notes, "return type", *best);
+            note_inferred(out.notes, noun, *best);
             return out;
         }
 
         const ir::SourceLoc& first = calls.front()->where;
         const bool all_discarded = std::all_of(calls.begin(), calls.end(), [](const Call* c) { return c->use->kind == UseKind::Discarded; });
-        const auto any_use = [&](UseKind kind) {
-            return std::any_of(calls.begin(), calls.end(), [kind](const Call* c) { return c->use->kind == kind; });
+        const auto any_use = [&](UseKind wanted) {
+            return std::any_of(calls.begin(), calls.end(), [wanted](const Call* c) { return c->use->kind == wanted; });
         };
 
-        if (all_discarded) {
+        if (all_discarded && kind != Subject::Field) {
             out.type = ir::make_type("void");
             out.type.origin = ir::Origin::Defaulted;
             out.type.reason = "result never used";
             out.type.where = first;
             out.notes.push_back("result never used; assumed void (" + where_text(first) + ")");
             diag_.warning(core::code::unused_result,
-                          "the result of '" + subject + "' is never used, so " + (is_function_like ? "it" : "the method") +
+                          "the result of '" + subject + "' is never used, so " + (kind == Subject::Function ? "it" : "the method") +
                               " is assumed to return void",
                           first);
         } else if (any_use(UseKind::Receiver)) {
             out.type = unknown(core::code::chained_call,
                                "a call is made on the result of '" + subject + "', whose type nothing says; annotate it: "
                                "'// @mt: returns TYPE' on the statement, or Class::member returns TYPE",
-                               "return type", first, out.notes);
+                               noun, first, out.notes);
         } else if (any_use(UseKind::AutoBound)) {
             out.type = unknown(core::code::auto_deduced,
                                "the result of '" + subject + "' is stored in an 'auto' variable, so its type is not known; "
                                "declare the variable's type, or annotate the call: '// @mt: returns TYPE'",
-                               "return type", first, out.notes);
+                               noun, first, out.notes);
         } else {
             out.type = unknown(core::code::unknown_return,
                                what + " cannot be inferred: no test compares the result with a typed value; "
                                "annotate it: '// @mt: returns TYPE'",
-                               "return type", first, out.notes);
+                               noun, first, out.notes);
         }
         out.type = mapped(out.type);
         return out;
@@ -525,7 +570,7 @@ private:
         std::string               subject;
         std::vector<const Call*>  calls;
         core::MemberOverride      over;
-        bool                      function_like = false;
+        Subject                   kind = Subject::Method;
         bool                      done = false;
         Returned                  memo;
     };
@@ -600,8 +645,8 @@ private:
     }
 
     Slot* new_slot(const std::string& subject, const std::vector<const Call*>& calls, core::MemberOverride over,
-                   bool function_like) {
-        slots_.push_back(Slot{subject, calls, std::move(over), function_like, false, {}});
+                   Subject kind) {
+        slots_.push_back(Slot{subject, calls, std::move(over), kind, false, {}});
         Slot* slot = &slots_.back();
         for (const Call* call : slot->calls) slot_of_[{static_cast<int>(call->ref.kind), call->ref.index}] = slot;
         return slot;
@@ -621,7 +666,7 @@ private:
         for (std::size_t i : target.static_calls) views.push_back(view_scoped(i, true));
         plan.methods = group(keep(std::move(views)));
         for (Group& g : plan.methods) {
-            g.slot = new_slot(target.qualified() + "::" + g.name, g.calls, override_for(target.ns, target.name, g.name), false);
+            g.slot = new_slot(target.qualified() + "::" + g.name, g.calls, override_for(target.ns, target.name, g.name), Subject::Method);
         }
 
         std::vector<const FieldAccess*> accesses;
@@ -649,7 +694,7 @@ private:
                 call_store_.push_back(call);
                 calls.push_back(&call_store_.back());
             }
-            f.slot = new_slot(target.qualified() + "::" + f.name, calls, override_for(target.ns, target.name, f.name), false);
+            f.slot = new_slot(target.qualified() + "::" + f.name, calls, override_for(target.ns, target.name, f.name), Subject::Field);
         }
         return plan;
     }
@@ -662,7 +707,7 @@ private:
         for (std::size_t i : target.scoped_calls) views.push_back(view_scoped(i, false));
         plan.groups = group(keep(std::move(views)));
         for (Group& g : plan.groups) {
-            g.slot = new_slot(target.qualified(), g.calls, override_for(target.ns, std::string(), target.name), true);
+            g.slot = new_slot(target.qualified(), g.calls, override_for(target.ns, std::string(), target.name), Subject::Function);
         }
         return plan;
     }
@@ -672,7 +717,7 @@ private:
     Returned& returned(Slot& slot) {
         if (!slot.done) {
             slot.done = true;
-            slot.memo = infer_return(slot.subject, slot.calls, slot.over, slot.function_like);
+            slot.memo = infer_return(slot.subject, slot.calls, slot.over, slot.kind);
         }
         return slot.memo;
     }
@@ -828,7 +873,9 @@ private:
             field.name = f.name;
             field.origin = ir::Origin::Inferred;
             field.where = f.accesses.front()->where;
-            field.type = value_type(returned(*f.slot).type);
+            const Returned& r = returned(*f.slot);
+            field.type = value_type(r.type);
+            field.notes = r.notes;
             cls.fields.push_back(std::move(field));
         }
     }
@@ -890,6 +937,7 @@ private:
     std::vector<FunctionPlan>      function_plans_;
     std::set<std::string>          enums_;
     std::set<std::string>          by_value_;
+    bool                           using_std_ = false;   // `using namespace std;` in the test
     std::map<std::string, std::string> type_map_;
 };
 

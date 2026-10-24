@@ -133,7 +133,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   another call of the API take its inferred type, and chained calls are resolved
   a link per round (at most 4) once the type behind them is known (§7.9,
   `frontend/pipeline`). Tests.
-- [ ] **2.9 Implementation backend** — `backend/impl_backend` + templates
+- [x] **2.9 Implementation backend** — `backend/impl_backend` + templates
   `impl/header.inja`, `impl/source.inja` (§8): file assignment, includes by
   type (`ir/classify`), regions, TODOs, stub policies, commented parameter
   names, `file_header`, guards. Unit tests of the view model.

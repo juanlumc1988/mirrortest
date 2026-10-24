@@ -566,6 +566,20 @@ TEST(InferenceFields, TypedByTheContext) {
     EXPECT_EQ(point.fields[0].access, ir::Access::Public);
 }
 
+TEST(InferenceFields, NotesSayWhereTheTypeCameFrom) {
+    const Outcome o = body("Point p;\np.x = 5;\nint n = p.y;\n");
+    const ir::Class& point = the_class(o, "Point");
+    ASSERT_EQ(point.fields.size(), 2u);
+    EXPECT_EQ(point.fields[0].notes, std::vector<std::string>{"type inferred from literal 5 (t.cpp:4)"});
+    EXPECT_TRUE(point.fields[1].notes.empty()) << "declared by the user";
+}
+
+TEST(InferenceFields, AFieldIsNeverVoid) {
+    const Outcome o = body("Point p;\np.x;\n");
+    EXPECT_EQ(errors(o), std::vector<std::string>{"mt-unknown-return"});
+    EXPECT_FALSE(the_class(o, "Point").fields[0].type.is_void());
+}
+
 TEST(InferenceFields, AFieldNothingTypesIsUnknown) {
     const Outcome o = body("Point p;\nEXPECT_EQ(p.x, p.y);\n");
     EXPECT_EQ(errors(o), (std::vector<std::string>{"mt-unknown-return", "mt-unknown-return"}));
@@ -724,6 +738,68 @@ TEST(InferenceWhole, TheSameInputGivesTheSameModelAndDiagnostics) {
         }
     }
     EXPECT_EQ(a.diagnostics.sorted(), b.diagnostics.sorted());
+}
+
+// ---- using namespace std ----------------------------------------------------------------------------------
+
+TEST(InferenceStd, ADeclaredTypeGetsItsPrefixBackBecauseAHeaderHasNoUsingDirective) {
+    const Outcome o = infer_text(
+        "using namespace std;\n"
+        "TEST(S, N) {\n"
+        "    Foo foo(1);\n"
+        "    string s = foo.name();\n"
+        "    vector<string> v = foo.items();\n"
+        "}\n");
+    EXPECT_EQ(method(o, "Foo", "name").ret.spelling, "std::string");
+    EXPECT_EQ(method(o, "Foo", "items").ret.spelling, "std::vector<std::string>");
+    EXPECT_EQ(method(o, "Foo", "name").ret.origin, ir::Origin::Declared);
+}
+
+TEST(InferenceStd, ParametersAreQualifiedToo) {
+    const Outcome o = infer_text(
+        "using namespace std;\n"
+        "TEST(S, N) {\n"
+        "    string s(\"x\");\n"
+        "    Foo foo(1);\n"
+        "    foo.set(s);\n"
+        "}\n");
+    EXPECT_EQ(param_types(method(o, "Foo", "set", 1)), std::vector<std::string>{"const std::string&"});
+}
+
+TEST(InferenceStd, WithoutTheDirectiveNothingChanges) {
+    const Outcome o = infer_text(
+        "TEST(S, N) {\n"
+        "    Foo foo(1);\n"
+        "    string s = foo.name();\n"
+        "}\n");
+    EXPECT_EQ(method(o, "Foo", "name").ret.spelling, "string");
+}
+
+TEST(InferenceStd, AQualifiedNameIsLeftAlone) {
+    const Outcome o = infer_text(
+        "using namespace std;\n"
+        "TEST(S, N) {\n"
+        "    Foo foo(1);\n"
+        "    std::string a = foo.a();\n"
+        "    other::string b = foo.b();\n"
+        "    ::string c = foo.c();\n"
+        "}\n");
+    EXPECT_EQ(method(o, "Foo", "a").ret.spelling, "std::string");
+    EXPECT_EQ(method(o, "Foo", "b").ret.spelling, "other::string");
+    EXPECT_EQ(method(o, "Foo", "c").ret.spelling, "::string");
+}
+
+TEST(InferenceStd, TypeMapStillWinsAndIsWrittenVerbatim) {
+    core::Config config;
+    config.type_map["double"] = "vector<Money>";
+    const Outcome o = infer_text(
+        "using namespace std;\n"
+        "TEST(S, N) {\n"
+        "    Foo foo(1);\n"
+        "    EXPECT_EQ(foo.total(), 2.5);\n"
+        "}\n",
+        config);
+    EXPECT_EQ(method(o, "Foo", "total").ret.spelling, "vector<Money>");
 }
 
 TEST(InferenceWhole, NothingToInferIsAnEmptyModel) {

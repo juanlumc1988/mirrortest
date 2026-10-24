@@ -129,6 +129,8 @@ struct Field {
     bool        is_static = false;
     Origin      origin = Origin::Declared;
     SourceLoc   where;
+    // As for Method::notes: one line each, emitted as "TODO(mt): ..." by gen-impl.
+    std::vector<std::string> notes;
 };
 
 struct BaseSpec {

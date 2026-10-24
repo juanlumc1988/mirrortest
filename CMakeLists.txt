@@ -44,12 +44,15 @@ set(MT_EMBEDDED_TEMPLATES "${CMAKE_CURRENT_BINARY_DIR}/mt_embedded_templates.cpp
 mt_embed_templates("${MT_EMBEDDED_TEMPLATES}" "${CMAKE_CURRENT_SOURCE_DIR}/templates")
 
 add_library(mt_core STATIC
+    src/backend/cxx_format.cpp
+    src/backend/impl_backend.cpp
     src/cli/commands.cpp
     src/cli/run.cpp
     src/core/config.cpp
     src/core/diagnostics.cpp
     src/core/diff.cpp
     src/core/naming.cpp
+    src/core/regions.cpp
     src/core/source.cpp
     src/core/templates.cpp
     src/core/writer.cpp
@@ -62,6 +65,7 @@ add_library(mt_core STATIC
     src/frontend/literals.cpp
     src/frontend/pipeline.cpp
     src/frontend/test_frontend.cpp
+    src/ir/classify.cpp
     src/ir/type.cpp
     src/syntax/extract.cpp
     src/syntax/preprocess.cpp
@@ -93,9 +97,12 @@ if(MT_BUILD_TESTS)
         tests/unit/test_cli.cpp
         tests/unit/test_code_frontend.cpp
         tests/unit/test_config.cpp
+        tests/unit/test_cxx_format.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_extract.cpp
+        tests/unit/test_impl_backend.cpp
         tests/unit/test_inference.cpp
+        tests/unit/test_ir_classify.cpp
         tests/unit/test_known_names.cpp
         tests/unit/test_literals.cpp
         tests/unit/test_diagnostics.cpp
@@ -103,6 +110,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_naming.cpp
         tests/unit/test_pipeline.cpp
         tests/unit/test_preprocess.cpp
+        tests/unit/test_regions.cpp
         tests/unit/test_source.cpp
         tests/unit/test_syntax_tree.cpp
         tests/unit/test_test_frontend.cpp

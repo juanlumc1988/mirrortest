@@ -3,7 +3,7 @@
 //
 // What a run wants on disk, as data. Everything before the writer is a pure
 // function of its input and produces one of these; only core/writer.h touches
-// the file system (design section 3, "Nucleo puro, E/S en los bordes"). That
+// the file system (design section 3, "Pure core, I/O at the edges"). That
 // split is what makes --dry-run, --check and the golden tests fall out for
 // free: they just look at the plan instead of applying it.
 
