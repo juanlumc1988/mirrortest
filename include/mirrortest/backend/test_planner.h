@@ -40,6 +40,13 @@ struct PlannerOptions {
 // classes with nothing public (mt-unsupported note).
 std::vector<ir::TestPlan> plan_tests(const ir::Model& model, const PlannerOptions& options, core::Diagnostics& diagnostics);
 
+// With `gtest.mocks` (GoogleTest only; nothing otherwise): one mock per interface -- a class
+// with a pure virtual function of its own or inherited from a base that is in the model --
+// declaring every pure virtual function that nothing in between implements, in the order of
+// the model. A class template is not mocked (mt-unsupported note). A function gmock cannot
+// mock (an operator, a conversion, a C-style variadic) is left out with a note on the mock.
+std::vector<ir::MockClass> plan_mocks(const ir::Model& model, const PlannerOptions& options, core::Diagnostics& diagnostics);
+
 }  // namespace mt::backend
 
 #endif  // MT_BACKEND_TEST_PLANNER_H

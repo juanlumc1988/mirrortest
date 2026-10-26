@@ -1412,7 +1412,42 @@ TEST(FooTest, size) {
     the default for legacy code. Qt Test has no fixture yet; the option is ignored
     there.
 
-  gmock: mocks of interfaces (phase 6). Entry point: `gtest_main`, no extra code.
+  gmock: **mocks of interfaces** (`gtest.mocks`, opt-in; `plan_mocks` and
+  `build_gtest_mock_views`, `ir::MockClass`). A class is an *interface* if it has a
+  pure virtual function of its own or one that a base **in the model** leaves
+  pure: the class's own methods are visited first, then each base's, depth first
+  and in the order they are listed, and a signature (name, parameter types,
+  `const`) that a closer class has already declared —pure or implemented— is not
+  looked at again. A base that is not in the model, or is a class template, may
+  hide pure functions the tool cannot see: the mock says so in a note
+  (`mt-unsupported` is not raised; it is a `TODO(mt)` on the class). Constructors
+  and destructors are not mocked; an operator, a conversion operator and a
+  C-style variadic function are pure virtual but gmock cannot mock them
+  (`gmock_operator==` is not an identifier), so each is a `TODO(mt)` on the
+  mock and the mock stays abstract until somebody declares it. Access is
+  ignored (a private pure function must be implemented all the same).
+  - One header per interface, `naming.mock_file` (`mock_{stem}.h`), in the
+    namespace of the interface, with `gmock/gmock.h` and the interface's header
+    (spelled as the tests include it, §9.3), the guard of `guard`
+    (`MOCK_SENSOR_H` from the path), and the class `naming.mock_class`
+    (`Mock{Class}`) with one `MOCK_METHOD(Ret, name, (Args), (Specs))` for each
+    function: `const`, `ref(&)`/`ref(&&)`, `noexcept`, then `override`. Nested
+    types are named through the class that declares them (`Sensor::Reading`);
+    default arguments are not part of a mock; a type with a comma anywhere in
+    its spelling is wrapped in parentheses (`(std::map<int, int>)`), which
+    gmock removes (`GMOCK_PP_REMOVE_PARENS`).
+  - Not made: for a class template (a note), when the header declares a class
+    with the name of the mock already (a note), when nothing is left to mock.
+  - The same output name for two interfaces of two headers is the usual refusal
+    of §10 (different content under one path).
+  - Nothing else changes: the tests of an interface are still comments (an
+    abstract class cannot be built), and a class that takes an interface as an
+    argument still gets a null pointer or a commented-out call. Handing it the
+    mock is the next step (plan 6.3b).
+  - Round trip (§16.3): `tests/roundtrip/gen-tests/<case>.mocks.cpp` is one more
+    translation unit that includes the generated mock headers and proves, at
+    compile time, that each mock is not abstract and is its interface.
+  Entry point: `gtest_main`, no extra code.
 
 ### 9.5 QTest
 
@@ -1703,8 +1738,9 @@ diagnostics); an error suppresses diffs and summary.
   "default_namespace": "",
   "naming": { "header": "{stem}.h", "source": "{stem}.cpp",
               "gtest_file": "{stem}_test.cpp", "qtest_file": "tst_{stem}.cpp",
-              "suite": "{Class}Test", "qtest_class": "Test{Class}" },
-  "gtest": { "fixture": false },
+              "suite": "{Class}Test", "qtest_class": "Test{Class}",
+              "mock_file": "mock_{stem}.h", "mock_class": "Mock{Class}" },
+  "gtest": { "fixture": false, "mocks": false },
   "guard": "ifndef",
   "file_header": "",
   "stub_policy": "throw",
@@ -1740,6 +1776,9 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
   position nlohmann/json gives.
 - `gtest.fixture` (default `false`): gen-tests writes a fixture class and `TEST_F`
   tests instead of `TEST`s (§9.4). Only the GoogleTest side reads it.
+- `gtest.mocks` (default `false`): gen-tests also writes a gmock mock for every
+  interface of the header (§9.4). `naming.mock_file` (`{stem}`) and
+  `naming.mock_class` (`{Class}`) name them. Only the GoogleTest side reads them.
 - `naming.*`: each pattern accepts a single placeholder and must contain it
   (`{stem}` in the file ones, `{Class}` in the name ones); otherwise all the
   classes would go to the same file or suite.

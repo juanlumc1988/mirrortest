@@ -61,6 +61,14 @@ std::string function_declaration(const ir::Function& function);
 // `int add(int /*arg1*/, int /*arg2*/)`
 std::string function_definition_head(const ir::Function& function);
 
+// ---- nested types ---------------------------------------------------------------------------------------------
+
+// A spelling taken from the declaration of a member of `cls`, written so that it
+// means the same outside the class: its nested types (`Item`) are named through
+// it (`Foo::Item`), which a header does not need inside the class. A name that
+// is already qualified, a number and everything else are left as they are.
+std::string qualify_nested(const std::string& spelling, const ir::Class& cls);
+
 // ---- text -----------------------------------------------------------------------------------------------------
 
 // The inside of a string literal: `"`, `\`, newline, carriage return and tab

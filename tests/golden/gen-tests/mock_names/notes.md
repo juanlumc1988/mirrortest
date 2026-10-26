@@ -1,0 +1,1 @@
+The names of the mock and its file are configurable (`naming.mock_file`, `naming.mock_class`), in a directory of their own here; `pragma-once` and `file_header` apply to a mock header as to every other file; the mock sits in the namespaces of the interface and includes the header as `-I` says (`acme/clock.h`).

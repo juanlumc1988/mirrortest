@@ -48,6 +48,7 @@ add_library(mt_core STATIC
     src/backend/gtest_backend.cpp
     src/backend/impl_backend.cpp
     src/backend/impl_merge.cpp
+    src/backend/mock_planner.cpp
     src/backend/qtest_backend.cpp
     src/backend/test_planner.cpp
     src/backend/test_render.cpp
@@ -124,6 +125,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_diff.cpp
         tests/unit/test_merge.cpp
         tests/unit/test_mock_macros.cpp
+        tests/unit/test_mock_planner.cpp
         tests/unit/test_naming.cpp
         tests/unit/test_pipeline.cpp
         tests/unit/test_qtest_backend.cpp
@@ -213,10 +215,12 @@ if(MT_BUILD_TESTS)
     # test must fail (or, with --placeholder skip, be skipped). A case is a .cpp
     # in tests/roundtrip/gen-tests/ named after the golden case, plus an optional
     # <case>.prelude.h forced into every translation unit for the types the header
-    # relies on and the tool cannot know.
+    # relies on and the tool cannot know, and an optional <case>.mocks.cpp: one more
+    # translation unit, compiled against the generated mock headers (gtest.mocks).
     if(NOT MSVC)
         file(GLOB mt_gen_tests_impls RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests"
              "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/*.cpp")
+        list(FILTER mt_gen_tests_impls EXCLUDE REGEX "\\.mocks\\.cpp$")
         list(SORT mt_gen_tests_impls)
         foreach(impl IN LISTS mt_gen_tests_impls)
             string(REGEX REPLACE "\\.cpp$" "" case "${impl}")
@@ -230,18 +234,23 @@ if(MT_BUILD_TESTS)
             if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.prelude.h")
                 set(prelude "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.prelude.h")
             endif()
+            set(mocks "")
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.mocks.cpp")
+                set(mocks "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.mocks.cpp")
+            endif()
             add_test(NAME roundtrip.gen_tests.${case}
                 COMMAND "${CMAKE_COMMAND}"
                     -DMT_BIN=$<TARGET_FILE:mirrortest>
                     -DMT_CASE_DIR=${case_dir}
                     -DMT_IMPL=${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${impl}
                     "-DMT_PRELUDE=${prelude}"
+                    "-DMT_MOCKS=${mocks}"
                     -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/roundtrip/gen-tests/${case}
                     -DMT_EXPECT=${expect}
                     -DMT_CXX=${CMAKE_CXX_COMPILER}
                     "-DMT_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
-                    "-DMT_GTEST_INCLUDE=$<TARGET_PROPERTY:GTest::gtest,INTERFACE_INCLUDE_DIRECTORIES>"
-                    "-DMT_GTEST_LIBS=$<TARGET_FILE:GTest::gtest_main>$<SEMICOLON>$<TARGET_FILE:GTest::gtest>"
+                    "-DMT_GTEST_INCLUDE=$<TARGET_PROPERTY:GTest::gtest,INTERFACE_INCLUDE_DIRECTORIES>$<SEMICOLON>$<TARGET_PROPERTY:GTest::gmock,INTERFACE_INCLUDE_DIRECTORIES>"
+                    "-DMT_GTEST_LIBS=$<TARGET_FILE:GTest::gmock>$<SEMICOLON>$<TARGET_FILE:GTest::gtest_main>$<SEMICOLON>$<TARGET_FILE:GTest::gtest>"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/run_gen_tests_case.cmake")
             set_tests_properties(roundtrip.gen_tests.${case} PROPERTIES TIMEOUT 300)
         endforeach()

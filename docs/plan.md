@@ -247,9 +247,14 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   (`override`), a virtual destructor, the type a double stands for in the
   parameters that receive it (`NiceMock`/`StrictMock`/smart pointers), and the
   anonymous namespaces of a test file, which were not read (design 7.13, 5.2, 6.1).
-- [ ] **6.3** gen-tests: gmock mocks for interfaces (all pure virtual
+- [x] **6.3** gen-tests: gmock mocks for interfaces (all pure virtual
   functions), including the parentheses around types with commas
-  (`MOCK_METHOD((std::map<int, int>), …)`).
+  (`MOCK_METHOD((std::map<int, int>), …)`). Opt-in with `gtest.mocks`: a mock
+  header per interface (design 9.4).
+- [ ] **6.3b** gen-tests: hand the mock to the class that takes the interface —
+  `NiceMock<MockSensor>` for a `Sensor&`, `Sensor*` or smart-pointer argument of
+  the constructor under `sut` and of a method call — so a class that needs a
+  collaborator is built instead of commented out.
 - [ ] **6.4** `TEST_P` + `INSTANTIATE_TEST_SUITE_P` in gen-tests (opt-in) and
   QTest `_data`.
 

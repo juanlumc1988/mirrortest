@@ -358,6 +358,92 @@ TEST(GenTestsFixture, ABadKeyIsAConfigurationError) {
     EXPECT_FALSE(exists(dir, "tests"));
 }
 
+// ---- mocks --------------------------------------------------------------------------------------------------
+
+namespace {
+
+const char* kSensorHeader =
+    "namespace acme {\n"
+    "class Sensor {\n"
+    "public:\n"
+    "    virtual ~Sensor() = default;\n"
+    "    virtual int read() = 0;\n"
+    "    virtual std::map<int, int> table() const = 0;\n"
+    "};\n"
+    "class Controller {\n"
+    "public:\n"
+    "    int value() const;\n"
+    "};\n"
+    "}\n";
+
+}  // namespace
+
+TEST(GenTestsMocks, TheConfigurationAsksForOnePerInterface) {
+    const TempDir dir;
+    write_file(dir.path() / "include/acme/sensor.h", kSensorHeader);
+    write_file(dir.path() / "mt.json", R"({"gtest": {"mocks": true}})");
+    const Outcome r = gen_tests(dir, {"include/acme/sensor.h", "--out", "tests", "--config", "mt.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(exists(dir, "tests/sensor_test.cpp"));
+    EXPECT_TRUE(exists(dir, "tests/controller_test.cpp"));
+    ASSERT_TRUE(exists(dir, "tests/mock_sensor.h")) << r.err;
+    EXPECT_FALSE(exists(dir, "tests/mock_controller.h")) << "Controller is not an interface";
+    const std::string text = read(dir, "tests/mock_sensor.h");
+    EXPECT_TRUE(contains(text, "#include <gmock/gmock.h>\n#include \"sensor.h\"\n")) << text;
+    EXPECT_TRUE(contains(text, "class MockSensor : public Sensor {")) << text;
+    EXPECT_TRUE(contains(text, "    MOCK_METHOD(int, read, (), (override));")) << text;
+    EXPECT_TRUE(contains(text, "    MOCK_METHOD((std::map<int, int>), table, (), (const, override));")) << text;
+}
+
+TEST(GenTestsMocks, TheNamesAreConfigurable) {
+    const TempDir dir;
+    write_file(dir.path() / "include/acme/sensor.h", kSensorHeader);
+    write_file(dir.path() / "mt.json",
+               R"({"gtest": {"mocks": true}, "naming": {"mock_file": "{stem}_mock.h", "mock_class": "{Class}Mock"}})");
+    const Outcome r = gen_tests(dir, {"include/acme/sensor.h", "--out", "tests", "--config", "mt.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    ASSERT_TRUE(exists(dir, "tests/sensor_mock.h")) << r.err;
+    EXPECT_TRUE(contains(read(dir, "tests/sensor_mock.h"), "class SensorMock : public Sensor {"));
+}
+
+TEST(GenTestsMocks, WithoutTheOptionThereAreNone) {
+    const TempDir dir;
+    write_file(dir.path() / "include/acme/sensor.h", kSensorHeader);
+    const Outcome r = gen_tests(dir, {"include/acme/sensor.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(exists(dir, "tests/mock_sensor.h"));
+}
+
+TEST(GenTestsMocks, QtTestHasNoMocksAndSaysNothingAboutIt) {
+    const TempDir dir;
+    write_file(dir.path() / "include/acme/sensor.h", kSensorHeader);
+    write_file(dir.path() / "mt.json", R"({"gtest": {"mocks": true}})");
+    const Outcome r = gen_tests(dir, {"include/acme/sensor.h", "--out", "tests", "--config", "mt.json", "--framework", "qtest"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(exists(dir, "tests/mock_sensor.h"));
+}
+
+TEST(GenTestsMocks, ASecondRunChangesNothing) {
+    const TempDir dir;
+    write_file(dir.path() / "include/acme/sensor.h", kSensorHeader);
+    write_file(dir.path() / "mt.json", R"({"gtest": {"mocks": true}})");
+    const std::vector<std::string> args = {"include/acme/sensor.h", "--out", "tests", "--config", "mt.json"};
+    ASSERT_EQ(gen_tests(dir, args).code, 0);
+    std::vector<std::string> again = args;
+    again.push_back("--check");
+    EXPECT_EQ(gen_tests(dir, again).code, 0);
+}
+
+TEST(GenTestsMocks, TwoHeadersThatShareAnInterfaceNameAreRefused) {
+    const TempDir dir;
+    write_file(dir.path() / "include/a/sensor.h", "class Sensor { public: virtual int a() = 0; };\n");
+    write_file(dir.path() / "include/b/sensor.h", "class Sensor { public: virtual int b() = 0; };\n");
+    write_file(dir.path() / "mt.json", R"({"gtest": {"mocks": true}})");
+    const Outcome r = gen_tests(dir, {"include/a/sensor.h", "include/b/sensor.h", "--out", "tests", "--config", "mt.json"});
+    EXPECT_NE(r.code, 0);
+    EXPECT_TRUE(contains(r.err, "both generate")) << r.err;
+}
+
 // ---- Qt Test ------------------------------------------------------------------------------------------------
 
 TEST(GenTestsQt, WritesOneTestClassPerClassNamedAfterTheConfiguredPattern) {

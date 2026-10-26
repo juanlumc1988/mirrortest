@@ -269,6 +269,8 @@ void Reader::read_naming(const json& v, Naming& naming) {
         else if (key == "qtest_file")  read_pattern(it.value(), path, "stem", naming.qtest_file);
         else if (key == "suite")       read_pattern(it.value(), path, "Class", naming.suite);
         else if (key == "qtest_class") read_pattern(it.value(), path, "Class", naming.qtest_class);
+        else if (key == "mock_file")   read_pattern(it.value(), path, "stem", naming.mock_file);
+        else if (key == "mock_class")  read_pattern(it.value(), path, "Class", naming.mock_class);
         else                           unknown_key(path);
     }
 }
@@ -280,8 +282,9 @@ void Reader::read_gtest(const json& v, GtestConfig& gtest) {
     }
     for (auto it = v.begin(); it != v.end(); ++it) {
         const std::string& key = it.key();
-        if (key == "fixture") read_bool(it.value(), "gtest.fixture", gtest.fixture);
-        else                  unknown_key("gtest." + key);
+        if (key == "fixture")    read_bool(it.value(), "gtest.fixture", gtest.fixture);
+        else if (key == "mocks") read_bool(it.value(), "gtest.mocks", gtest.mocks);
+        else                     unknown_key("gtest." + key);
     }
 }
 

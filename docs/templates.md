@@ -151,6 +151,25 @@ includes, one around the namespace braces, one after each fixture and one betwee
 tests; nothing inside the namespace is indented. With a fixture, `lines` begins
 with `TEST_F(` instead of `TEST(`.
 
+### `gtest/mock_file.inja`
+
+One gmock mock header (`gen-tests` with `gtest.mocks`). It starts with
+`{% include "common/file_header.inja" %}` too.
+
+| Variable | Type | Meaning |
+|---|---|---|
+| `file_header`, `source` | string | as above |
+| `pragma_once` | bool | `guard` is `pragma-once` |
+| `guard` | string | the include guard made from the path of the header (`MOCK_SENSOR_H`); unused with `pragma_once` |
+| `includes` | array of string | whole `#include` lines: `<gmock/gmock.h>`, then the interface's header |
+| `open`, `close` | array of string | the `namespace x {` and `}  // namespace x` lines of the interface's namespace; empty for the global one |
+| `lines` | array of string | the class, complete: its `TODO(mt)` notes as comments, `class MockSensor : public Sensor {`, one `MOCK_METHOD(...)` line each, `};` |
+
+How a `MOCK_METHOD` is spelt -- the specifiers in the order `const`,
+`ref(&)`, `noexcept`, `override`, and the parentheses around a type that has a
+comma -- is decided in C++ and tested there. The default puts the guard after
+the file header, a blank line after it and one around the namespace braces.
+
 ### `qtest/test_file.inja`
 
 One generated Qt Test file (`gen-tests --framework qtest`). It starts with

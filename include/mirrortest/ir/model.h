@@ -275,6 +275,28 @@ struct TestPlan {
     std::vector<TestSuite>   suites;
 };
 
+// One virtual function of an interface, as the mock of it must declare it.
+struct MockMethod {
+    std::string       name;
+    Type              ret;
+    std::vector<Type> params;
+    bool              is_const = false;
+    bool              is_noexcept = false;
+    RefKind           ref_qualifier = RefKind::None;
+};
+
+// A gmock mock of an interface: one header of its own (GoogleTest only).
+struct MockClass {
+    std::string              file;            // output path, relative to --out: "mock_sensor.h"
+    std::string              name;            // "MockSensor"
+    std::string              base;            // "Sensor"
+    std::vector<std::string> ns;              // the interface's: the mock sits next to it
+    std::string              header;          // the include of the interface's header
+    std::vector<MockMethod>  methods;         // declaration order; the interface's own first
+    // One line each, written above the class as "TODO(mt): ..." -- what the mock leaves out and why.
+    std::vector<std::string> notes;
+};
+
 }  // namespace mt::ir
 
 #endif  // MT_IR_MODEL_H

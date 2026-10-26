@@ -90,7 +90,12 @@ std::vector<core::OutputFile> process_input(const Options& options, const Env& e
     gtest.config = config;
     gtest.source = input;
     gtest.out_dir = options.out.value_or("");
-    return backend::generate_gtest(plans, gtest, templates, diagnostics).files;
+    std::vector<core::OutputFile> files = backend::generate_gtest(plans, gtest, templates, diagnostics).files;
+
+    // The mocks of the header's interfaces (gtest.mocks), each in a header of its own.
+    const std::vector<ir::MockClass> mocks = backend::plan_mocks(model, planner, diagnostics);
+    for (core::OutputFile& f : backend::generate_gtest_mocks(mocks, gtest, templates, diagnostics).files) files.push_back(std::move(f));
+    return files;
 }
 
 }  // namespace

@@ -447,6 +447,38 @@ fixture builds `sut` before the test body, so the class's constructor runs even
 though the test is still red, which the plain skeleton never does. Use it for
 classes whose construction is safe.
 
+### Mocks of interfaces
+
+With `{"gtest": {"mocks": true}}` in the configuration, every **interface** of the
+header -- a class with a pure virtual function, its own or one a base in the same
+header left pure -- also gets a gmock mock in a header of its own:
+
+```cpp
+// mock_sensor.h
+#include <gmock/gmock.h>
+#include "sensor.h"
+
+class MockSensor : public Sensor {
+public:
+    MOCK_METHOD(int, read, (), (override));
+    MOCK_METHOD((std::map<int, std::string>), table, ((const std::map<int, int>&)), (const, override));
+};
+```
+
+One `MOCK_METHOD` for each pure virtual function that nothing in between
+implements (public or not: a mock that left one out would still be abstract),
+with `const`, `noexcept`, `ref(&)`/`ref(&&)` and `override`. A return type or
+argument with a comma in it is in parentheses, which is how gmock is told the
+comma is not the macro's. Names are `naming.mock_class` (`Mock{Class}`) and
+`naming.mock_file` (`mock_{stem}.h`); the mock sits in the namespace of the
+interface and next to the tests (`--out`).
+
+What it cannot mock it says as a `TODO(mt)` above the class: an operator, a
+conversion operator, a C-style variadic function, and a base class that is not
+in the header (it may have pure functions of its own). Class templates get no
+mock, and neither does an interface whose mock name the header declares already.
+Nothing is written without the option, and Qt Test has no mocks.
+
 With `--framework qtest` the file is `tst_foo.cpp` and holds a `QObject` called
 `TestFoo` whose private slots are the tests, an entry point (`--qt-main
 appless|guiless|gui`, `guiless` by default) and `#include "tst_foo.moc"` -- the

@@ -54,6 +54,21 @@ struct GtestViews {
 // TEST_F tests; one without, TESTs.
 std::vector<GtestViews> build_gtest_views(const std::vector<ir::TestPlan>& plans, const GtestOptions& options);
 
+// One mock header.
+struct GtestMockViews {
+    std::string    path;   // below the output directory: mock.file
+    nlohmann::json view;   // for gtest/mock_file.inja
+};
+
+// Pure. Every virtual function of a mock is a MOCK_METHOD(Ret, name, (Args), (specifiers));
+// a type with a comma in it -- `std::map<int, int>` -- is put in parentheses, which is how
+// gmock is told that the comma is not the macro's.
+std::vector<GtestMockViews> build_gtest_mock_views(const std::vector<ir::MockClass>& mocks, const GtestOptions& options);
+
+// Views rendered through gtest/mock_file.inja, with the same rules as generate_gtest.
+core::OutputPlan generate_gtest_mocks(const std::vector<ir::MockClass>& mocks, const GtestOptions& options,
+                                      const core::TemplateStore& templates, core::Diagnostics& diagnostics);
+
 // Views rendered through the template. A template that fails records an error
 // and the file is left out of the plan; the caller refuses to write anything
 // when `diagnostics` has errors.

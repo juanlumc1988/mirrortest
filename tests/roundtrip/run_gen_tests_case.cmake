@@ -24,6 +24,9 @@
 #   MT_CASE_DIR      tests/golden/gen-tests/<case>: its args.txt and input/ are used
 #   MT_IMPL          the example implementation (a .cpp)
 #   MT_PRELUDE       optional: a header forced into every translation unit
+#   MT_MOCKS         optional: a .cpp compiled as one more test file, with the output
+#                    directory on -I, to check the generated mock headers (it defines
+#                    no test: whether a mock can be built is a compile-time question)
 #   MT_WORK          scratch directory, emptied first
 #   MT_CXX           the C++ compiler
 #   MT_CXX_FLAGS     flags shared with the main build (sanitizers, for one)
@@ -110,6 +113,13 @@ foreach(test IN LISTS tests)
     list(APPEND objects "${object}")
     math(EXPR index "${index} + 1")
 endforeach()
+
+if(DEFINED MT_MOCKS AND NOT "${MT_MOCKS}" STREQUAL "")
+    set(object "${MT_WORK}/mocks.o")
+    run("compiling ${MT_MOCKS}" 0 "${MT_CXX}" ${shared} -std=c++14 -Wall -Wextra -Werror
+        ${prelude} "-I${gen}" ${include_dirs} ${gtest_includes} -c "${MT_MOCKS}" -o "${object}")
+    list(APPEND objects "${object}")
+endif()
 
 set(binary "${MT_WORK}/roundtrip")
 run("linking" 0 "${MT_CXX}" ${shared} ${objects} ${MT_GTEST_LIBS} -pthread -o "${binary}")

@@ -1,0 +1,6 @@
+gen-tests
+${IN}/sensor.h
+--out
+${OUT}
+--config
+${IN}/mt.json

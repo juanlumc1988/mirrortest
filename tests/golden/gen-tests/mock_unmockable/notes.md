@@ -1,0 +1,1 @@
+What a mock cannot say, said on the mock: an operator, a conversion operator and a C-style variadic function are pure virtual but gmock cannot mock them, and a base class the header only forward-declares may have pure virtual functions of its own. A class template is not mocked (a note), and a class whose only pure function is an operator has nothing to mock.

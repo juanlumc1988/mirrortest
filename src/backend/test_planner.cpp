@@ -4,7 +4,6 @@
 #include "mirrortest/backend/test_planner.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <optional>
 #include <set>
@@ -96,34 +95,6 @@ public:
 private:
     std::set<std::string> used_;
 };
-
-bool is_ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; }
-
-// Inside the test the class's nested types must be written `Foo::Item`: the
-// header spells them `Item`, which only means something within Foo.
-std::string qualify_nested(const std::string& spelling, const ir::Class& c) {
-    std::string out;
-    std::size_t i = 0;
-    while (i < spelling.size()) {
-        if (std::isdigit(static_cast<unsigned char>(spelling[i])) != 0) {
-            // 3u, 0x1F, 1.5f: one token, none of it a name that could be a nested type.
-            while (i < spelling.size() && (is_ident_char(spelling[i]) || spelling[i] == '.' || spelling[i] == '\'')) out += spelling[i++];
-            continue;
-        }
-        if (!(std::isalpha(static_cast<unsigned char>(spelling[i])) != 0 || spelling[i] == '_')) {
-            out += spelling[i++];
-            continue;
-        }
-        std::size_t end = i;
-        while (end < spelling.size() && is_ident_char(spelling[end])) ++end;
-        const std::string word = spelling.substr(i, end - i);
-        const bool scoped = !out.empty() && out.back() == ':';
-        if (!scoped && std::find(c.nested_types.begin(), c.nested_types.end(), word) != c.nested_types.end()) out += c.name + "::";
-        out += word;
-        i = end;
-    }
-    return out;
-}
 
 ir::Type qualified(const ir::Type& t, const ir::Class& c) { return ir::type_from_spelling(qualify_nested(t.spelling, c)); }
 

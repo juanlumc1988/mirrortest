@@ -9,6 +9,7 @@
 
 #include "mirrortest/backend/cxx_format.h"
 #include "mirrortest/backend/test_render.h"
+#include "mirrortest/core/naming.h"
 
 namespace mt::backend {
 
@@ -106,7 +107,68 @@ json view_of(const ir::TestPlan& plan, const GtestOptions& options) {
     return view;
 }
 
+// A type as a macro argument: the preprocessor splits the arguments at every comma that is not
+// in parentheses, so `std::map<int, int>` is told apart as `(std::map<int, int>)`.
+std::string macro_type(const ir::Type& type) {
+    return type.spelling.find(',') == std::string::npos ? type.spelling : "(" + type.spelling + ")";
+}
+
+std::string mock_method_line(const ir::MockMethod& m) {
+    std::string args;
+    for (const ir::Type& p : m.params) args += (args.empty() ? "" : ", ") + macro_type(p);
+
+    std::string specs;
+    const auto add = [&specs](const std::string& spec) { specs += (specs.empty() ? "" : ", ") + spec; };
+    if (m.is_const) add("const");
+    if (m.ref_qualifier == ir::RefKind::LValue) add("ref(&)");
+    if (m.ref_qualifier == ir::RefKind::RValue) add("ref(&&)");
+    if (m.is_noexcept) add("noexcept");
+    add("override");
+    return "    MOCK_METHOD(" + macro_type(m.ret) + ", " + m.name + ", (" + args + "), (" + specs + "));";
+}
+
+json mock_view(const ir::MockClass& mock, const GtestOptions& options) {
+    json lines = json::array();
+    for (const std::string& note : mock.notes) lines.push_back(todo_comment(note));
+    lines.push_back("class " + mock.name + " : public " + mock.base + " {");
+    lines.push_back("public:");
+    for (const ir::MockMethod& m : mock.methods) lines.push_back(mock_method_line(m));
+    lines.push_back("};");
+
+    std::vector<ir::Include> includes;
+    includes.push_back({"gmock/gmock.h", true, {}});
+    includes.push_back({mock.header, false, {}});
+
+    json view;
+    view["file_header"] = options.config.file_header;
+    view["source"] = options.source;
+    view["pragma_once"] = options.config.guard == core::GuardStyle::PragmaOnce;
+    view["guard"] = core::include_guard(mock.file);
+    view["includes"] = include_lines(includes);
+    view["open"] = namespace_open(mock.ns);
+    view["close"] = namespace_close(mock.ns);
+    view["lines"] = lines;
+    return view;
+}
+
 }  // namespace
+
+std::vector<GtestMockViews> build_gtest_mock_views(const std::vector<ir::MockClass>& mocks, const GtestOptions& options) {
+    std::vector<GtestMockViews> out;
+    for (const ir::MockClass& mock : mocks) out.push_back({mock.file, mock_view(mock, options)});
+    return out;
+}
+
+core::OutputPlan generate_gtest_mocks(const std::vector<ir::MockClass>& mocks, const GtestOptions& options,
+                                      const core::TemplateStore& templates, core::Diagnostics& diagnostics) {
+    core::OutputPlan out;
+    for (const GtestMockViews& v : build_gtest_mock_views(mocks, options)) {
+        if (auto text = templates.render("gtest/mock_file.inja", v.view, diagnostics)) {
+            out.files.push_back({core::output_path(options.out_dir, v.path), *text});
+        }
+    }
+    return out;
+}
 
 std::vector<GtestViews> build_gtest_views(const std::vector<ir::TestPlan>& plans, const GtestOptions& options) {
     std::vector<GtestViews> out;

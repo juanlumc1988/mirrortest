@@ -74,6 +74,8 @@ struct Naming {
     std::string qtest_file  = "tst_{stem}.cpp";
     std::string suite       = "{Class}Test";
     std::string qtest_class = "Test{Class}";
+    std::string mock_file   = "mock_{stem}.h";    // the gmock mock of an interface (gtest.mocks)
+    std::string mock_class  = "Mock{Class}";
 };
 
 // What a configuration file may say about one member, with the same meaning
@@ -95,6 +97,11 @@ struct GtestConfig {
     // the plain skeleton it runs the class's constructor even while the placeholder
     // keeps the test red: that is why it is opt-in (design 9.4).
     bool fixture = false;
+
+    // A gmock mock, in a header of its own, for every interface (a class with pure
+    // virtual functions) the header declares. Opt-in because it writes files nobody
+    // asked for (design 9.4).
+    bool mocks = false;
 };
 
 struct Config {
