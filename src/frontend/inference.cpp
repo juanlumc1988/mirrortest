@@ -64,9 +64,9 @@ std::string_view without_mock_wrapper(std::string_view base) {
     if (starts_with(base, "::")) base.remove_prefix(2);
     if (starts_with(base, "testing::")) base.remove_prefix(9);
     for (const std::string_view wrapper : {"NiceMock", "NaggyMock", "StrictMock"}) {
-        if (starts_with(base, wrapper) && base.size() > wrapper.size() + 2 && base[wrapper.size()] == '<' && base.back() == '>') {
-            return base.substr(wrapper.size() + 1, base.size() - wrapper.size() - 2);
-        }
+        if (!starts_with(base, wrapper)) continue;
+        const std::string_view rest = base.substr(wrapper.size());   // "<MockSensor>"
+        if (rest.size() >= 2 && rest.front() == '<' && rest.back() == '>') return rest.substr(1, rest.size() - 2);
     }
     return base;
 }
@@ -281,7 +281,6 @@ private:
     // parameter that receives `&mock` is a `Sensor*`, never a `MockSensor*`, which no header could
     // name. The doubles inside a template argument too (`std::unique_ptr<MockSensor>`).
     ir::Type through_double(const ir::Type& t) const {
-        if (c_.doubles.empty() || t.empty()) return t;
         std::string base(t.base);
         const std::string_view inner = without_mock_wrapper(base);
         if (c_.doubles.count(std::string(inner)) != 0) base = std::string(inner);

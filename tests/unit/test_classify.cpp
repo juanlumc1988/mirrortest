@@ -707,6 +707,42 @@ TEST(ClassifyDoubles, TheFrameworkIsNotADoubleBase) {
     EXPECT_TRUE(r.result.doubles.empty());
 }
 
+TEST(ClassifyDoubles, AnUnscopedTestWithoutTheUsingDirectiveIsJustAClass) {
+    const Outcome r = classify("class A : public Test {};\nTEST_F(A, N) {}\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Test"});
+    EXPECT_EQ(r.result.doubles, (std::map<std::string, std::string>{{"A", "Test"}}));
+}
+
+TEST(ClassifyDoubles, TheUsingDirectiveDoesNotMakeEveryBaseTheFrameworks) {
+    const Outcome r = classify("using namespace testing;\nclass Fake : public Sensor {};\n");
+    EXPECT_EQ(r.result.doubles, (std::map<std::string, std::string>{{"Fake", "Sensor"}}));
+}
+
+TEST(ClassifyDoubles, ABaseUsedWithoutAQualifierIsFoundInTheNamespaceOfTheTest) {
+    const Outcome r = classify("namespace acme {\nclass Fake : public Sensor { public: int read() override { return 1; } };\n}\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"acme::Sensor"});
+    EXPECT_EQ(interface_of(r, "acme::Sensor"), std::vector<std::string>{"int read()"});
+}
+
+TEST(ClassifyDoubles, ANestedTypeOfAGeneratedClassIsNotAnInterfaceAndNothingBreaks) {
+    const Outcome r = classify(
+        "class Fake : public Outer::Inner { public: int read() override { return 1; } };\n"
+        "TEST(S, N) { Outer o; }\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Outer"});
+    EXPECT_TRUE(the_class(r, "Outer").interface_methods.empty());
+    EXPECT_EQ(r.result.doubles.at("Fake"), "Outer::Inner");
+}
+
+TEST(ClassifyDoubles, WhateverTheAccessOfAnOverrideTheInterfaceIsPublic) {
+    const Outcome r = classify(
+        "class Fake : public Sensor {\n"
+        "private:\n    int a() override { return 1; }\n"
+        "protected:\n    int b() override { return 1; }\n"
+        "};\n");
+    ASSERT_EQ(the_class(r, "Sensor").interface_methods.size(), 2u);
+    for (const ir::Method& m : the_class(r, "Sensor").interface_methods) EXPECT_EQ(m.access, ir::Access::Public) << m.name;
+}
+
 TEST(ClassifyDoubles, UnscopedFrameworkTypesNeedTheUsingDirective) {
     const Outcome r = classify(
         "using namespace testing;\n"

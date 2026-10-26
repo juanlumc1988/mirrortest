@@ -885,6 +885,7 @@ TEST(InferenceDoubles, TheVirtualDestructorSaysWhy) {
     EXPECT_TRUE(destructor.is_virtual);
     EXPECT_TRUE(destructor.is_defaulted);
     EXPECT_EQ(destructor.origin, ir::Origin::Inferred);
+    EXPECT_EQ(destructor.where.line, 1u) << "where the interface was first mentioned: the base of the fake";
     ASSERT_EQ(destructor.notes.size(), 1u);
     EXPECT_EQ(destructor.notes[0], "virtual because the test derives 'FakeSensor' from it");
 }
@@ -967,6 +968,30 @@ TEST(InferenceDoubles, ADoubleInsideATemplateArgumentIsReplacedToo) {
         "TEST(S, N) { std::unique_ptr<FakeSensor> p; Controller k; k.adopt(std::move(p)); std::vector<FakeSensor*> v; k.all(v); }\n");
     EXPECT_EQ(param_types(method(o, "Controller", "adopt", 1)), std::vector<std::string>{"std::unique_ptr<Sensor>"});
     EXPECT_EQ(param_types(method(o, "Controller", "all", 1)), std::vector<std::string>{"const std::vector<Sensor*>&"});
+}
+
+TEST(InferenceDoubles, TheNamesAroundADoubleAreKept) {
+    const Outcome o = infer_text(
+        std::string(kFakeSensor) +
+        "TEST(S, N) { std::map<std::string, FakeSensor*> m; Controller k; k.all(m); }\n");
+    EXPECT_EQ(param_types(method(o, "Controller", "all", 1)), std::vector<std::string>{"const std::map<std::string, Sensor*>&"});
+}
+
+TEST(InferenceDoubles, TheSubstitutedTypeKeepsWhereItWasWrittenAndWhy) {
+    const std::string text = std::string(kFakeSensor) + "TEST(S, N) { FakeSensor f; Controller c(&f); Foo foo; Controller d(&foo); }\n";
+    const Outcome o = infer_text(text);
+    const auto ctors = constructors(the_class(o, "Controller"));
+    ASSERT_EQ(ctors.size(), 1u);
+    const ir::Type& t = ctors[0]->params[0].type;
+    EXPECT_EQ(t.spelling, "Sensor*");
+    EXPECT_EQ(t.origin, ir::Origin::Declared);
+    EXPECT_GT(t.where.line, 0u);
+    EXPECT_FALSE(t.reason.empty());
+    // The same arguments with no double in the way carry the same kind of provenance.
+    const Outcome plain = infer_text("TEST(S, N) { Foo foo; Controller d(&foo); }\n");
+    const ir::Type& p = constructors(the_class(plain, "Controller"))[0]->params[0].type;
+    EXPECT_EQ(p.origin, t.origin);
+    EXPECT_EQ(p.reason.empty(), t.reason.empty());
 }
 
 TEST(InferenceDoubles, ANameThatMerelyContainsTheDoublesNameIsNotReplaced) {
