@@ -557,6 +557,36 @@ fixture builds `sut` before the test body, so the class's constructor runs even
 though the test is still red, which the plain skeleton never does. Use it for
 classes whose construction is safe.
 
+### Reading the header with libclang
+
+By default the header is read by tree-sitter, which needs nothing and tolerates a
+header that does not compile. If the project's headers do compile, `--frontend
+libclang` (or `"frontend": "libclang"`) has a compiler front end read them instead.
+It is in the build only if it was asked for (`-DMT_WITH_LIBCLANG=ON`, needs
+libclang: `apt install libclang-dev`); otherwise the option says so and stops.
+
+```console
+$ mirrortest gen-tests include/acme/port.h --out tests/ -I include \
+      --frontend libclang --clang-arg=-DUSE_DMA --std c++17
+```
+
+What changes: only the branch of an `#if` that builds is read (tree-sitter keeps
+both), what a macro declares is read (`GETTER(int, size)` is a method; no
+`ignore_macros` for an export macro), a pointer to member or a struct named by a
+`typedef` is read as it is. What does not: the types are still the ones **you
+wrote** (`unsigned` stays `unsigned`), so the tests it writes are the ones
+tree-sitter writes for the same header, byte for byte.
+
+libclang needs to find what the header includes: the `-I` of the run (and those of
+`--compile-commands`) are given to it, and `--clang-arg` adds the rest (`-DNAME=1`,
+`-isystem /abs/dir`; written absolute, because libclang resolves a relative path
+against the process's directory). The standard of `--std` is passed too. What it
+cannot resolve — a type nobody declared, a header it did not find — is reported
+as an `mt-parse` warning at its place ("libclang: unknown type name 'Mystery'"),
+and the declaration is still read with the type as you wrote it. Qt's headers are
+not needed for the signal and slot roles, only to resolve `QObject` and the value
+classes. Tests are always read by tree-sitter: they are code that may not compile yet.
+
 ### Cases over a table of arguments
 
 By default a method with arguments is one test with a local for each. With
@@ -778,3 +808,6 @@ Honest list of what it does not do (yet):
 - `TYPED_TEST` bodies are skipped (with a warning).
 - A constructor defined *outside* its class does not stop the member it
   initialises from also asking for a default constructor.
+- With `--frontend libclang`, a header that does not compile is read with warnings, and whatever libclang
+  cannot resolve is as unknown to it as to anybody; class template specialisations, function templates
+  and inherited constructors are skipped with the same warnings as with tree-sitter.

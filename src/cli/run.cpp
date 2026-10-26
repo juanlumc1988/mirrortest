@@ -10,6 +10,8 @@
 
 #include "mirrortest/core/compile_commands.h"
 #include "mirrortest/core/source.h"
+#include "mirrortest/frontend/clang_frontend.h"
+#include "mirrortest/frontend/code_frontend.h"
 
 #ifndef MT_VERSION
 #define MT_VERSION "0.0.0-unknown"
@@ -33,7 +35,8 @@ struct Raw {
     std::string out, out_include, out_src;
     std::string framework, include_as, qt_main = "guiless";
     std::string cxx_std, overwrite = "never", config_file, templates_dir, compile_commands;
-    std::string stub_policy, placeholder, auto_policy;
+    std::string stub_policy, placeholder, auto_policy, frontend;
+    std::vector<std::string> clang_args;
     int         qt = 0;
 
     bool no_exceptions = false, no_rtti = false, no_stl = false;
@@ -43,6 +46,7 @@ struct Raw {
 // The options the two commands share.
 struct CommonOptions {
     CLI::Option* cxx_std = nullptr;
+    CLI::Option* frontend = nullptr;
     CLI::Option* config_file = nullptr;
     CLI::Option* templates_dir = nullptr;
 };
@@ -95,6 +99,11 @@ CommonOptions add_common(CLI::App& cmd, Raw& raw) {
     given.templates_dir = cmd.add_option("--templates", raw.templates_dir,
                                          "Directory with templates that replace the built-in ones")
                               ->type_name("DIR");
+    given.frontend = cmd.add_option("--frontend", raw.frontend, "What reads the headers (default tree-sitter)")
+                         ->type_name(join(core::frontend_names()))
+                         ->check(one_of(core::frontend_names()));
+    repeatable(cmd.add_option("--clang-arg", raw.clang_args, "An argument for the libclang frontend, such as -DNAME=1 (repeatable)")
+                   ->type_name("ARG"));
     cmd.add_option("--compile-commands", raw.compile_commands,
                    "compile_commands.json; its -I, -isystem and -iquote directories are added after the -I given")
         ->type_name("FILE");
@@ -318,6 +327,8 @@ std::optional<Options> parse_options(const std::vector<std::string>& args, const
         }
     }
     if (common.cxx_std->count() > 0) options.config.cxx_std = *core::parse_std(raw.cxx_std);
+    if (common.frontend->count() > 0) options.config.frontend = *core::parse_frontend(raw.frontend);
+    options.config.clang_args.insert(options.config.clang_args.end(), raw.clang_args.begin(), raw.clang_args.end());
     if (is_impl) {
         if (impl_stub->count() > 0) options.config.stub_policy = *core::parse_stub_policy(raw.stub_policy);
         if (impl_no_exc->count() > 0) options.config.no_exceptions = true;
@@ -349,6 +360,22 @@ Options with_compile_commands(const Options& options, const Env& env, core::Diag
         *env.err << (dirs->empty() ? " none\n" : "\n");
     }
     return out;
+}
+
+ir::Model read_header_with(const Options& options, const Env& env, const core::SourceFile& source, const std::string& include_path,
+                           const syntax::MacroTable& macros, core::Diagnostics& diagnostics) {
+    if (options.config.frontend != core::Frontend::Libclang) return frontend::read_header(source, include_path, macros, diagnostics);
+
+    namespace fs = std::filesystem;
+    const auto absolute = [&](const std::string& path) { return fs::absolute(resolve(env, path)).lexically_normal().string(); };
+    frontend::ClangOptions clang;
+    // clang_args() before the options of the run, so that a project's own can still be overridden from the command line.
+    const char* standard = options.config.cxx_std == core::CxxStd::Cxx23 ? "c++2b" : core::to_string(options.config.cxx_std);
+    clang.arguments.push_back(std::string("-std=") + standard);
+    for (const std::string& dir : options.include_dirs) clang.arguments.push_back("-I" + absolute(dir));
+    clang.arguments.insert(clang.arguments.end(), options.config.clang_args.begin(), options.config.clang_args.end());
+    clang.absolute_path = absolute(source.path);
+    return frontend::read_header_clang(source, include_path, macros, clang, diagnostics);
 }
 
 int run(const std::vector<std::string>& args, const Env& env) {

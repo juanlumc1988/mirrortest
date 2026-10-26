@@ -266,6 +266,36 @@ TEST(CliParse, IncludeDirectoriesAccumulateAndDoNotEatTheInputs) {
     EXPECT_EQ(o.inputs, std::vector<std::string>{"test.cpp"});
 }
 
+TEST(CliParse, TheFrontendAndTheArgumentsForLibclangAreOptionsOfBothCommands) {
+    EXPECT_EQ(opts({"gen-tests", "h.h", "--out", "o"}).config.frontend, core::Frontend::TreeSitter) << "tree-sitter unless said otherwise";
+    const Options impl = opts({"gen-impl", "t.cpp", "--out", "o", "--frontend", "libclang", "--clang-arg", "-DX=1", "--clang-arg=-Iinc", "t2.cpp"});
+    EXPECT_EQ(impl.config.frontend, core::Frontend::Libclang);
+    EXPECT_EQ(impl.config.clang_args, (std::vector<std::string>{"-DX=1", "-Iinc"}));
+    EXPECT_EQ(impl.inputs, (std::vector<std::string>{"t.cpp", "t2.cpp"})) << "--clang-arg does not take the inputs that follow it";
+    const Options tests = opts({"gen-tests", "h.h", "--out", "o", "--frontend", "tree-sitter"});
+    EXPECT_EQ(tests.config.frontend, core::Frontend::TreeSitter);
+}
+
+TEST(CliParse, TheFrontendHasToBeOneThatExists) {
+    const Invocation bad = invoke({"gen-tests", "h.h", "--out", "o", "--frontend", "clang"});
+    EXPECT_EQ(bad.code, 2);
+    EXPECT_TRUE(contains(bad.err, "tree-sitter")) << bad.err;
+    EXPECT_TRUE(contains(bad.err, "libclang")) << bad.err;
+    EXPECT_TRUE(contains(invoke({"gen-tests", "--help"}).out, "--frontend"));
+    EXPECT_TRUE(contains(invoke({"gen-impl", "--help"}).out, "--clang-arg"));
+}
+
+TEST(CliConfig, TheFrontendAndItsArgumentsCanBeInTheFileAndTheCommandLineAddsToThem) {
+    TempDir dir;
+    write_file(dir.path() / "mt.json", R"({"frontend":"libclang","clang_args":["-DA","-Iinc"]})");
+    const Parsed p = parse({"gen-tests", "h.h", "--out", "o", "--config", "mt.json", "--clang-arg", "-DB"}, dir.path());
+    ASSERT_TRUE(p.options.has_value()) << p.err;
+    EXPECT_EQ(p.options->config.frontend, core::Frontend::Libclang);
+    EXPECT_EQ(p.options->config.clang_args, (std::vector<std::string>{"-DA", "-Iinc", "-DB"})) << "the file's first, then the command line's";
+    const Parsed over = parse({"gen-tests", "h.h", "--out", "o", "--config", "mt.json", "--frontend", "tree-sitter"}, dir.path());
+    EXPECT_EQ(over.options->config.frontend, core::Frontend::TreeSitter) << "and an option that was passed overrides the file";
+}
+
 TEST(CliParse, TheHookStubPolicyIsAccepted) {
     EXPECT_EQ(opts({"gen-impl", "t.cpp", "--out", "o", "--stub-policy", "hook"}).config.stub_policy, core::StubPolicy::Hook);
 }

@@ -26,7 +26,7 @@ README per version).
 | R5 | §6 | `QCOMPARE` requires identical types | *Verified*: Qt 5.15 and Qt 6.4 have `template<T1,T2> qCompare(const T1&, const T2&)` via `==`. The requirement belonged to old versions. | The exact type of the literal is still inferred (avoids `-Wsign-compare` and keeps parity with GTest), but it is no longer a compilation requirement. |
 | R6 | §6 | Exceptions: use `QVERIFY_EXCEPTION_THROWN` | *Verified*: deprecated since Qt 6.3 in favour of `QVERIFY_THROWS_EXCEPTION(Type, expr)` — **reversed argument order** — which does not exist in Qt 5. | The frontend recognises both; the backend chooses according to `--qt 5\|6` (§9.6). |
 | R7 | §7 | Output compatible with `--std=c++11` | *Verified*: GoogleTest 1.12.x is the last one supporting C++11; 1.13–1.16 require C++14; 1.17 requires C++17. Tests generated for C++11 only compile with GTest ≤ 1.12. | Documented. GTest 1.16.0 is pinned so that C++14 output can be tested. The stub code (no GTest) is tested in C++11. |
-| R8 | §3 | Decide the parser with a spike | *Verified* (spike): tree-sitter-cpp 0.23.4 parses GTest without errors. QTest and Qt headers do **not**: `Q_OBJECT`, `slots`, `signals`, `Q_PROPERTY(…)` and export macros generate `ERROR` nodes and declarations get lost (11 errors in a typical header). With those macros replaced by spaces: 0 errors. | tree-sitter in both directions + a *blanking* preprocessing step that preserves offsets (§5.2). libclang stays as a possible future optional frontend. **[confirmed]** |
+| R8 | §3 | Decide the parser with a spike | *Verified* (spike): tree-sitter-cpp 0.23.4 parses GTest without errors. QTest and Qt headers do **not**: `Q_OBJECT`, `slots`, `signals`, `Q_PROPERTY(…)` and export macros generate `ERROR` nodes and declarations get lost (11 errors in a typical header). With those macros replaced by spaces: 0 errors. | tree-sitter in both directions + a *blanking* preprocessing step that preserves offsets (§5.2). libclang stays as an optional frontend for headers (plan 8.5, §6.7). **[confirmed]** |
 | R9 | §11 | — | tree-sitter does not preprocess: it sees **all** branches of `#if/#else`. Code with per-platform `#ifdef`s can produce duplicate or contradictory declarations. | All branches are visited; exact duplicates are merged; different variants are kept with an `mt-conditional` note (§6.5). |
 | R10 | §4 | Types of integer literals | The type of a large integer depends on the data model: `long` is 32 bits on 32-bit targets (ILP32) and on 64-bit Windows (LLP64) and 64 on 64-bit Linux (LP64). The generator runs on the host but the code may be built for another data model. | `long` is never deduced from magnitude, only from a suffix. Without a suffix and outside `int` → `long long` + warning. Suffix `l` with a value above 32 bits → a warning that a 32-bit `long` cannot hold it (§7.5). |
 | R11 | §4 | — | *Verified*: tree-sitter lexes `-1` as a single `number_literal`, not as a unary minus. | The literal classifier accepts a sign. |
@@ -53,7 +53,7 @@ README per version).
 
 | # | Decision | Reason |
 |---|---|---|
-| D1 | **tree-sitter in both directions** (MVP). The frontend interface is prepared for an optional libclang frontend (`MT_WITH_LIBCLANG`, future). **[confirmed]** | A single parser dependency, pinned and needing no toolchain; it tolerates code that does not compile; the same type-extraction utilities in both directions. For *skeletons* the syntax is enough: the header explicitly declares what is needed. libclang would require Qt and project include paths just to read signatures. |
+| D1 | **tree-sitter in both directions** (MVP). The frontend interface is prepared for an optional libclang frontend (`MT_WITH_LIBCLANG`, §6.7, plan 8.5: it reads headers when asked, tree-sitter stays the default). **[confirmed]** | A single parser dependency, pinned and needing no toolchain; it tolerates code that does not compile; the same type-extraction utilities in both directions. For *skeletons* the syntax is enough: the header explicitly declares what is needed. libclang would require Qt and project include paths just to read signatures. |
 | D2 | Binary name `mirrortest`; C++ namespace `mt`; annotation prefix `// @mt:`; markers `// <mt:begin X>` / `// <mt:end X>`; TODOs `TODO(mt):`; diagnostic codes `mt-*`. **[confirmed]** | Consistent with the repo; `@gen:` is too generic and could collide. |
 | D3 | Generator in C++17. Output: the **same** code for every `--std`, valid from C++11, except what is listed in §13.3. | Fewer variants = less surface for error. `--std` only changes what really depends on the standard. |
 | D4 | Default stub policy `throw std::logic_error`; `--no-exceptions` ⇒ `std::abort()`. | A *red* phase guaranteed in GTest and QTest (both report the failure; QTest aborts after the first, R26), and without exceptions too. |
@@ -380,6 +380,48 @@ The parser always gives a tree. Every `ERROR` node (the outermost; up to 10,
 then a note "and N more parse errors") is an `mt-parse` warning with its
 position, and what surrounds it is read: a header that almost parses is far more
 useful than none.
+
+### 6.7 The libclang frontend (plan 8.5)
+
+`--frontend libclang` (or `"frontend": "libclang"`) reads the **headers** with libclang instead of
+tree-sitter: the input of `gen-tests`, and the headers a test includes that `gen-impl` must not
+generate again. A test file is always read by tree-sitter (D1: it is code that may not compile yet). The
+option `MT_WITH_LIBCLANG` (off by default) builds it; it needs the system's libclang
+(`cmake/MtLibclang.cmake`, hints for Debian/Ubuntu, Homebrew and the usual LLVM prefixes, or
+`MT_LIBCLANG_INCLUDE_DIR` and `MT_LIBCLANG_LIBRARY`), because libclang has to be the compiler's own to find its
+headers. Without it, `--frontend libclang` is an error that says how to build it, never a silent fallback.
+
+What it is for: a header is code that compiles, and a compiler knows what a syntax tree cannot.
+
+- **Only the branch that builds** is read (`-DNAME` through `--clang-arg`), where tree-sitter keeps every
+  branch (§6.5); and what a macro **declares** is read (`GETTER(int, size)`), an export macro needs no
+  `ignore_macros`. A pointer to member, a struct given its name by a `typedef`, a struct defined in the
+  declaration of a member, are read as they are.
+- **Types as written.** The model's rule is that the spelling is what the user wrote, so the types of
+  parameters, fields and returns are read from the declaration's tokens, not from libclang's printing of the
+  type, which would make `unsigned` into `unsigned int`, qualify names as the libclang at hand does and say `int`
+  for a type it does not know. (Only a declaration made by a macro, which has no text of its own, takes
+  libclang's spelling.) With that, the two readers make **the same model**, positions included, of what
+  both can read: that is a test (`tests/unit/test_clang_frontend.cpp`) over a battery of headers, and the
+  `GoldenWithLibclang` run of every `gen-tests` and `gen-impl` golden case (all but `ifdef_branches`, which
+  differs on purpose). Qualifiers that are keywords (`virtual`, `explicit`, `override`, `noexcept`, `= delete`)
+  are read from the tokens as well, so "declared virtual" means written `virtual`.
+- **Qt.** The same blanking pass (`syntax::preprocess`) gives libclang the text without `Q_OBJECT`,
+  `signals:` and `slots`, and the markers it leaves are applied by offset exactly as for the other reader, so the
+  Qt roles are the same and Qt's headers are not needed for them. They are needed to *resolve* `QObject` and the
+  value classes: without them those are unknown types, reported as below. The bases of a class are read from the
+  base clause as written, because libclang drops a base it cannot resolve.
+- **What it cannot read.** A type libclang does not know (`Mystery`, a missing `#include`) is an
+  `mt-parse` **warning** at its place — "libclang: unknown type name 'Mystery'; declarations around it
+  may be missing or have wrong types", at most ten and then a note with the count — and the declaration
+  is still read with the type as written. A file libclang cannot open at all is an `mt-parse` error and
+  an empty model.
+- **How it is called** (`cli::read_header_with`): `-x c++`, `-std=` of `--std` (`c++2b` for 23), the `-I`
+  of the run (and those of `--compile-commands`) made absolute against the run's directory, then the
+  `clang_args` of the configuration and the `--clang-arg`s of the command line, in that order. The header is given
+  from memory under its absolute path, so an `#include "next_to_it.h"` is found whatever the process's directory is.
+  Function bodies are skipped. Specialisations, function templates, member templates and inherited constructors
+  are reported as `mt-unsupported` in the words of the other reader.
 
 ---
 
@@ -1902,7 +1944,7 @@ warnings into errors.
 | `mt-io` | error | cannot read/write |
 | `mt-config` | error · warning | invalid configuration or unknown key · a compilation database that is not one (error), an entry of it that cannot be read (warning) |
 | `mt-framework` | error | framework not detectable or ambiguous |
-| `mt-parse` | warning | the parser marked regions as `ERROR` (not counting known shapes handled by text, such as `QFETCH(int, v)`) |
+| `mt-parse` | warning · error | the parser marked regions as `ERROR` (not counting known shapes handled by text, such as `QFETCH(int, v)`); with `--frontend libclang`, an error libclang recovered from (warning), a file it could not open at all or a build without libclang (error) |
 | `mt-auto` | error (policy) | `auto` receives a result of the API |
 | `mt-unknown-return`, `mt-unknown-param` | error (policy) | type cannot be inferred |
 | `mt-chained-call` | error (policy) | call on the result of another call |
@@ -1940,6 +1982,7 @@ COMMON:  -I DIR ... | --std c++11|c++14|c++17|c++20|c++23 (default c++17)
          --overwrite never|merge|force (default never) | --dry-run | --check
          --config FILE.json|FILE.yaml | --templates DIR | --strict | --quiet | --verbose
          --compile-commands FILE  (adds its -I, -isystem and -iquote directories)
+         --frontend tree-sitter|libclang (default tree-sitter) | --clang-arg ARG ...  (§6.7)
 ```
 
 Implemented in `cli/run.h` (`parse_options`, `finish_run`, `run`); `main.cpp`
@@ -2053,6 +2096,8 @@ diagnostics); an error suppresses diffs and summary.
   "placeholder_type": "int",
   "string_literal_param": "const char*",
   "exception_base": "",
+  "frontend": "tree-sitter",
+  "clang_args": [],
   "qt": 6,
   "type_map": { "unsigned int": "std::uint32_t" },
   "by_value_types": [],
@@ -2093,6 +2138,10 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
   (`mt-unknown-type`). A type spelling; stored normalised. Has no effect with `no_exceptions`.
 - `no_exceptions` makes `stub_policy: throw` behave as `abort`
   (`effective_stub_policy`); an explicit `default` is respected.
+- `frontend` and `clang_args` (§6.7): which reader reads the headers, and what the libclang one is told
+  (`-DNAME=1`, `-I/abs/dir`, `-std=...` to override the one `std` gives). The `--clang-arg`s of the command line
+  are added after the file's. A relative path in them is relative to the *process's* directory (libclang's),
+  not to the run's: write them absolute.
 - `no_stl` (`--no-stl`, gen-impl; plan 8.2): the project does not use the standard
   library. It does two things and only two, both about what the generator adds or
   includes by itself: (1) `throw` behaves as `abort` too, because the stub would
@@ -2224,6 +2273,10 @@ Implemented in `core/templates.h` (`TemplateStore`) and
    - A failure shows the case, the stream or file, and an expected/actual diff.
      A case directory with an unknown entry (almost always a typo: `expeced/`) is
      a layout error.
+   - `requires.txt` (optional) names the optional parts of the build a case needs (`yaml`, `libclang`);
+     where one is missing the case is skipped. With libclang, every `gen-tests` and `gen-impl` case is also run
+     with `--frontend libclang` (`GoldenWithLibclang`), libclang's own warnings aside, except the ones that
+     differ on purpose (a table in `test_golden.cpp`).
    - Explicit update: `MT_UPDATE_GOLDEN=1 ctest -R golden` or the
      `update-golden` target; never by hand. It **refuses to record** output that
      is non-deterministic or breaks a convention, and deletes what is no longer

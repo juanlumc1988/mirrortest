@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "mirrortest/cli/run.h"
+#include "mirrortest/frontend/clang_frontend.h"
 #include "test_support.h"
 
 using namespace mt;
@@ -156,6 +157,81 @@ std::string include_line(const TempDir& dir, const std::vector<std::string>& arg
     const std::string text = read(dir, "tests/foo_test.cpp");
     const std::size_t at = text.find("#include \"");
     return at == std::string::npos ? "<none>" : text.substr(at, text.find('\n', at) - at);
+}
+
+// ---- --frontend libclang ----------------------------------------------------------------------------------------------
+
+#define SKIP_WITHOUT_LIBCLANG() \
+    if (!frontend::libclang_supported()) GTEST_SKIP() << "built without libclang"
+
+TEST(GenTestsLibclang, AnUnsupportedBuildSaysSoInsteadOfFallingBackToTheOtherReader) {
+    if (frontend::libclang_supported()) GTEST_SKIP() << "built with libclang";
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--frontend", "libclang"});
+    EXPECT_EQ(r.code, 1) << r.err;
+    EXPECT_TRUE(contains(r.err, "this build of mirrortest has no libclang frontend")) << r.err;
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
+TEST(GenTestsLibclang, WritesWhatTheOtherReaderWritesForAHeaderThatCompiles) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_foo(dir);
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "ts"}).code, 0);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "cl", "--frontend", "libclang"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created cl/foo_test.cpp\n");
+    std::string expected = read(dir, "ts/foo_test.cpp");
+    EXPECT_EQ(read(dir, "cl/foo_test.cpp"), expected);
+}
+
+TEST(GenTestsLibclang, TheIncludeDirectoriesAreRelativeToTheRunNotToTheProcess) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "vendor/dep.h", "struct Dep { int v; };\n");
+    write_file(dir.path() / "src/user.h", "#include \"dep.h\"\nclass User {\npublic:\n    Dep get() const;\n};\n");
+    const Outcome without = gen_tests(dir, {"src/user.h", "--out", "none", "--frontend", "libclang"});
+    EXPECT_TRUE(contains(without.err, "'dep.h' file not found")) << without.err;
+    const Outcome with = gen_tests(dir, {"src/user.h", "--out", "tests", "--frontend", "libclang", "-I", "vendor"});
+    EXPECT_EQ(with.code, 0) << with.err;
+    EXPECT_FALSE(contains(with.err, "warning")) << with.err;
+    EXPECT_TRUE(exists(dir, "tests/user_test.cpp"));
+}
+
+TEST(GenTestsLibclang, TheCompileCommandsOfTheProjectGiveItsIncludeDirectoriesToo) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "vendor/dep.h", "struct Dep { int v; };\n");
+    write_file(dir.path() / "src/user.h", "#include \"dep.h\"\nclass User {\npublic:\n    Dep get() const;\n};\n");
+    write_file(dir.path() / "cc.json", R"([{"directory":".","command":"c++ -Ivendor -c x.cpp"}])");
+    const Outcome r = gen_tests(dir, {"src/user.h", "--out", "tests", "--frontend", "libclang", "--compile-commands", "cc.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(contains(r.err, "warning")) << r.err;
+}
+
+TEST(GenTestsLibclang, ClangArgsReachTheCompilerSoTheBranchThatBuildsIsTheOneRead) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "port.h", "class Port {\npublic:\n#ifdef USE_DMA\n    void transfer(const char* data, unsigned size);\n#else\n    void transfer(const char* data);\n#endif\n};\n");
+    ASSERT_EQ(gen_tests(dir, {"port.h", "--out", "plain", "--frontend", "libclang"}).code, 0);
+    ASSERT_EQ(gen_tests(dir, {"port.h", "--out", "dma", "--frontend", "libclang", "--clang-arg", "-DUSE_DMA"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "plain/port_test.cpp"), "Port::transfer(const char*)"));
+    EXPECT_FALSE(contains(read(dir, "plain/port_test.cpp"), "unsigned"));
+    EXPECT_TRUE(contains(read(dir, "dma/port_test.cpp"), "Port::transfer(const char*, unsigned)"));
+    ASSERT_EQ(gen_tests(dir, {"port.h", "--out", "ts"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "ts/port_test.cpp"), "Port::transfer(const char*, unsigned)")) << "tree-sitter keeps both";
+    EXPECT_TRUE(contains(read(dir, "ts/port_test.cpp"), "Port::transfer(const char*)"));
+}
+
+TEST(GenTestsLibclang, TheStandardOfTheRunIsTheOneTheHeaderIsParsedAs) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "abbrev.h", "class Apply {\npublic:\n    void run(auto fn);\n    int size() const;\n};\n");
+    const Outcome older = gen_tests(dir, {"abbrev.h", "--out", "o17", "--frontend", "libclang", "--std", "c++17"});
+    EXPECT_TRUE(contains(older.err, "[mt-parse]")) << older.err;
+    const Outcome newer = gen_tests(dir, {"abbrev.h", "--out", "o20", "--frontend", "libclang", "--std", "c++20"});
+    EXPECT_FALSE(contains(newer.err, "[mt-parse]")) << newer.err;
 }
 
 TEST(GenTestsInclude, WithoutAnIncludeDirectoryItIsTheFileName) {

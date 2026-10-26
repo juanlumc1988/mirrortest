@@ -1,0 +1,8 @@
+gen-tests
+${IN}/port.h
+--out
+${OUT}
+--frontend
+libclang
+--clang-arg
+-DUSE_DMA

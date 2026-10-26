@@ -70,6 +70,31 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # The libclang frontend (--frontend libclang): the same models as tree-sitter's, from the same headers, and every
+  # gen-tests and gen-impl golden case run again with it. libclang is the distribution's, so it is the one that matches
+  # the compiler that finds the standard headers.
+  libclang:
+    name: libclang frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools and libclang
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libclang-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DMT_WERROR=ON \
+                -DMT_WITH_LIBCLANG=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   sanitizers:
     name: asan + ubsan
     runs-on: ubuntu-latest

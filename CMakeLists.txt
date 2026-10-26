@@ -7,6 +7,7 @@ project(mirrortest VERSION 0.1.0 LANGUAGES C CXX)
 option(MT_BUILD_TESTS "Build the unit, golden and round-trip tests" ON)
 option(MT_WERROR      "Treat warnings as errors" OFF)
 option(MT_WITH_YAML   "Read configuration files written in YAML (.yaml, .yml); needs yaml-cpp" ON)
+option(MT_WITH_LIBCLANG "Add the libclang frontend for headers (--frontend libclang); needs libclang" OFF)
 
 # The generator itself is C++17 throughout. It runs on the development host,
 # never on the target, so there is nothing to gain from a lower standard.
@@ -16,6 +17,9 @@ option(MT_WITH_YAML   "Read configuration files written in YAML (.yaml, .yml); n
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(MtDependencies)
 include(MtEmbedFiles)
+if(MT_WITH_LIBCLANG)
+    include(MtLibclang)
+endif()
 
 set(MT_WARNINGS "")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -74,6 +78,7 @@ add_library(mt_core STATIC
     src/core/writer.cpp
     src/frontend/annotations.cpp
     src/frontend/classify.cpp
+    src/frontend/clang_frontend.cpp
     src/frontend/code_frontend.cpp
     src/frontend/facts.cpp
     src/frontend/known_names.cpp
@@ -98,6 +103,10 @@ endif()
 # Whether the configuration reader knows YAML is a property of the library, and of whoever includes
 # its headers to ask (core/config.h: yaml_supported()), not of a macro they have to define.
 target_compile_definitions(mt_core PRIVATE MT_WITH_YAML=$<BOOL:${MT_WITH_YAML}>)
+if(MT_WITH_LIBCLANG)
+    target_link_libraries(mt_core PRIVATE mt::libclang)
+endif()
+target_compile_definitions(mt_core PRIVATE MT_WITH_LIBCLANG=$<BOOL:${MT_WITH_LIBCLANG}>)
 set_source_files_properties(src/cli/run.cpp PROPERTIES
     COMPILE_DEFINITIONS MT_VERSION="${PROJECT_VERSION}")
 mt_configure(mt_core)
@@ -117,6 +126,7 @@ if(MT_BUILD_TESTS)
     add_executable(mt_unit_tests
         tests/unit/test_annotations.cpp
         tests/unit/test_classify.cpp
+        tests/unit/test_clang_frontend.cpp
         tests/unit/test_cli.cpp
         tests/unit/test_code_frontend.cpp
         tests/unit/test_compile_commands.cpp

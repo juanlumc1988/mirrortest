@@ -59,7 +59,7 @@ std::vector<core::OutputFile> process_input(const Options& options, const Env& e
     macros.ignore = config.ignore_macros;
 
     const std::string include = include_path_for(options, env, input);
-    const ir::Model model = frontend::read_header(*source, include, macros, diagnostics);
+    const ir::Model model = read_header_with(options, env, *source, include, macros, diagnostics);
 
     if (!model.functions.empty()) {
         core::Diagnostic note;

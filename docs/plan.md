@@ -286,4 +286,6 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   golden cases and round trips).
 - [x] **8.4** YAML loader (R18): `--config tool.yaml` is converted to JSON and read by the same reader
   (design 14.1; `MT_WITH_YAML`, yaml-cpp 0.8.0; `config_yaml` and two `cli` golden cases, `requires.txt` in the golden runner).
-- [ ] **8.5** (Optional) libclang frontend behind `MT_WITH_LIBCLANG` (D1).
+- [x] **8.5** libclang frontend for headers behind `MT_WITH_LIBCLANG` (D1; design 6.7): `--frontend libclang`, `--clang-arg`;
+  the same model as tree-sitter makes (`test_clang_frontend.cpp`, and every `gen-tests`/`gen-impl` golden run again with it:
+  `GoldenWithLibclang`), plus what only a compiler knows (`libclang_ifdef`, `libclang_macros`); a CI job.

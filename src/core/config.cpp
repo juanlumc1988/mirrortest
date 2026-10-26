@@ -44,6 +44,9 @@ const Choice<Placeholder> kPlaceholders[] = {
 const Choice<AutoPolicy> kAutoPolicies[] = {
     {AutoPolicy::Error, "error"}, {AutoPolicy::Todo, "todo"},
 };
+const Choice<Frontend> kFrontends[] = {
+    {Frontend::TreeSitter, "tree-sitter"}, {Frontend::Libclang, "libclang"},
+};
 
 template <class E, std::size_t N>
 const char* name_of(const Choice<E> (&table)[N], E value) {
@@ -498,6 +501,8 @@ void Reader::read_root(const json& root, Config& c) {
         else if (key == "auto_policy")                 read_choice(v, key, kAutoPolicies, c.auto_policy);
         else if (key == "placeholder_type")            read_type(v, key, c.placeholder_type);
         else if (key == "string_literal_param")        read_type(v, key, c.string_literal_param);
+        else if (key == "frontend")                    read_choice(v, key, kFrontends, c.frontend);
+        else if (key == "clang_args")                  read_list(v, key, c.clang_args, "a compiler argument", [](const std::string& s) { return !s.empty(); });
         else if (key == "exception_base") {
             // Empty is the default said aloud: no exception class is generated.
             if (v.is_string() && v.get<std::string>().empty()) c.exception_base.clear();
@@ -531,12 +536,14 @@ const char* to_string(GuardStyle value)     { return name_of(kGuards, value); }
 const char* to_string(StubPolicy value)     { return name_of(kStubPolicies, value); }
 const char* to_string(Placeholder value)    { return name_of(kPlaceholders, value); }
 const char* to_string(AutoPolicy value)     { return name_of(kAutoPolicies, value); }
+const char* to_string(Frontend value)       { return name_of(kFrontends, value); }
 
 std::optional<CxxStd> parse_std(std::string_view text) { return find_choice(kStds, text); }
 std::optional<GuardStyle> parse_guard_style(std::string_view text) { return find_choice(kGuards, text); }
 std::optional<StubPolicy> parse_stub_policy(std::string_view text) { return find_choice(kStubPolicies, text); }
 std::optional<Placeholder> parse_placeholder(std::string_view text) { return find_choice(kPlaceholders, text); }
 std::optional<AutoPolicy> parse_auto_policy(std::string_view text) { return find_choice(kAutoPolicies, text); }
+std::optional<Frontend> parse_frontend(std::string_view text) { return find_choice(kFrontends, text); }
 
 template <class E, std::size_t N>
 std::vector<std::string> names_of(const Choice<E> (&table)[N]) {
@@ -552,6 +559,7 @@ std::vector<std::string> guard_names() { return names_of(kGuards); }
 std::vector<std::string> stub_policy_names() { return names_of(kStubPolicies); }
 std::vector<std::string> placeholder_names() { return names_of(kPlaceholders); }
 std::vector<std::string> auto_policy_names() { return names_of(kAutoPolicies); }
+std::vector<std::string> frontend_names() { return names_of(kFrontends); }
 
 int to_number(CxxStd value) {
     switch (value) {

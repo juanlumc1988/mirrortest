@@ -134,6 +134,7 @@ the API under test, literal suffixes where the type matters, optional
 | `--stub-policy throw\|abort\|default\|hook` | what the stubs do (default `throw`; `hook` calls a function you can replace, so Qt Test runs every slot); `--no-exceptions` and `--no-stl` make `throw` behave as `abort` |
 | `--auto-policy error\|todo` | what to do when a type cannot be inferred (default: an error, nothing written) |
 | `--std c++11\|...\|c++23` | the standard the generated code must be valid in (default `c++17`) |
+| `--frontend tree-sitter\|libclang`, `--clang-arg ARG` | what reads the headers (default tree-sitter; libclang needs `-DMT_WITH_LIBCLANG=ON` and knows which `#if` branch builds); arguments for libclang, such as `-DNAME=1` |
 | `--overwrite never\|merge\|force` | a differing file gets a `.new` beside it (default), gets the missing members inserted into its regions, or is replaced |
 | `--dry-run`, `--check` | show diffs without writing; exit 4 if anything would change |
 | `--config FILE.json` (or `.yaml`), `--templates DIR` | house style: [docs/conventions.md](docs/conventions.md#configuration), [docs/templates.md](docs/templates.md) |
@@ -170,6 +171,10 @@ $ cmake -S . -B build \
 ```
 
 Git checkouts given this way are still verified against the pinned commits.
+
+Two parts are optional. `-DMT_WITH_YAML=OFF` leaves out yaml-cpp (a `.yaml` configuration is then refused with
+a clear error). `-DMT_WITH_LIBCLANG=ON` adds the libclang frontend (`--frontend libclang`); it uses the system's
+libclang (`apt install libclang-dev`), or the one `MT_LIBCLANG_INCLUDE_DIR` and `MT_LIBCLANG_LIBRARY` point at.
 
 The generator runs on the development host and only writes text, so the code it
 generates does not depend on the target architecture: it defaults to

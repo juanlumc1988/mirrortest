@@ -35,6 +35,9 @@ enum class GuardStyle { Ifndef, PragmaOnce };
 enum class StubPolicy { Throw, Abort, Default, Hook };
 enum class Placeholder { Fail, Skip };
 enum class AutoPolicy { Error, Todo };
+// What reads a header (docs/design.md, section 6.7): tree-sitter, which needs nothing and tolerates code that
+// does not compile, or libclang, a compiler front end that knows which branch of an #if builds.
+enum class Frontend { TreeSitter, Libclang };
 // How a generated Qt Test file starts its event loop: QTEST_APPLESS_MAIN (no
 // application object), QTEST_GUILESS_MAIN (a QCoreApplication) or QTEST_MAIN
 // (a QApplication).
@@ -46,12 +49,14 @@ const char* to_string(GuardStyle value);      // "ifndef", "pragma-once"
 const char* to_string(StubPolicy value);      // "throw", "abort", "default"
 const char* to_string(Placeholder value);     // "fail", "skip"
 const char* to_string(AutoPolicy value);      // "error", "todo"
+const char* to_string(Frontend value);        // "tree-sitter", "libclang"
 
 std::optional<CxxStd>     parse_std(std::string_view text);
 std::optional<GuardStyle> parse_guard_style(std::string_view text);
 std::optional<StubPolicy> parse_stub_policy(std::string_view text);
 std::optional<Placeholder> parse_placeholder(std::string_view text);
 std::optional<AutoPolicy> parse_auto_policy(std::string_view text);
+std::optional<Frontend> parse_frontend(std::string_view text);
 
 // The valid spellings of each enumeration, in declaration order. The CLI
 // validates its options against these and prints them in --help, so the
@@ -61,6 +66,7 @@ std::vector<std::string> guard_names();
 std::vector<std::string> stub_policy_names();
 std::vector<std::string> placeholder_names();
 std::vector<std::string> auto_policy_names();
+std::vector<std::string> frontend_names();
 
 // 11, 14, 17, 20, 23.
 int to_number(CxxStd value);
@@ -143,6 +149,14 @@ struct Config {
     // ("std::runtime_error") it is generated, deriving from it. Empty (the default): it must come
     // from a header, or be reported.
     std::string exception_base;
+
+    // What reads the headers: gen-tests' input, and the headers a test includes that gen-impl must not
+    // generate again. A test file is always read by tree-sitter (it is code that may not compile yet).
+    Frontend frontend = Frontend::TreeSitter;
+    // The libclang frontend's compiler arguments, as given: `-DNAME=1`, `-I/opt/vendor/include`, `-std=...`
+    // (the standard of `std` is passed first, and the -I of the run after those). A relative path in
+    // them is relative to the process's directory, not to the run's: write them absolute.
+    std::vector<std::string> clang_args;
 
     // Applied last, and only to what was inferred (never to what the user
     // declared or annotated). Sorted by key: lookups only, never emission

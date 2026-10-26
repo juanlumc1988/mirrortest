@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "mirrortest/cli/run.h"
+#include "mirrortest/frontend/clang_frontend.h"
 #include "test_support.h"
 
 using namespace mt;
@@ -314,6 +315,17 @@ TEST(GenImpl, AHeaderThatExistsOnAnIncludeDirectoryIsTheApiNotSomethingToGenerat
     EXPECT_FALSE(exists(dir, "src/acme/foo.h"));
     // Foo is known, so only what the header does not have could be generated: the class is not.
     EXPECT_FALSE(exists(dir, "src/acme/foo.cpp"));
+}
+
+TEST(GenImpl, AKnownHeaderCanBeReadWithLibclangAndIsTheApiAllTheSame) {
+    if (!frontend::libclang_supported()) GTEST_SKIP() << "built without libclang";
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "inc/acme/foo.h", "namespace acme { class Foo { public: explicit Foo(int); unsigned size() const; bool empty() const; }; }\n");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "-I", "inc", "--frontend", "libclang"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(contains(r.err, "warning")) << r.err;
+    EXPECT_FALSE(exists(dir, "src/acme/foo.h")) << "found on -I: it is the API";
 }
 
 TEST(GenImpl, YourOwnOutputOnTheIncludePathIsNotMistakenForTheApi) {

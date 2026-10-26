@@ -143,3 +143,35 @@ TEST(TypeFromSpelling, EmptyAndOddInputsDoNotCrash) {
     EXPECT_EQ(type_from_spelling("*").pointer_depth, 1u);
     EXPECT_EQ(type_from_spelling("&&&").ref, RefKind::RValue);
 }
+
+TEST(CollapseSpaces, AnyRunOfBlanksIsOneSpaceAndTheEndsAreTrimmed) {
+    EXPECT_EQ(mt::ir::collapse_spaces("  typename   T ,\tint\n N  "), "typename T , int N");
+    EXPECT_EQ(mt::ir::collapse_spaces("a\r\nb"), "a b");
+    EXPECT_EQ(mt::ir::collapse_spaces(""), "");
+    EXPECT_EQ(mt::ir::collapse_spaces(" \t\n "), "");
+    EXPECT_EQ(mt::ir::collapse_spaces("one"), "one");
+}
+
+TEST(OperatorNames, TheKeywordFollowedByAnythingButAnIdentifierCharacter) {
+    for (const char* name : {"operator==", "operator ==", "operator()", "operator[]", "operator new", "operator bool", "operator<<", "operator->"}) {
+        EXPECT_TRUE(mt::ir::is_operator_name(name)) << name;
+    }
+    for (const char* name : {"operator", "operatorX", "operator_", "operator9", "my_operator", "Operator==", "size", ""}) {
+        EXPECT_FALSE(mt::ir::is_operator_name(name)) << name;
+    }
+}
+
+TEST(OperatorNames, OneSpellingForEachOperator) {
+    EXPECT_EQ(mt::ir::normalize_operator_name("operator =="), "operator==");
+    EXPECT_EQ(mt::ir::normalize_operator_name("operator  ( )"), "operator()");
+    EXPECT_EQ(mt::ir::normalize_operator_name("operator [ ]"), "operator[]");
+    EXPECT_EQ(mt::ir::normalize_operator_name("operator<<"), "operator<<");
+    EXPECT_EQ(mt::ir::normalize_operator_name("operator  new"), "operator new");
+    EXPECT_EQ(mt::ir::normalize_operator_name("operator  new [ ]"), "operator new[]");
+    EXPECT_EQ(mt::ir::normalize_operator_name("operator   bool"), "operator bool");
+    EXPECT_EQ(mt::ir::normalize_operator_name("operator"), "operator") << "nothing after the keyword: left alone";
+}
+
+TEST(OperatorNames, WhatIsNotAnOperatorIsReturnedUntouched) {
+    for (const char* name : {"size", "operatorX", "my  operator ==", ""}) EXPECT_EQ(mt::ir::normalize_operator_name(name), name) << name;
+}

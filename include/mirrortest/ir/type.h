@@ -54,6 +54,17 @@ Type make_type(std::string_view base,
 // origin/reason/where are left for the caller.
 Type type_from_spelling(std::string_view spelling);
 
+// Runs of blanks (spaces, tabs, line breaks) become one space and the ends are trimmed.
+std::string collapse_spaces(std::string_view text);
+
+// `operator==`, `operator new`, `operator bool`: the keyword followed by something that is not part of
+// an identifier. `operatorX` is just a name.
+bool is_operator_name(const std::string& name);
+
+// "operator ==" and "operator==" are one name; "operator  new [ ]" is "operator new[]". Anything that
+// is not an operator is returned untouched.
+std::string normalize_operator_name(const std::string& name);
+
 // "acme::core::Widget" from {"acme", "core"} and "Widget"; just the name
 // when there is no namespace.
 std::string qualified_name(const std::vector<std::string>& ns, std::string_view name);

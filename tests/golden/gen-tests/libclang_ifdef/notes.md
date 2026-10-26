@@ -1,0 +1,1 @@
+`--frontend libclang --clang-arg -DUSE_DMA`: the header of `ifdef_branches`, read by a compiler front end, so only the branch that builds is a method of the class (`transfer(const char*, unsigned)`), not both as the syntax-tree reader keeps them.

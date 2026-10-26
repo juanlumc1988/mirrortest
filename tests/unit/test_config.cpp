@@ -468,6 +468,21 @@ TEST(ConfigHelpers, HookIsKeptWhateverTheOtherPoliciesSay) {
     EXPECT_EQ(effective_stub_policy(c), StubPolicy::Hook) << "only the default handler of the hook header changes";
 }
 
+TEST(ConfigKeys, TheFrontendAndTheArgumentsForLibclang) {
+    EXPECT_EQ(Config().frontend, Frontend::TreeSitter);
+    EXPECT_TRUE(Config().clang_args.empty());
+    const Applied a = apply(R"({"frontend":"libclang","clang_args":["-DNAME=1","-I/opt/include"]})");
+    ASSERT_TRUE(a.ok);
+    EXPECT_EQ(a.config.frontend, Frontend::Libclang);
+    EXPECT_EQ(a.config.clang_args, (std::vector<std::string>{"-DNAME=1", "-I/opt/include"}));
+    EXPECT_EQ(only_error(apply(R"({"frontend":"clang"})")), "configuration key 'frontend' must be one of: tree-sitter, libclang (got 'clang')");
+    EXPECT_EQ(only_error(apply(R"({"clang_args":"-DX"})")), "configuration key 'clang_args' must be a list");
+    EXPECT_EQ(only_error(apply(R"({"clang_args":[""]})")), "configuration key 'clang_args[0]' must be a compiler argument (got '')");
+    EXPECT_EQ(only_error(apply(R"({"clang_args":[1]})")), "configuration key 'clang_args[0]' must be a string");
+    for (Frontend f : {Frontend::TreeSitter, Frontend::Libclang}) EXPECT_EQ(parse_frontend(to_string(f)), f);
+    EXPECT_EQ(frontend_names(), (std::vector<std::string>{"tree-sitter", "libclang"}));
+}
+
 TEST(ConfigKeys, NoStlIsABoolean) {
     EXPECT_TRUE(apply(R"({"no_stl":true})").config.no_stl);
     EXPECT_FALSE(apply(R"({"no_stl":false})").config.no_stl);
