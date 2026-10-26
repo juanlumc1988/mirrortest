@@ -860,4 +860,143 @@ TEST(ClassifyWhole, TheSpikeFileNeedsFooBarAndAFewFunctions) {
     EXPECT_TRUE(function_names(r).empty());
 }
 
+// ---- enums: Color::Red --------------------------------------------------------------------------------------------------------
+
+namespace {
+
+std::vector<std::string> enum_names(const Outcome& r) {
+    std::vector<std::string> out;
+    for (const frontend::EnumTarget& e : r.result.enums) out.push_back(e.qualified());
+    return out;
+}
+
+const frontend::EnumTarget& the_enum(const Outcome& r, const char* qualified) {
+    static const frontend::EnumTarget none;
+    for (const frontend::EnumTarget& e : r.result.enums) {
+        if (e.qualified() == qualified) return e;
+    }
+    ADD_FAILURE() << "no enum " << qualified;
+    return none;
+}
+
+}  // namespace
+
+TEST(ClassifyEnums, ANameQualifyingAValueThatNothingElseExplainsIsAnEnumToGenerate) {
+    const Outcome r = body("Paint paint;\npaint.set(Color::Red);\nEXPECT_EQ(paint.color(), Color::Blue);\n");
+    EXPECT_EQ(enum_names(r), std::vector<std::string>{"Color"});
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Paint"}) << "and not a class";
+    EXPECT_EQ(the_enum(r, "Color").enumerators, (std::vector<std::string>{"Red", "Blue"}));
+    EXPECT_EQ(the_enum(r, "Color").first_use.line, 5u);
+}
+
+TEST(ClassifyEnums, EachEnumeratorIsListedOnceInTheOrderOfItsFirstUseWithWhereItWas) {
+    const Outcome r = body("Paint paint;\npaint.set(Color::Green);\npaint.set(Color::Red);\npaint.set(Color::Green);\npaint.set(Color::Blue);\n");
+    const frontend::EnumTarget& color = the_enum(r, "Color");
+    EXPECT_EQ(color.enumerators, (std::vector<std::string>{"Green", "Red", "Blue"}));
+    ASSERT_EQ(color.uses.size(), 3u);
+    EXPECT_EQ(color.uses[0].line, 5u);
+    EXPECT_EQ(color.uses[1].line, 6u);
+    EXPECT_EQ(color.uses[2].line, 8u);
+}
+
+TEST(ClassifyEnums, TheValueTakesTheTypeOfTheEnumAndSoDoesWhatItIsComparedWith) {
+    const Outcome r = body("Paint paint;\npaint.set(Color::Red);\nEXPECT_EQ(paint.color(), Color::Blue);\nEXPECT_EQ(Color::Green, paint.other());\n");
+    const frontend::Classified& c = r.result;
+    ASSERT_EQ(c.facts.method_calls.size(), 3u);
+    ASSERT_TRUE(c.facts.method_calls[0].args[0].type.has_value());
+    EXPECT_EQ(c.facts.method_calls[0].args[0].type->spelling, "Color");
+    EXPECT_EQ(c.facts.method_calls[0].args[0].type->origin, ir::Origin::Inferred);
+    EXPECT_EQ(c.facts.method_calls[0].args[0].type->reason, "enumerator Color::Red");
+    ASSERT_TRUE(c.facts.method_calls[1].use.hint.has_value());
+    EXPECT_EQ(c.facts.method_calls[1].use.hint->spelling, "Color");
+    ASSERT_TRUE(c.facts.method_calls[2].use.hint.has_value());
+    EXPECT_EQ(c.facts.method_calls[2].use.hint->reason, "enumerator Color::Green");
+}
+
+TEST(ClassifyEnums, TheNamespaceIsTheOneInTheNameOrTheOneTheTestIsIn) {
+    const Outcome qualified = body("Paint paint;\npaint.set(acme::paint::Color::Red);\n");
+    EXPECT_EQ(the_enum(qualified, "acme::paint::Color").ns, (std::vector<std::string>{"acme", "paint"}));
+
+    const Outcome nearby = classify("#include <gtest/gtest.h>\nnamespace acme {\nTEST(S, N) { Paint paint; paint.set(Color::Red); }\n}\n");
+    EXPECT_EQ(enum_names(nearby), std::vector<std::string>{"acme::Color"});
+    EXPECT_EQ(class_names(nearby), std::vector<std::string>{"acme::Paint"});
+}
+
+TEST(ClassifyEnums, AnAnnotationNamesTheHeader) {
+    const Outcome r = body("// @mt: class Color header \"acme/color.h\"\nPaint paint;\npaint.set(Color::Red);\n");
+    EXPECT_EQ(the_enum(r, "Color").header, "acme/color.h");
+}
+
+TEST(ClassifyEnums, AVariableOfTheTypeAndACopyFromAnEnumeratorAreWhatEnumsHave) {
+    const Outcome r = body("Color c = Color::Red;\nColor d;\nColor e(Color::Blue);\nPaint paint;\npaint.set(c);\n");
+    EXPECT_EQ(enum_names(r), std::vector<std::string>{"Color"});
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Paint"}) << "Color is declared as a type, but that does not make it a class";
+}
+
+TEST(ClassifyEnums, ComparingWithEnumeratorsDoesNotMakeAClass) {
+    const Outcome r = body("Color c = Color::Red;\nPaint paint;\nEXPECT_EQ(c, Color::Red);\nEXPECT_TRUE(c != paint.color());\nEXPECT_EQ(paint.color(), c);\n");
+    EXPECT_EQ(enum_names(r), std::vector<std::string>{"Color"});
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Paint"});
+}
+
+TEST(ClassifyEnums, WhatTheTestDoesToTheNameWithoutAnEnumeratorMakesItAClass) {
+    for (const char* use : {"Limits limits(3);", "Limits limits;\nlimits.value();", "Limits* limits = new Limits;", "Limits::create(1);",
+                            "Limits limits;\nint x = limits.field;"}) {
+        const Outcome r = body(std::string(use) + "\nint n = Limits::kMax;\n");
+        EXPECT_TRUE(r.result.enums.empty()) << use;
+        EXPECT_EQ(class_names(r), std::vector<std::string>{"Limits"}) << use;
+    }
+}
+
+TEST(ClassifyEnums, AnythingNotCapitalisedIsANamespaceNotAnEnum) {
+    const Outcome r = body("Paint paint;\npaint.set(acme::kMax);\nint n = paint.limit(config::kDepth);\n");
+    EXPECT_TRUE(r.result.enums.empty());
+}
+
+TEST(ClassifyEnums, TheLibrariesAndTheFileAreNotEnumsToGenerate) {
+    const Outcome r = body("Paint paint;\nEXPECT_EQ(s.find('x'), std::string::npos);\npaint.align(Qt::AlignLeft);\npaint.mode(QString::SkipEmptyParts);\n"
+                           "paint.hint(testing::kMax);\npaint.local(Helper::Big);\n",
+                           "struct Helper { enum { Big }; };\n");
+    EXPECT_TRUE(r.result.enums.empty());
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Paint"});
+}
+
+TEST(ClassifyEnums, AnEnumTheFileDeclaresIsNotGeneratedButTypesItsEnumerators) {
+    const Outcome r = body("Paint paint;\npaint.set(Color::Red);\n", "enum class Color { Red, Blue };\n");
+    EXPECT_TRUE(r.result.enums.empty());
+    EXPECT_EQ(r.result.facts.method_calls[0].args[0].type->spelling, "Color");
+}
+
+TEST(ClassifyEnums, AnEnumOfAHeaderIsNotGeneratedEither) {
+    frontend::ClassifyOptions options;
+    options.known.push_back(header("namespace acme { enum class Color { Red, Blue }; }"));
+    const Outcome r = body("Paint paint;\npaint.set(acme::Color::Red);\npaint.set(Color::Blue);\n", "", options);
+    EXPECT_TRUE(r.result.enums.empty());
+    EXPECT_EQ(r.result.facts.method_calls[0].args[0].type->spelling, "acme::Color");
+    EXPECT_EQ(r.result.facts.method_calls[1].args[0].type->spelling, "Color");
+}
+
+TEST(ClassifyEnums, ATypeNestedInAClassOfTheTestIsNotAnEnumToGenerate) {
+    const Outcome r = body("Panel panel;\npanel.set(Panel::Mode::Fast);\n");
+    EXPECT_TRUE(r.result.enums.empty()) << "nested types are not generated";
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Panel"});
+}
+
+TEST(ClassifyEnums, TwoEnumsAreTwoTargetsInOrderOfFirstUse) {
+    const Outcome r = body("Paint paint;\npaint.set(Mode::Fast);\npaint.set(Color::Red);\npaint.set(Mode::Slow);\n");
+    EXPECT_EQ(enum_names(r), (std::vector<std::string>{"Mode", "Color"}));
+    EXPECT_EQ(the_enum(r, "Mode").enumerators, (std::vector<std::string>{"Fast", "Slow"}));
+}
+
+TEST(ClassifyEnums, TheSameNameInTwoNamespacesIsTwoEnums) {
+    const Outcome r = body("Paint paint;\npaint.set(a::Color::Red);\npaint.set(b::Color::Red);\n");
+    EXPECT_EQ(enum_names(r), (std::vector<std::string>{"a::Color", "b::Color"}));
+}
+
+TEST(ClassifyEnums, AGeneratedEnumIsNeverAlsoAClassOfTheSameName) {
+    // Something that treats Color like a class would have made one; the enum came first.
+    const Outcome r = body("Color c = Color::Red;\nPaint paint;\nEXPECT_EQ(paint.color(), c);\n");
+    for (const std::string& name : class_names(r)) EXPECT_NE(name, "Color");
+}
+
 }  // namespace

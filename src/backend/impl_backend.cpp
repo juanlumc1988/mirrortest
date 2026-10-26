@@ -77,6 +77,7 @@ struct Unit {
     std::string                      header;     // as included
     std::vector<const ir::Class*>    classes;
     std::vector<const ir::Function*> functions;
+    std::vector<const ir::Enum*>     enums;
 };
 
 // Everything that shares a namespace in one header, in the order they are written.
@@ -84,6 +85,7 @@ struct Section {
     std::vector<std::string>         ns;
     std::vector<const ir::Class*>    classes;
     std::vector<const ir::Function*> functions;
+    std::vector<const ir::Enum*>     enums;
 };
 
 bool ends_with(const std::string& s, const std::string& suffix) {
@@ -94,6 +96,11 @@ bool ends_with(const std::string& s, const std::string& suffix) {
 // refer to this class? A suffix has to begin at a `::`, so `Item` is not `SubItem`.
 bool written_as(const std::string& mention, const ir::Class& c) {
     const std::string full = ir::qualified_name(c.ns, c.name);
+    return mention == full || ends_with(full, "::" + mention);
+}
+
+bool written_as(const std::string& mention, const ir::Enum& e) {
+    const std::string full = ir::qualified_name(e.ns, e.name);
     return mention == full || ends_with(full, "::" + mention);
 }
 
@@ -114,6 +121,10 @@ public:
         for (const ir::Function& f : model.functions) {
             Unit& u = unit_for(choose(f.name, f.header, f.where, ir::qualified_name(f.ns, f.name)));
             u.functions.push_back(&f);
+        }
+        for (const ir::Enum& e : model.enums) {
+            Unit& u = unit_for(choose(e.name, e.header, e.where, ir::qualified_name(e.ns, e.name)));
+            u.enums.push_back(&e);
         }
     }
 
@@ -265,6 +276,7 @@ private:
     struct Declaration {
         std::string       header;
         const ir::Class*  generated = nullptr;   // set when the header is one of ours
+        bool              is_enum = false;       // an enum of ours: nothing stands in for its definition
     };
 
     static json member(const std::vector<std::string>& notes, const std::string& line) {
@@ -286,6 +298,8 @@ private:
             sections.back().ns = ns;
             return sections.back();
         };
+        // The enums first: a class that takes one by value needs it declared above it, also from another namespace.
+        for (const ir::Enum* e : unit.enums) section(e->ns).enums.push_back(e);
         for (const ir::Class* c : unit.classes) section(c->ns).classes.push_back(c);
         for (const ir::Function* f : unit.functions) section(f->ns).functions.push_back(f);
         return sections;
@@ -302,7 +316,7 @@ private:
         const Declaration d = declaration_of(name);
         if (d.header.empty() || d.header == unit.header) return;
         needs.local.insert(d.header);
-        if (by_value) needs.complete.insert(d.header);
+        if (by_value || d.is_enum) needs.complete.insert(d.header);
         if (d.generated != nullptr) {
             std::vector<const ir::Class*>& classes = needs.named[d.header];
             if (std::find(classes.begin(), classes.end(), d.generated) == classes.end()) classes.push_back(d.generated);
@@ -335,15 +349,18 @@ private:
     // generated, else a class or enum of a header that exists.
     Declaration declaration_of(const std::string& mention) const {
         for (const Unit& u : assignment_.units()) {
-            if (const ir::Class* c = find_class(u.classes, mention)) return {u.header, c};
+            if (const ir::Class* c = find_class(u.classes, mention)) return {u.header, c, false};
+            for (const ir::Enum* e : u.enums) {
+                if (written_as(mention, *e)) return {u.header, nullptr, true};
+            }
         }
         for (const ir::Model& k : options_.known) {
             for (const ir::Class& c : k.classes) {
-                if (written_as(mention, c) && !c.header.empty()) return {c.header, nullptr};
+                if (written_as(mention, c) && !c.header.empty()) return {c.header, nullptr, false};
             }
             for (const ir::Enum& e : k.enums) {
                 const std::string full = ir::qualified_name(e.ns, e.name);
-                if ((mention == e.name || mention == full) && !e.header.empty()) return {e.header, nullptr};
+                if ((mention == e.name || mention == full) && !e.header.empty()) return {e.header, nullptr, false};
             }
         }
         return {};
@@ -368,6 +385,26 @@ private:
         block["kind"] = "class";
         block["head"] = std::string(c.is_struct ? "struct " : "class ") + c.name + " {";
         block["access"] = c.is_struct ? "" : "public:";
+        block["begin"] = core::region_begin(label);
+        block["end"] = core::region_end(label);
+        block["members"] = members;
+        block["tail"] = "};";
+        return block;
+    }
+
+    // `enum class Color { Red, Blue };`, one enumerator a line in a region of its own, so that a
+    // run that finds one more in the tests can add it.
+    static json enum_block(const ir::Enum& e) {
+        json members = json::array();
+        for (std::size_t i = 0; i < e.enumerators.size(); ++i) {
+            const std::vector<std::string> none;
+            members.push_back(member(i < e.enumerator_notes.size() ? e.enumerator_notes[i] : none, e.enumerators[i] + ","));
+        }
+        const std::string label = core::class_label(e.ns, e.name);
+        json block;
+        block["kind"] = "class";   // the same shape: a head, a region of lines, a tail
+        block["head"] = std::string(e.is_scoped ? "enum class " : "enum ") + e.name + " {";
+        block["access"] = "";
         block["begin"] = core::region_begin(label);
         block["end"] = core::region_end(label);
         block["members"] = members;
@@ -504,6 +541,11 @@ private:
             const std::vector<const ir::Class*> ordered = by_dependency(s.classes);
             json blocks = json::array();
             json src_blocks = json::array();
+
+            for (const ir::Enum* e : s.enums) {
+                claim(labels, core::class_label(e->ns, e->name), e->where);
+                blocks.push_back(enum_block(*e));
+            }
 
             const json forward = forward_block(ordered);
             if (!forward["lines"].empty()) blocks.push_back(forward);

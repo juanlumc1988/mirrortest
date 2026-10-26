@@ -1191,4 +1191,169 @@ TEST(ImplBackendEndToEnd, NothingToGenerateIsAnEmptyPlan) {
     EXPECT_TRUE(r.plan.files.empty());
 }
 
+// ---- enums ------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+ir::Enum enumeration(const char* name, std::vector<std::string> enumerators, std::vector<std::string> ns = {}) {
+    ir::Enum e;
+    e.name = name;
+    e.ns = std::move(ns);
+    e.is_scoped = true;
+    e.enumerators = std::move(enumerators);
+    return e;
+}
+
+// The text of every block of a header view that is not a class, in order of appearance: "kind:head".
+Strings block_heads(const nlohmann::json& header_view) {
+    Strings out;
+    for (const auto& section : header_view["sections"]) {
+        for (const auto& block : section["blocks"]) {
+            out.push_back(block["kind"].get<std::string>() + ":" + (block.contains("head") ? block["head"].get<std::string>() : std::string()));
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(ImplBackendEnums, AnEnumIsABlockOfLinesInARegionOfItsOwn) {
+    ir::Model model;
+    model.enums = {enumeration("Color", {"Red", "Blue"})};
+    const Generated g = build(model, with_headers({"color.h"}));
+    ASSERT_EQ(g.views.size(), 1u);
+    const nlohmann::json& block = g.views[0].header_view["sections"][0]["blocks"][0];
+    EXPECT_EQ(block["head"], "enum class Color {");
+    EXPECT_EQ(block["access"], "");
+    EXPECT_EQ(block["begin"], "// <mt:begin Color>");
+    EXPECT_EQ(block["end"], "// <mt:end Color>");
+    EXPECT_EQ(block["tail"], "};");
+    EXPECT_EQ(member_lines(g.views[0].header_view, "enum class Color {"), (Strings{"Red,", "Blue,"}));
+}
+
+TEST(ImplBackendEnums, TheNotesOfAnEnumeratorBecomeTodoCommentsAboveIt) {
+    ir::Model model;
+    ir::Enum e = enumeration("Color", {"Red", "Blue"});
+    e.enumerator_notes = {{"first", "second"}, {}};
+    model.enums = {e};
+    const Generated g = build(model, with_headers({"color.h"}));
+    const nlohmann::json& members = g.views[0].header_view["sections"][0]["blocks"][0]["members"];
+    ASSERT_EQ(members.size(), 2u);
+    EXPECT_EQ(members[0]["notes"], (nlohmann::json{"// TODO(mt): first", "// TODO(mt): second"}));
+    EXPECT_TRUE(members[1]["notes"].empty());
+}
+
+TEST(ImplBackendEnums, AnEnumAndAClassFollowTheSameRulesForTheirHeader) {
+    ir::Model model;
+    model.classes = {klass("Paint")};
+    model.enums = {enumeration("Color", {"Red"}), enumeration("Mode", {"Fast"})};
+    const Generated g = build(model, with_headers({"paint.h", "color.h"}));
+    EXPECT_EQ(header_paths(g), (Strings{"paint.h", "color.h"}));
+    EXPECT_EQ(block_heads(view_of(g, "color.h")->header_view), Strings{"class:enum class Color {"});
+    EXPECT_EQ(block_heads(view_of(g, "paint.h")->header_view), (Strings{"class:enum class Mode {", "class:class Paint {"}))
+        << "no header of its own: the first one the test asks for, with the enum before the class that may use it";
+}
+
+TEST(ImplBackendEnums, AnEnumWithoutAHeaderGetsOneOfItsOwnAndAWarning) {
+    ir::Model model;
+    model.enums = {enumeration("Color", {"Red"})};
+    const Generated g = build(model);
+    EXPECT_EQ(header_paths(g), Strings{"color.h"});
+    EXPECT_EQ(codes(g), Strings{"mt-no-include"});
+}
+
+TEST(ImplBackendEnums, AnAnnotationNamesTheHeaderOfAnEnumToo) {
+    ir::Model model;
+    ir::Enum e = enumeration("Color", {"Red"});
+    e.header = "acme/colour.h";
+    model.enums = {e};
+    const Generated g = build(model, with_headers({"color.h"}));
+    EXPECT_EQ(header_paths(g), (Strings{"color.h", "acme/colour.h"}));
+}
+
+TEST(ImplBackendEnums, ThereIsNoSourceForAHeaderOfEnums) {
+    ir::Model model;
+    model.enums = {enumeration("Color", {"Red"})};
+    const Generated g = build(model, with_headers({"color.h"}));
+    EXPECT_TRUE(g.views[0].source_path.empty());
+}
+
+TEST(ImplBackendEnums, TheNamespaceOfTheEnumOpensItsSection) {
+    ir::Model model;
+    model.enums = {enumeration("Color", {"Red"}, {"acme", "paint"})};
+    const Generated g = build(model, with_headers({"color.h"}));
+    const auto& section = g.views[0].header_view["sections"][0];
+    EXPECT_EQ(section["open"], (nlohmann::json{"namespace acme {", "namespace paint {"}));
+}
+
+TEST(ImplBackendEnums, TheSectionOfAnEnumComesBeforeThatOfAClassOfAnotherNamespace) {
+    ir::Model model;
+    model.classes = {klass("Paint", {"one"})};
+    model.enums = {enumeration("Color", {"Red"}, {"two"})};
+    const Generated g = build(model, with_headers({"all.h"}));
+    const auto& sections = g.views[0].header_view["sections"];
+    ASSERT_EQ(sections.size(), 2u);
+    EXPECT_EQ(sections[0]["open"][0], "namespace two {");
+    EXPECT_EQ(sections[1]["open"][0], "namespace one {");
+}
+
+TEST(ImplBackendEnums, AClassOfAnotherHeaderThatNamesTheEnumIncludesItsHeader) {
+    ir::Model model;
+    ir::Class paint = klass("Paint", {}, {method("get", "Color")});
+    paint.methods.push_back(method("set", "void", {param("Color", "c")}));
+    model.classes = {paint};
+    model.enums = {enumeration("Color", {"Red"})};
+    const Generated g = build(model, with_headers({"paint.h", "color.h"}));
+    EXPECT_EQ(includes_of(view_of(g, "paint.h")->header_view), Strings{"#include \"color.h\""});
+    EXPECT_TRUE(includes_of(view_of(g, "color.h")->header_view).empty());
+}
+
+TEST(ImplBackendEnums, TheEnumIsFoundByAnyQualificationTheTestUsed) {
+    ir::Model model;
+    ir::Class paint = klass("Paint", {"acme"}, {method("get", "paint::Color")});
+    model.classes = {paint};
+    model.enums = {enumeration("Color", {"Red"}, {"acme", "paint"})};
+    const Generated g = build(model, with_headers({"paint.h", "color.h"}));
+    EXPECT_EQ(includes_of(view_of(g, "paint.h")->header_view), Strings{"#include \"color.h\""});
+}
+
+TEST(ImplBackendEnums, NoForwardDeclarationStandsInForAnEnumInACycle) {
+    // a.h's class takes the enum of b.h by value-ish need (an include, never a forward declaration);
+    // b.h's class holds a pointer to a.h's class, which can be declared instead: the cycle breaks at b.h.
+    ir::Model model;
+    model.classes = {klass("A", {}, {method("take", "void", {param("Color", "c")})}), klass("B", {}, {method("peer", "A*")})};
+    model.enums = {enumeration("Color", {"Red"})};
+    model.classes[0].header = "a.h";
+    model.classes[1].header = "b.h";
+    model.enums[0].header = "b.h";
+    const Generated g = build(model, with_headers({"a.h", "b.h"}));
+    EXPECT_EQ(includes_of(view_of(g, "a.h")->header_view), Strings{"#include \"b.h\""});
+    EXPECT_TRUE(includes_of(view_of(g, "b.h")->header_view).empty());
+    EXPECT_TRUE(codes(g).empty()) << "a cycle that a forward declaration of the class breaks is no warning";
+}
+
+TEST(ImplBackendEnums, TwoRegionsOfOneLabelAreReported) {
+    ir::Model model;
+    model.classes = {klass("Color")};
+    model.enums = {enumeration("Color", {"Red"})};
+    const Generated g = build(model, with_headers({"color.h"}));
+    EXPECT_EQ(codes(g), Strings{"mt-unsupported"});
+}
+
+TEST(ImplBackendEnums, ATestWithAnEnumIsGeneratedEndToEnd) {
+    const FromTest r = from_test("#include <gtest/gtest.h>\nTEST(S, N) { Paint paint; paint.set(Color::Red); EXPECT_EQ(paint.color(), Color::Blue); }\n", {"paint.h"});
+    ASSERT_EQ(r.plan.files.size(), 2u);
+    std::string header;
+    for (const core::OutputFile& f : r.plan.files) {
+        if (f.path.find("paint.h") != std::string::npos) header = f.content;
+    }
+    const std::size_t enum_at = header.find("enum class Color {");
+    const std::size_t class_at = header.find("class Paint {");
+    ASSERT_NE(enum_at, std::string::npos);
+    ASSERT_NE(class_at, std::string::npos);
+    EXPECT_LT(enum_at, class_at);
+    EXPECT_NE(header.find("    Red,\n    // TODO(mt): enumerator 'Blue'"), std::string::npos);
+    EXPECT_NE(header.find("    void set(Color arg1);"), std::string::npos);
+}
+
 }  // namespace

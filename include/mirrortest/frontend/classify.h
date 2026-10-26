@@ -85,15 +85,30 @@ struct FunctionTarget {
     std::string qualified() const;
 };
 
+// An enum the tests need and nobody provides: `Color::Red` where Color is not a namespace, not a
+// class the tests build or call, and declared nowhere. Which of those it is the syntax does not
+// say (a `Limits::kMax` looks the same), so the guess is written down in the generated enum.
+struct EnumTarget {
+    std::vector<std::string>   ns;
+    std::string                name;
+    std::vector<std::string>   enumerators;   // once each, in the order they are first used
+    std::vector<ir::SourceLoc> uses;          // where each enumerator is first used, in the same order
+    ir::SourceLoc              first_use;
+    std::string                header;        // `// @mt: class Color header "acme/color.h"`, or empty
+
+    std::string qualified() const;            // "acme::Color"
+};
+
 struct Classified {
     // The facts as read, plus what classification found out: constructions
     // added for functional casts, method calls for pending calls whose receiver
     // turned out to be a class. `Unresolved::resolved` marks the latter.
     TestFileFacts facts;
 
-    // Both in order of first use in the source.
+    // All in order of first use in the source.
     std::vector<ClassTarget>    classes;
     std::vector<FunctionTarget> functions;
+    std::vector<EnumTarget>     enums;
 
     // The type each functional cast constructs, by index into facts.free_calls:
     // a class to generate (qualified, as it will be declared) or somebody else's

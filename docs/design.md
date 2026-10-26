@@ -423,6 +423,7 @@ it does **not** decide:
 | `Construction` | type, `Form`, `args` | `Default`, `Direct`, `Brace`, `Copy` (`Foo f = 5;`), `Functional` (`Foo g = Foo(3);`), `New`, `MakeUnique` (also `make_shared`) |
 | `TypeUse` | type, `from_throw_assertion` | types of declarations, parameters, return values, `new`, *casts*, `catch` and `EXPECT_THROW(…, E)` |
 | `Unresolved` | `ChainedCall`, text, `where`, `root`, `call`, `resolved` | see §7.3: `call` is the call made on the unknown result (everything but the receiver) and `root` the call it hangs from |
+| `Enumerator` | `scope` (`Color`, `acme::Color`), name, `where`, `ns` | `Color::Red` as a value, neither called nor a type: an enumerator if `Color` is an enum, which is as likely not to be (a static member `Limits::kMax`, a constant `acme::kMax`); decided by §7.7. `Box<int>::value` and `::kMax` are not recorded |
 | `TestCaseInfo` | `TEST`/`TEST_F`/`TEST_P`, suite, name, `ns` | |
 
 `ValueInfo` (an argument of a call or construction): `text`, `where`, `type`
@@ -431,7 +432,11 @@ it does **not** decide:
 `is_string_literal` (its type is decided by the context), `is_null_pointer`,
 `is_lvalue`, `is_moved`, `is_address_of` (and then `type` is the pointer's:
 `&n` is `int*`), `var_name`, `from` (the call or field of the API it comes
-from) and `auto_origin` (§7.3).
+from), `auto_origin` (§7.3) and `enumerator` (an index into `TestFileFacts::enumerators`
+when the expression is `Color::Red`; its `type` is absent until classification, which
+knows whether `Color` is an enum, gives it the enum's). `ResultUse::hint_enumerator` is
+the same for a hint: `EXPECT_EQ(paint.color(), Color::Red)` hints that `color()` returns
+`Color`, if that is a type.
 
 `TestFileFacts` also keeps what the file itself declares: `local` (classes,
 enums and functions; fixtures are never generated), `includes`,
@@ -614,6 +619,8 @@ else are in `frontend/known_names.h`). A `TestFileFacts` goes in and a
 facts that mention it— in order of first use in the source, and diagnostics.
 Steps, in this order:
 
+0. enums from `Color::Red` (below), before the classes, because a name found to be
+   an enum is not also a class;
 1. classes from types, constructions and receivers;
 2. `X::m()` calls (R13);
 3. unqualified calls (§7.8);
@@ -725,6 +732,25 @@ with the use it already had; if the root is a *cast* to a foreign type there is
 nothing left to resolve; with any other root (`foo.make().run()`) they stay
 unresolved and the inference applies the policy of §7.9 to them.
 
+**Enums** (plan 7.4b): `Color::Red` as a value (`Enumerator` facts) names an enum when
+the file or a header declares one (then it is not generated, but the value and the
+side it is compared with get its type), and an enum **to generate** when nothing else
+`Color` could be explains it. It is not generated when it is external (`std::`,
+`testing::`, `Qt::` and the rest of §7.7's list, a class of the file or a header,
+configuration), when its name does not begin with a capital (`acme::kMax`: a namespace;
+the same guess as for `Foo::create()`), when it is used as a class (a method called on
+it or a field read, a static call `Color::parse()`, a construction with arguments
+that are not one of its own enumerators, `new Color`; the comparison operators that
+a test's `==` produces do not count), or when its qualifier is a class of the test
+(`Panel::Mode::Fast`: nested types are not generated). A declaration `Color c;`, a
+parameter or a copy of an enumerator are what an enum has too: no evidence either way.
+The enumerators are listed once each in order of first use. The namespace is the one in
+the name (`acme::Color::Red`) or, as for a class, where the test is. A generated
+enum is `known` to the classes pass, so no class `Color` is made of its type uses or
+the comparisons of its values; the types of the facts that mention it
+(`ValueInfo::type`, `ResultUse::hint`) are filled in at this point, with
+`Origin::Inferred` and the reason `enumerator Color::Red`.
+
 **Exception types** (`EXPECT_THROW(stmt, E)`): `E` is not a candidate on its own,
 because generating an exception class requires a base that the test does not
 state. It must be external (`std::runtime_error`), come from a header, or be a
@@ -826,6 +852,11 @@ diagnostics)`, a pure function). Details settled while implementing it:
   arity. `ignore`d calls contribute nothing. `Operator` for names starting with
   `operator`. A non-const method with no parameters whose result is compared gets
   the note "consider making this const" unless `const` was stated.
+- **Enums** (plan 7.4b): an `EnumTarget` becomes an `ir::Enum`: `enum class`, no
+  underlying type, one enumerator per name, and for each its notes in
+  `enumerator_notes` (the first also says why the name is taken for an enum). The
+  name is a type that is by value (like any enum of the file or a header): `void set(Color
+  arg1)`, not `const Color&`.
 - **Operators** (plan 7.4): a comparison `a == b`, `!=`, `<`, `<=`, `>`, `>=` and an
   assertion that is one (`EXPECT_EQ`/`NE`/`LT`/`LE`/`GT`/`GE`, `ASSERT_*`,
   `QCOMPARE`, `QTRY_COMPARE`, `QCOMPARE_NE` …) is a `MethodCall` fact named
@@ -1094,6 +1125,11 @@ and an empty `sensor.h`.
   first header to generate in source order; if there is none → `naming.header`
   (by default `{stem}.h` with `stem = snake_case(name)`) + an `mt-no-include`
   warning for each.
+- **An enum is assigned like a class** (an annotation `// @mt: class Color header "x.h"`, the
+  header whose name matches, the first one the test asks for, a file of its own). It is
+  declared before the classes of its header, and its namespace's section before theirs, so
+  that a class that takes it by value has it already. A header that uses it includes the
+  header that holds it, whatever the use: no forward declaration stands in for an enum.
 - **Every header the test asks for is generated**, even one nothing was assigned
   to (it holds only the guard and the `includes` region): the test includes it,
   so it has to exist for the test to compile.
@@ -1170,6 +1206,10 @@ public:
   be forward declared: if that is what keeps a cycle alive, `mt-unsupported`
   warning naming the headers (put the classes in one header). Includes of
   existing headers are never replaced.
+- An enum (plan 7.4b) is `enum class Color {`, a region labelled by its qualified name
+  (`Color`, `acme::Color`) with one enumerator a line (`Red,`, the trailing comma is
+  C++11), each below its notes, and `};`. It has no definitions: a header of enums
+  has no source.
 - Free functions: a `// <mt:begin functions>` region in the namespace; in a
   named namespace the label is `<ns>::functions`, so that two namespaces' regions
   in one header are told apart. A global class called `functions` or `includes`
@@ -1764,6 +1804,9 @@ Two different notions, so as not to confuse them:
    code) and the `.cpp` defines none; it is inserted with a blank line before it,
    unless the region is empty. A definition whose declaration the user's header
    does not have is not added: it would not compile.
+   An enum's members are its enumerators, matched by name (what follows `=` in the user's
+   is theirs): the ones the run needs and the enum lacks are inserted with their notes
+   before the end marker.
 4. An existing member with types different from the inferred ones →
    `mt-merge-mismatch` warning, left untouched.
 5. Missing includes (compared as `<x>` / `"x"`, whatever the spacing, and anywhere

@@ -1216,4 +1216,93 @@ TEST(InferenceOperators, AClassOfOperatorsOnlyIsNotAStruct) {
     EXPECT_FALSE(the_class(o, "Point").is_struct);
 }
 
+// ---- enums: Color::Red --------------------------------------------------------------------------------------------------------
+
+namespace {
+
+const ir::Enum* find_enum(const Outcome& o, const char* name) {
+    for (const ir::Enum& e : o.model.enums) {
+        if (e.name == name) return &e;
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+TEST(InferenceEnums, AnEnumHasTheEnumeratorsTheTestUsesAndIsScoped) {
+    const Outcome o = body("Paint paint;\npaint.set(Color::Red);\npaint.set(Color::Blue);\n");
+    const ir::Enum* color = find_enum(o, "Color");
+    ASSERT_NE(color, nullptr);
+    EXPECT_TRUE(color->is_scoped);
+    EXPECT_EQ(color->enumerators, (std::vector<std::string>{"Red", "Blue"}));
+    EXPECT_FALSE(color->underlying.has_value());
+    EXPECT_EQ(color->where.line, 4u);
+}
+
+TEST(InferenceEnums, EveryEnumeratorSaysWhereItCameFromAndTheFirstWhyTheNameIsAnEnum) {
+    const Outcome o = body("Paint paint;\npaint.set(Color::Red);\npaint.set(Color::Blue);\n");
+    const ir::Enum* color = find_enum(o, "Color");
+    ASSERT_NE(color, nullptr);
+    ASSERT_EQ(color->enumerator_notes.size(), 2u);
+    ASSERT_EQ(color->enumerator_notes[0].size(), 2u);
+    EXPECT_EQ(color->enumerator_notes[0][0], "'Color' is taken for an enum because the test uses 'Color::Red' and nothing says what else it could be");
+    EXPECT_EQ(color->enumerator_notes[0][1], "enumerator 'Red' inferred from Color::Red (t.cpp:4)");
+    ASSERT_EQ(color->enumerator_notes[1].size(), 1u);
+    EXPECT_EQ(color->enumerator_notes[1][0], "enumerator 'Blue' inferred from Color::Blue (t.cpp:5)");
+}
+
+TEST(InferenceEnums, AMethodTakesAndReturnsTheEnumByValue) {
+    const Outcome o = body("Paint paint;\npaint.set(Color::Red);\nEXPECT_EQ(paint.color(), Color::Blue);\n");
+    EXPECT_EQ(param_types(method(o, "Paint", "set", 1)), std::vector<std::string>{"Color"}) << "an enum is cheap to copy: no const&";
+    EXPECT_EQ(method(o, "Paint", "color").ret.spelling, "Color");
+    EXPECT_EQ(method(o, "Paint", "color").ret.origin, ir::Origin::Inferred);
+}
+
+TEST(InferenceEnums, AnEnumOfANamespaceKeepsItAndTheClassAroundIt) {
+    const Outcome o = body("acme::Paint paint;\npaint.set(acme::Color::Red);\n");
+    const ir::Enum* color = find_enum(o, "Color");
+    ASSERT_NE(color, nullptr);
+    EXPECT_EQ(color->ns, std::vector<std::string>{"acme"});
+    EXPECT_EQ(param_types(method(o, "Paint", "set", 1)), std::vector<std::string>{"acme::Color"});
+}
+
+TEST(InferenceEnums, AVariableHoldingAnEnumeratorTypesTheArgumentToo) {
+    const Outcome o = body("Color c = Color::Red;\nPaint paint;\npaint.set(c);\n");
+    EXPECT_EQ(param_types(method(o, "Paint", "set", 1)), std::vector<std::string>{"Color"});
+    EXPECT_NE(find_enum(o, "Color"), nullptr);
+}
+
+TEST(InferenceEnums, ADeclaredEnumIsNotGeneratedAgain) {
+    const Outcome o = infer_text("enum class Color { Red, Blue };\nTEST(S, N) { Paint paint; paint.set(Color::Red); }\n");
+    EXPECT_TRUE(o.model.enums.empty());
+    EXPECT_EQ(param_types(method(o, "Paint", "set", 1)), std::vector<std::string>{"Color"});
+}
+
+TEST(InferenceEnums, WhatIsNotAnEnumStillNeedsAnAnnotation) {
+    const Outcome o = body("Paint paint;\npaint.set(acme::kMax);\n");
+    EXPECT_TRUE(o.model.enums.empty());
+    bool unknown = false;
+    for (const core::Diagnostic& d : o.diagnostics.sorted()) unknown = unknown || d.code == core::code::unknown_param;
+    EXPECT_TRUE(unknown);
+}
+
+TEST(InferenceEnums, EveryPrefixOfATestWithEnumsIsInferredWithoutIncident) {
+    const std::string text =
+        "enum class Mode { Slow };\n"
+        "TEST(S, N) {\n"
+        "    Paint paint;\n"
+        "    paint.set(Color::Red);\n"
+        "    EXPECT_EQ(paint.color(), Color::Blue);\n"
+        "    Color c = Color::Green;\n"
+        "    Color d(Color::Red);\n"
+        "    paint.mode(Mode::Slow);\n"
+        "    switch (paint.color()) { case Color::Red: break; default: break; }\n"
+        "}\n";
+    for (std::size_t n = 0; n <= text.size(); ++n) {
+        const Outcome o = infer_text(text.substr(0, n));
+        EXPECT_LE(o.model.enums.size(), 1u) << "cut at " << n;
+    }
+    EXPECT_EQ(infer_text(text).model.enums.size(), 1u);
+}
+
 }  // namespace

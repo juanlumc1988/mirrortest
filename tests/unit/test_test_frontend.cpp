@@ -1900,3 +1900,90 @@ TEST(TestFrontendOperators, TheCallOfAFunctorStillIsOperatorCall) {
     const Read r = body("Adder add;\nint n = add(1, 2);\n(void)n;\n");
     EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Adder::operator()"}));
 }
+
+// ---- Color::Red as a value ----------------------------------------------------------------------------------------------------
+
+namespace {
+
+std::vector<std::string> enumerators_of(const Read& r) {
+    std::vector<std::string> out;
+    for (const frontend::Enumerator& e : r.facts.enumerators) out.push_back(e.scope.qualified() + "::" + e.name);
+    return out;
+}
+
+}  // namespace
+
+TEST(TestFrontendEnumerators, AQualifiedNameAsAValueIsAnEnumeratorFact) {
+    const Read r = body("Paint paint;\npaint.set(Color::Red);\n");
+    ASSERT_EQ(r.facts.enumerators.size(), 1u);
+    EXPECT_EQ(r.facts.enumerators[0].scope.name, "Color");
+    EXPECT_TRUE(r.facts.enumerators[0].scope.scope.empty());
+    EXPECT_EQ(r.facts.enumerators[0].name, "Red");
+    EXPECT_EQ(r.facts.enumerators[0].where.line, 5u);
+    ASSERT_EQ(method(r).args.size(), 1u);
+    ASSERT_TRUE(arg(method(r).args, 0).enumerator.has_value());
+    EXPECT_EQ(*arg(method(r).args, 0).enumerator, 0u);
+    EXPECT_FALSE(arg(method(r).args, 0).type.has_value()) << "whether Color is an enum is for classification to say";
+}
+
+TEST(TestFrontendEnumerators, TheNamespaceBeforeTheEnumIsItsScope) {
+    const Read r = body("Paint paint;\npaint.set(acme::paint::Color::Red);\npaint.set(::Color::Blue);\n");
+    EXPECT_EQ(enumerators_of(r), (std::vector<std::string>{"acme::paint::Color::Red", "Color::Blue"}));
+    EXPECT_EQ(r.facts.enumerators[0].scope.scope, (std::vector<std::string>{"acme", "paint"}));
+    EXPECT_EQ(r.facts.enumerators[0].scope.name, "Color");
+}
+
+TEST(TestFrontendEnumerators, ACallOrATypeIsNotAnEnumerator) {
+    const Read r = body("Foo foo;\nColor::parse(\"red\");\nfoo.run(Box<int>::value);\nint m = ::kMax;\nstd::size_t k = Color::count();\n");
+    EXPECT_TRUE(r.facts.enumerators.empty());
+}
+
+TEST(TestFrontendEnumerators, TheValuesOfALibraryAreRecordedForClassificationToIgnore) {
+    const Read r = body("EXPECT_EQ(s.find('x'), std::string::npos);\nsetAlignment(Qt::AlignLeft);\n");
+    EXPECT_EQ(enumerators_of(r), (std::vector<std::string>{"std::string::npos", "Qt::AlignLeft"}));
+}
+
+TEST(TestFrontendEnumerators, ComparedWithAnEnumeratorTheResultIsOfTheEnumsTypeIfItIs) {
+    const Read r = body("Paint paint;\nEXPECT_EQ(paint.color(), Color::Red);\nEXPECT_EQ(Color::Blue, paint.other());\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    for (std::size_t i = 0; i < 2; ++i) {
+        EXPECT_EQ(method(r, i).use.kind, UseKind::Compared) << i;
+        EXPECT_FALSE(method(r, i).use.hint.has_value()) << i;
+        EXPECT_TRUE(method(r, i).use.hint_enumerator.has_value()) << i;
+    }
+    EXPECT_EQ(*method(r, 0).use.hint_enumerator, 0u);
+    EXPECT_EQ(*method(r, 1).use.hint_enumerator, 1u);
+}
+
+TEST(TestFrontendEnumerators, AVariableBoundByAutoLearnsFromTheEnumeratorItIsComparedWith) {
+    const Read r = body("Paint paint;\nauto c = paint.color();\nEXPECT_EQ(c, Color::Red);\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(method(r).use.kind, UseKind::AutoBound);
+    EXPECT_TRUE(method(r).use.hint_enumerator.has_value());
+}
+
+TEST(TestFrontendEnumerators, ATypedSideWinsOverAnEnumerator) {
+    const Read r = body("Paint paint;\nint n = 3;\nEXPECT_EQ(paint.size(), n);\n");
+    EXPECT_TRUE(method(r).use.hint.has_value());
+    EXPECT_FALSE(method(r).use.hint_enumerator.has_value());
+}
+
+TEST(TestFrontendEnumerators, ASwitchOverAnEnumeratorRecordsIt) {
+    const Read r = body("Paint paint;\nswitch (paint.mode()) {\ncase Mode::Fast: break;\ncase Mode::Slow: break;\n}\n");
+    EXPECT_EQ(enumerators_of(r), (std::vector<std::string>{"Mode::Fast", "Mode::Slow"}));
+}
+
+TEST(TestFrontendEnumerators, ACopyFromAnEnumeratorIsNotAConstruction) {
+    const Read r = body("Color c = Color::Red;\n");
+    EXPECT_EQ(enumerators_of(r), std::vector<std::string>{"Color::Red"});
+    EXPECT_TRUE(r.facts.constructions.empty()) << "it is a Color already, as `Foo f = other;` is a copy";
+}
+
+TEST(TestFrontendEnumerators, AnEnumeratorInParenthesesAfterTheNameIsAnArgumentNotAParameterType) {
+    // `Color e(Color::Blue);` reads as a function declaration: e, taking a Color::Blue.
+    const Read r = body("Color e(Color::Blue);\n");
+    ASSERT_EQ(r.facts.constructions.size(), 1u);
+    ASSERT_EQ(r.facts.constructions[0].args.size(), 1u);
+    EXPECT_TRUE(arg(r.facts.constructions[0].args, 0).enumerator.has_value());
+    EXPECT_EQ(enumerators_of(r), std::vector<std::string>{"Color::Blue"});
+}

@@ -216,6 +216,7 @@ public:
               core::Diagnostics& diagnostics)
         : c_(classified), config_(config), diag_(diagnostics) {
         for (const ir::Enum& e : c_.facts.local.enums) enums_.insert(e.name);
+        for (const EnumTarget& e : c_.enums) enums_.insert(e.name);
         for (const ir::Model& m : known) {
             for (const ir::Enum& e : m.enums) enums_.insert(e.name);
         }
@@ -229,6 +230,7 @@ public:
         ir::Model model;
         for (const ClassPlan& plan : class_plans_) model.classes.push_back(build_class(plan));
         for (const FunctionPlan& plan : function_plans_) build_functions(plan, model);
+        for (const EnumTarget& target : c_.enums) model.enums.push_back(build_enum(target));
         check_standard(model);
         if (results != nullptr) publish(*results);
         return model;
@@ -994,6 +996,30 @@ private:
             field.notes = r.notes;
             cls.fields.push_back(std::move(field));
         }
+    }
+
+    // ---- enums -----------------------------------------------------------------------------------------------------------------------------
+
+    // Scoped, because the test writes `Color::Red`; nothing says what it is based on, so it is `int`.
+    static ir::Enum build_enum(const EnumTarget& target) {
+        ir::Enum e;
+        e.name = target.name;
+        e.ns = target.ns;
+        e.is_scoped = true;
+        e.header = target.header;
+        e.where = target.first_use;
+        e.enumerators = target.enumerators;
+        for (std::size_t i = 0; i < target.enumerators.size(); ++i) {
+            std::vector<std::string> notes;
+            if (i == 0) {
+                notes.push_back("'" + target.name + "' is taken for an enum because the test uses '" + target.name + "::" +
+                                target.enumerators[0] + "' and nothing says what else it could be");
+            }
+            notes.push_back("enumerator '" + target.enumerators[i] + "' inferred from " + target.name + "::" + target.enumerators[i] +
+                            " (" + where_text(target.uses[i]) + ")");
+            e.enumerator_notes.push_back(std::move(notes));
+        }
+        return e;
     }
 
     // ---- free functions -----------------------------------------------------------------------------------------------------------------

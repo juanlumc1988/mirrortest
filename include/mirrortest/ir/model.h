@@ -196,6 +196,9 @@ struct Enum {
     bool                     is_scoped = false;   // enum class / enum struct
     std::optional<std::string> underlying;        // ": std::uint8_t"
     std::vector<std::string> enumerators;
+    // For an enum the tools infer: the TODO(mt) comment lines above each enumerator, the same
+    // number as the enumerators (a vector of the notes of each); empty for one read from a header.
+    std::vector<std::vector<std::string>> enumerator_notes;
     std::string              header;
     SourceLoc                where;
 };

@@ -583,8 +583,12 @@ private:
     // contexts that carry none (an argument, a discarded value) add nothing.
     void refine_auto(const ValueInfo& v, const ResultUse& use) {
         ResultUse* slot = slot_of(v.auto_origin);
-        if (slot == nullptr || slot->kind != Use::AutoBound || slot->hint || !use.hint) return;
+        if (slot == nullptr || slot->kind != Use::AutoBound || slot->hint || slot->hint_enumerator) return;
         if (use.kind != Use::Compared && use.kind != Use::Condition && use.kind != Use::Assigned) return;
+        if (!use.hint) {
+            slot->hint_enumerator = use.hint_enumerator;
+            return;
+        }
         ir::Type hint = *use.hint;
         hint.reason += (hint.reason.empty() ? "" : ", ") + std::string("through variable '") + v.var_name + "'";
         slot->hint = std::move(hint);
@@ -616,8 +620,10 @@ private:
     void compare(const ValueInfo& a, const ValueInfo& b, const std::string& assertion) {
         ResultUse for_a = use_of(Use::Compared, hint_from(b, assertion));
         for_a.hint_warnings = b.warnings;
+        if (!for_a.hint) for_a.hint_enumerator = b.enumerator;   // Color::Red says what the other side is, if Color is an enum
         ResultUse for_b = use_of(Use::Compared, hint_from(a, assertion));
         for_b.hint_warnings = a.warnings;
+        if (!for_b.hint) for_b.hint_enumerator = a.enumerator;
         apply_use(a, for_a);
         apply_use(b, for_b);
     }
@@ -1092,7 +1098,8 @@ private:
         const Node type = p.child_by_field("type");
         const Node declarator = p.child_by_field("declarator");
         if (declarator.is_null()) {
-            return type.type() == "type_identifier" ? identifier_value(type) : value_of(type);
+            if (type.type() == "type_identifier") return identifier_value(type);
+            return type.type() == "qualified_identifier" ? qualified_value(type) : value_of(type);
         }
         std::vector<ValueInfo> args = values_of_parameters(declarator.child_by_field("parameters"));
         return type.type() == "type_identifier" ? free_call_with(p, type, std::move(args))
@@ -1177,6 +1184,7 @@ private:
             return value_of(n);   // EXPECT_CALL(m, f(1)).Times(2): set-up, not code under test
         }
         if (type == "identifier") return identifier_value(n);
+        if (type == "qualified_identifier") return qualified_value(n);
         if (type == "this") {
             ValueInfo v = value_of(n);
             if (owner_ != nullptr) {
@@ -1213,6 +1221,25 @@ private:
         // look inside for calls on the code under test, say nothing of the value.
         ValueInfo v = value_of(n);
         for (const Node& c : n.named_children()) (void)expr(c);
+        return v;
+    }
+
+    // `Color::Red` as a value: an enumerator of Color if that is an enum, which is for classification
+    // to say. A name with template arguments in it is not one.
+    ValueInfo qualified_value(const Node& n) {
+        ValueInfo v = value_of(n);
+        const std::string text(n.text());
+        if (text.find('<') != std::string::npos) return v;
+        const TypeName name = parse_type_name(text);
+        if (name.scope.empty()) return v;   // ::kMax
+        Enumerator e;
+        e.scope.name = name.scope.back();
+        e.scope.scope.assign(name.scope.begin(), name.scope.end() - 1);
+        e.name = name.name;
+        e.where = loc(n);
+        e.ns = ns_;
+        facts_.enumerators.push_back(std::move(e));
+        v.enumerator = facts_.enumerators.size() - 1;
         return v;
     }
 

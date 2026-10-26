@@ -201,6 +201,13 @@ const ir::Class* find_class(const ir::Model& model, const std::string& label) {
     return nullptr;
 }
 
+const ir::Enum* find_enum(const ir::Model& model, const std::string& label) {
+    for (const ir::Enum& e : model.enums) {
+        if (ir::qualified_name(e.ns, e.name) == label) return &e;
+    }
+    return nullptr;
+}
+
 // Which members a region holds: a class's, or a namespace's free functions.
 struct Group {
     bool               is_class = false;
@@ -299,8 +306,37 @@ bool insert(Job& job, const std::string& label, const std::vector<std::string>& 
 
 // ---- headers -------------------------------------------------------------------------------------------------------
 
+// The enumerators of an enum the run wants that the existing one lacks, by name. Their notes go with them.
+void merge_enumerators(Job& job, const std::string& label, const Region& generated_region, const std::vector<std::string>& generated_lines,
+                       const ir::Model& present) {
+    const ir::Enum* have = find_enum(present, label);
+    if (have == nullptr) {
+        refuse(job, label, "is declared by the tests but not by the existing file, though its region is there");
+        return;
+    }
+    std::vector<std::string> to_insert;
+    std::size_t count = 0;
+    for (const Block& block : header_blocks(generated_lines, generated_region)) {
+        std::string name = trimmed(block.lines.back());
+        if (!name.empty() && name.back() == ',') name.pop_back();
+        if (std::find(have->enumerators.begin(), have->enumerators.end(), name) != have->enumerators.end()) continue;
+        for (const std::string& line : block.lines) to_insert.push_back(line);
+        ++count;
+    }
+    if (count == 0) return;
+    if (!insert(job, label, to_insert)) {
+        refuse(job, label, "has no region");
+        return;
+    }
+    job.added += count;
+}
+
 void merge_members(Job& job, const std::string& label, const Region& generated_region, const std::vector<std::string>& generated_lines,
                    const ir::Model& desired, const ir::Model& present) {
+    if (find_enum(desired, label) != nullptr) {
+        merge_enumerators(job, label, generated_region, generated_lines, present);
+        return;
+    }
     const Group wanted = group_in(desired, label, desired);
     const Group have = group_in(present, label, desired);
     if (!have.found) {

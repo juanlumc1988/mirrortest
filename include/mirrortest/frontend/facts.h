@@ -108,6 +108,10 @@ struct ResultUse {
     // The warnings of the literal the hint was taken from (`EXPECT_EQ(f(),
     // 5000000000)`): reported only if the hint ends up being used.
     std::vector<LiteralWarning> hint_warnings;
+
+    // The hint is the type of `Color::Red` (an index into TestFileFacts::enumerators), which is a
+    // type only if Color is an enum: classification (7.7) says so, and then sets `hint`.
+    std::optional<std::size_t> hint_enumerator;
 };
 
 // One argument of a call or construction.
@@ -128,6 +132,11 @@ struct ValueInfo {
     std::string var_name;                   // if the expression is just an identifier
 
     FactRef from;                           // if it is a call or field read of the code under test
+
+    // If the expression is `Color::Red` (an index into TestFileFacts::enumerators): it has the type
+    // of an enum only if Color is one, which the syntax does not say; classification (7.7) does,
+    // and then gives `type` to the value.
+    std::optional<std::size_t> enumerator;
 
     // If the expression is a variable that `auto` bound to such a call
     // (`auto n = foo.count();`, then `n`): that call. What the variable is later
@@ -182,6 +191,16 @@ struct FieldAccess {
     bool        via_arrow = false;
     ResultUse   use;                        // Assigned: `obj.x = 5;` says what x is
     CallAnnotation annotation;
+    ir::SourceLoc where;
+    std::vector<std::string> ns;
+};
+
+// `Color::Red` as a value, neither called nor a type: an enumerator of `Color` if that is an enum.
+// It is as likely a static member of a class (`Limits::kMax`) or a constant of a namespace
+// (`acme::kVersion`); classification (7.7) tells them apart.
+struct Enumerator {
+    TypeName      scope;   // `Color`, `acme::Color`
+    std::string   name;    // `Red`
     ir::SourceLoc where;
     std::vector<std::string> ns;
 };
@@ -267,6 +286,7 @@ struct TestFileFacts {
     std::vector<Construction> constructions;
     std::vector<TypeUse>      type_uses;
     std::vector<Unresolved>   unresolved;
+    std::vector<Enumerator>   enumerators;
 
     Annotations               annotations;       // every `// @mt:` comment of the file (7.11)
 };

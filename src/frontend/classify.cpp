@@ -16,6 +16,7 @@ namespace mt::frontend {
 
 std::string ClassTarget::qualified() const { return ir::qualified_name(ns, name); }
 std::string FunctionTarget::qualified() const { return ir::qualified_name(ns, name); }
+std::string EnumTarget::qualified() const { return ir::qualified_name(ns, name); }
 
 namespace {
 
@@ -84,6 +85,7 @@ public:
 
     Classified run() {
         index_environment();
+        collect_enums();
         collect_classes();
         resolve_scoped_calls();
         resolve_free_calls();
@@ -95,6 +97,7 @@ public:
         const auto by_first_use = [](const auto& a, const auto& b) { return before(a.first_use, b.first_use); };
         std::stable_sort(classes_.begin(), classes_.end(), by_first_use);
         std::stable_sort(functions_.begin(), functions_.end(), by_first_use);
+        std::stable_sort(enums_.begin(), enums_.end(), by_first_use);
 
         Classified out;
         out.overrides = merged_overrides();
@@ -104,6 +107,7 @@ public:
         out.facts = std::move(facts_);
         out.classes = std::move(classes_);
         out.functions = std::move(functions_);
+        out.enums = std::move(enums_);
         apply_call_annotations(out, diag_);
         return out;
     }
@@ -338,6 +342,160 @@ private:
         if (found != kNone) return found;
         if (qualified != explicit_scopes_.end()) return add_class(t.name, qualified->second.front(), where);
         return add_class(t.name, resolve_namespace(t.name, test_ns, where, true), where);
+    }
+
+    // ---- enums from Color::Red ---------------------------------------------------------------------------------
+
+    bool is_declared_enum(const TypeName& t) const {
+        for (const KnownType& k : enum_types_) {
+            if (k.name == t.name && (t.scope.empty() || ends_with(k.ns, t.scope))) return true;
+        }
+        return false;
+    }
+
+    static bool same_type(const TypeName& a, const TypeName& b) {
+        return a.name == b.name && (a.scope.empty() || b.scope.empty() || a.scope == b.scope);
+    }
+
+    // Does the test treat `t` as a class? Calling a method of it or reading a field, constructing
+    // it from anything but one of its own enumerators, `new`, a static method (`Color::parse()`).
+    // A variable declared with the type, or a parameter, is what an enum has too, so it is not evidence.
+    bool used_as_class(const TypeName& t) const {
+        for (const MethodCall& m : facts_.method_calls) {
+            // The comparisons of a Color with another are the built-in ones.
+            if (same_type(m.receiver, t) && !is_comparison_call(m.method)) return true;
+        }
+        for (const FieldAccess& f : facts_.field_accesses) {
+            if (same_type(f.receiver, t)) return true;
+        }
+        for (const ScopedCall& c : facts_.scoped_calls) {
+            Ns path = c.scope;
+            if (!path.empty() && same_type(TypeName{Ns(path.begin(), path.end() - 1), path.back(), ""}, t)) return true;
+        }
+        for (const Construction& c : facts_.constructions) {
+            if (!same_type(c.type, t) || c.form == Construction::Form::Default) continue;
+            const bool copy_of_enumerator = c.args.size() == 1 && c.args[0].enumerator.has_value();
+            if (!copy_of_enumerator) return true;
+        }
+        return false;
+    }
+
+    static bool is_comparison_call(const std::string& method) {
+        return method == "operator==" || method == "operator!=" || method == "operator<" || method == "operator<=" ||
+               method == "operator>" || method == "operator>=";
+    }
+
+    // Is a name written anywhere as a type: a class, whatever else it might also be?
+    bool mentioned_as_type(const std::string& name) const {
+        for (const TypeUse& u : facts_.type_uses) {
+            if (u.type.name == name) return true;
+        }
+        for (const Construction& c : facts_.constructions) {
+            if (c.type.name == name) return true;
+        }
+        for (const MethodCall& m : facts_.method_calls) {
+            if (m.receiver.name == name) return true;
+        }
+        for (const FieldAccess& f : facts_.field_accesses) {
+            if (f.receiver.name == name) return true;
+        }
+        return false;
+    }
+
+    // `Color::Red`, `Color::Blue`: Color is an enum if it is declared as one, and a thing to generate
+    // if nothing else it could be is. A value in a namespace (`acme::kMax`), the static member of a
+    // class (`Limits::kMax`), the nested type of somebody else's class are not enums to generate;
+    // what the syntax cannot tell is guessed by the capital the name begins with, as for `Foo::create()`.
+    void collect_enums() {
+        for (const ir::Enum& e : facts_.local.enums) enum_types_.push_back({e.ns, e.name});
+        for (const ir::Model& m : options_.known) {
+            for (const ir::Enum& e : m.enums) enum_types_.push_back({e.ns, e.name});
+        }
+
+        struct Candidate {
+            TypeName                 scope;
+            std::vector<std::size_t> uses;
+        };
+        std::vector<Candidate> candidates;
+        for (std::size_t i = 0; i < facts_.enumerators.size(); ++i) {
+            const Enumerator& e = facts_.enumerators[i];
+            auto found = std::find_if(candidates.begin(), candidates.end(), [&](const Candidate& c) { return c.scope == e.scope; });
+            if (found == candidates.end()) {
+                candidates.push_back({e.scope, {}});
+                found = candidates.end() - 1;
+            }
+            found->uses.push_back(i);
+        }
+
+        std::set<std::size_t> typed;   // the enumerators whose scope is an enum
+        for (const Candidate& c : candidates) {
+            if (is_declared_enum(c.scope)) {
+                typed.insert(c.uses.begin(), c.uses.end());
+                continue;
+            }
+            // `Qt::AlignLeft` is no more ours than `std::string::npos`.
+            const std::string& first = c.scope.scope.empty() ? c.scope.name : c.scope.scope.front();
+            if (is_foreign_namespace(first) || is_external_type(c.scope) || !starts_upper(c.scope.name) || used_as_class(c.scope)) continue;
+            if (!c.scope.scope.empty() && mentioned_as_type(c.scope.scope.back())) continue;   // Foo::Mode::Fast: nested in a class
+
+            EnumTarget target;
+            target.name = c.scope.name;
+            target.first_use = facts_.enumerators[c.uses.front()].where;
+            for (const std::size_t use : c.uses) {
+                const Enumerator& e = facts_.enumerators[use];
+                if (std::find(target.enumerators.begin(), target.enumerators.end(), e.name) != target.enumerators.end()) continue;
+                target.enumerators.push_back(e.name);
+                target.uses.push_back(e.where);
+            }
+            const auto header = facts_.annotations.class_header.find(target.name);
+            if (header != facts_.annotations.class_header.end()) target.header = header->second;
+            target.ns = c.scope.scope.empty() ? resolve_namespace(target.name, facts_.enumerators[c.uses.front()].ns, target.first_use, true)
+                                              : c.scope.scope;
+            enum_types_.push_back({target.ns, target.name});
+            known_types_.push_back({target.ns, target.name});   // not a class to generate, whatever else the test says of it
+            typed.insert(c.uses.begin(), c.uses.end());
+            enums_.push_back(std::move(target));
+        }
+        give_enumerators_their_type(typed);
+    }
+
+    // A value `Color::Red` has the type Color, and so has the other side of a comparison with one:
+    // the facts could not say so before, because they did not know Color to be an enum.
+    void give_enumerators_their_type(const std::set<std::size_t>& typed) {
+        const auto type_of = [&](std::size_t index) {
+            const Enumerator& e = facts_.enumerators[index];
+            ir::Type t = ir::make_type(e.scope.qualified());
+            t.origin = ir::Origin::Inferred;
+            t.reason = "enumerator " + e.scope.qualified() + "::" + e.name;
+            t.where = e.where;
+            return t;
+        };
+        const auto args = [&](std::vector<ValueInfo>& values) {
+            for (ValueInfo& v : values) {
+                if (v.enumerator && typed.count(*v.enumerator) != 0 && !v.type) v.type = type_of(*v.enumerator);
+            }
+        };
+        const auto use = [&](ResultUse& u) {
+            if (u.hint_enumerator && typed.count(*u.hint_enumerator) != 0 && !u.hint) u.hint = type_of(*u.hint_enumerator);
+        };
+        for (MethodCall& m : facts_.method_calls) {
+            args(m.args);
+            use(m.use);
+        }
+        for (ScopedCall& c : facts_.scoped_calls) {
+            args(c.args);
+            use(c.use);
+        }
+        for (FreeCall& c : facts_.free_calls) {
+            args(c.args);
+            use(c.use);
+        }
+        for (Construction& c : facts_.constructions) args(c.args);
+        for (FieldAccess& f : facts_.field_accesses) use(f.use);
+        for (Unresolved& u : facts_.unresolved) {
+            args(u.call.args);
+            use(u.call.use);
+        }
     }
 
     // ---- classes from types ---------------------------------------------------------------------------------
@@ -725,6 +883,8 @@ private:
 
     std::vector<ClassTarget>                       classes_;
     std::vector<FunctionTarget>                    functions_;
+    std::vector<EnumTarget>                        enums_;
+    std::vector<KnownType>                         enum_types_;          // enums the file or a header declares, and those we generate
     std::vector<std::size_t>                       cast_class_;          // per free call: the class it constructs
     std::vector<std::size_t>                       scoped_cast_class_;   // per scoped call: the same, for ns::Foo(3)
     std::vector<bool>                              external_cast_;       // per free call: a cast to somebody else's type

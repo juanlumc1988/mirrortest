@@ -136,6 +136,25 @@ left operand is not an object of a generated class (`5 == a` needs a free
 function). A variable has to be declared with its class for this: the result of
 a call you have not typed (`EXPECT_EQ(a.next(), b.next())`) says nothing.
 
+### Enums
+
+`Color::Red` as a value, when `Color` is not a class the test builds or calls, not a
+namespace and not declared anywhere, is taken for an enum:
+
+```cpp
+paint.set(Color::Red);                  // void set(Color arg1);
+EXPECT_EQ(paint.color(), Color::Blue);  // Color color();
+```
+
+It generates `enum class Color { Red, Blue };` (each enumerator once, in order of use,
+with a note of where) in the header that matches, else the first the test includes, and
+the headers that use it include that one. Not an enum: anything the libraries or your
+headers declare, a name that does not begin with a capital (`acme::kMax` is a namespace
+constant), one the test calls (`Color::parse()`), builds with arguments or calls
+methods on. `Limits::kMax` with a capital and nothing else looks like an enum and is
+taken for one: the first enumerator's note says why, so you can fix it by hand. Enums
+are always `enum class`: a test that writes `Red` without the qualifier needs it edited.
+
 ### Constructors
 
 One constructor is generated per **arity** used. A single parameter is

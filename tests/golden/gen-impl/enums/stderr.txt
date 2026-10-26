@@ -1,0 +1,5 @@
+in/paint_test.cpp:14:11: warning: the result of 'acme::Paint::set' is never used, so the method is assumed to return void [mt-unused-result]
+in/paint_test.cpp:15:11: warning: the result of 'acme::Paint::set_mode' is never used, so the method is assumed to return void [mt-unused-result]
+created out/color.h
+created out/paint.h
+created out/paint.cpp

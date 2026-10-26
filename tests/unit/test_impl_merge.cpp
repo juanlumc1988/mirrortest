@@ -495,3 +495,95 @@ TEST(ImplMergeSource, IncludesOfTheSourceAreMergedToo) {
 }
 
 }  // namespace
+
+// ---- enums ------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+const char* kOneColour =
+    "#include \"color.h\"\n"
+    "TEST(S, N) {\n"
+    "    Paint paint;\n"
+    "    paint.set(Color::Red);\n"
+    "}\n";
+
+const char* kTwoColours =
+    "#include \"color.h\"\n"
+    "TEST(S, N) {\n"
+    "    Paint paint;\n"
+    "    paint.set(Color::Red);\n"
+    "    paint.set(Color::Blue);\n"
+    "}\n";
+
+}  // namespace
+
+TEST(ImplMergeEnum, AnEnumeratorTheOldFileLacksIsAddedWithItsNote) {
+    const Files old = generate(kOneColour, {"color.h", "paint.h"});
+    const Files now = generate(kTwoColours, {"color.h", "paint.h"});
+    const Merged m = merge_header(now.at("color.h"), old.at("color.h"), "color.h");
+    ASSERT_TRUE(m.result.has_value());
+    EXPECT_EQ(m.result->added_members, 1u);
+    EXPECT_TRUE(m.diagnostics.empty());
+    EXPECT_TRUE(contains(m.text(), "    // TODO(mt): enumerator 'Blue' inferred from Color::Blue (tests/t.cpp:"));
+    EXPECT_TRUE(contains(m.text(), "    Blue,\n    // <mt:end Color>"));
+    EXPECT_EQ(count(m.text(), "Red,"), 1u);
+}
+
+TEST(ImplMergeEnum, NothingMissingMeansTheFileComesBackAsItWas) {
+    const Files now = generate(kTwoColours, {"color.h", "paint.h"});
+    const Merged m = merge_header(now.at("color.h"), now.at("color.h"), "color.h");
+    ASSERT_TRUE(m.result.has_value());
+    EXPECT_EQ(m.result->added_members, 0u);
+    EXPECT_EQ(m.text(), now.at("color.h"));
+}
+
+TEST(ImplMergeEnum, AnEnumeratorTheUserWroteWithAValueCountsAsThere) {
+    const Files now = generate(kTwoColours, {"color.h", "paint.h"});
+    std::string user = now.at("color.h");
+    const std::size_t red = user.find("    Red,");
+    ASSERT_NE(red, std::string::npos);
+    user.replace(red, 8, "    Red = 4,");
+    const Merged m = merge_header(now.at("color.h"), user, "color.h");
+    ASSERT_TRUE(m.result.has_value());
+    EXPECT_EQ(m.result->added_members, 0u);
+    EXPECT_TRUE(contains(m.text(), "Red = 4,"));
+}
+
+TEST(ImplMergeEnum, AnEnumeratorTheUserAddedElsewhereInTheEnumIsKept) {
+    const Files old = generate(kOneColour, {"color.h", "paint.h"});
+    const Files now = generate(kTwoColours, {"color.h", "paint.h"});
+    std::string user = old.at("color.h");
+    const std::size_t end = user.find("    // <mt:end Color>");
+    ASSERT_NE(end, std::string::npos);
+    user.insert(end + std::string("    // <mt:end Color>\n").size(), "    Blue,\n");   // after the region, in the enum
+    const Merged m = merge_header(now.at("color.h"), user, "color.h");
+    ASSERT_TRUE(m.result.has_value());
+    EXPECT_EQ(m.result->added_members, 0u);
+    EXPECT_EQ(count(m.text(), "Blue,"), 1u);
+}
+
+TEST(ImplMergeEnum, AnEnumWithoutARegionSendsTheFileToDotNew) {
+    const Files now = generate(kTwoColours, {"color.h", "paint.h"});
+    const Merged m = merge_header(now.at("color.h"), "enum class Color { Red };\n", "color.h");
+    EXPECT_FALSE(m.result.has_value());
+    EXPECT_EQ(codes(m), std::vector<std::string>{"mt-merge-no-region"});
+}
+
+TEST(ImplMergeEnum, ARegionForAnEnumTheFileDoesNotDeclareIsRefused) {
+    const Files now = generate(kTwoColours, {"color.h", "paint.h"});
+    const Merged m = merge_header(now.at("color.h"),
+                                  "// <mt:begin Color>\n// <mt:end Color>\nclass Color { int x; };\n", "color.h");
+    EXPECT_FALSE(m.result.has_value());
+    EXPECT_EQ(codes(m), std::vector<std::string>{"mt-merge-no-region"});
+}
+
+TEST(ImplMergeEnum, MergingTwiceChangesNothingTheSecondTime) {
+    const Files old = generate(kOneColour, {"color.h", "paint.h"});
+    const Files now = generate(kTwoColours, {"color.h", "paint.h"});
+    const Merged first = merge_header(now.at("color.h"), old.at("color.h"), "color.h");
+    ASSERT_TRUE(first.result.has_value());
+    const Merged second = merge_header(now.at("color.h"), first.text(), "color.h");
+    ASSERT_TRUE(second.result.has_value());
+    EXPECT_EQ(second.result->added_members, 0u);
+    EXPECT_EQ(second.text(), first.text());
+}

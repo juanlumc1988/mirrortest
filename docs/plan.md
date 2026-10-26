@@ -268,7 +268,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 - [ ] **7.4** gen-impl: operators used in tests (`a == b`, `a < b`, `a[i]`),
   enums inferred from `E::X`, exception classes from `EXPECT_THROW` (opt-in).
   - [x] **7.4a** operators (design 7.9; `operators` golden and round trip).
-  - [ ] **7.4b** enums from `E::X`.
+  - [x] **7.4b** enums from `E::X` (design 7.7, 7.9, 8.1; `enums` golden and round trip).
   - [ ] **7.4c** exception classes from `EXPECT_THROW`, opt-in.
 - [ ] **7.5** `= delete` on copy/move → `is_copy_constructible`
   `static_assert`s (gen-tests).
