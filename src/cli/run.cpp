@@ -90,7 +90,7 @@ CommonOptions add_common(CLI::App& cmd, Raw& raw) {
         ->check(one_of({"never", "merge", "force"}));
     cmd.add_flag("--dry-run", raw.dry_run, "Print what would change as a diff; write nothing");
     cmd.add_flag("--check", raw.check, "Write nothing; exit 4 if generating would change a file");
-    given.config_file = cmd.add_option("--config", raw.config_file, "Configuration file (JSON)")
+    given.config_file = cmd.add_option("--config", raw.config_file, "Configuration file (JSON, or YAML when the name ends in .yaml or .yml)")
                             ->type_name("FILE");
     given.templates_dir = cmd.add_option("--templates", raw.templates_dir,
                                          "Directory with templates that replace the built-in ones")

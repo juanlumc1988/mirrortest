@@ -444,6 +444,29 @@ TEST(CliUsage, NoStlBelongsToGenImpl) {
     EXPECT_EQ(invoke({"gen-tests", "h.h", "--out", "o", "--no-stl"}).code, 2);
 }
 
+TEST(CliConfig, AYamlFileIsReadLikeAJsonOneAndTheCommandLineStillWinsOverIt) {
+    if (!core::yaml_supported()) GTEST_SKIP() << "built without YAML";
+    TempDir dir;
+    write_file(dir.path() / "mt.yaml", "std: c++11\nstub_policy: abort\nno_stl: true\n");
+    const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--config", "mt.yaml", "--stub-policy", "hook"}, dir.path());
+    ASSERT_TRUE(p.options.has_value()) << p.err;
+    EXPECT_EQ(p.options->config.cxx_std, core::CxxStd::Cxx11);
+    EXPECT_TRUE(p.options->config.no_stl);
+    EXPECT_EQ(p.options->config.stub_policy, core::StubPolicy::Hook) << "an option that was passed overrides the file";
+}
+
+TEST(CliConfig, AnErrorInAYamlFileIsLocatedAndStopsTheRunWithExitCodeOne) {
+    if (!core::yaml_supported()) GTEST_SKIP() << "built without YAML";
+    TempDir dir;
+    write_file(dir.path() / "bad.yml", "std: c++11\nnaming: [oops\n");
+    const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--config", "bad.yml"}, dir.path());
+    EXPECT_FALSE(p.options.has_value());
+    EXPECT_EQ(p.exit_code, 1);
+    EXPECT_TRUE(contains(p.err, "bad.yml:")) << p.err;
+    EXPECT_TRUE(contains(p.err, "error: invalid YAML: ")) << p.err;
+    EXPECT_TRUE(contains(p.err, "[mt-config]")) << p.err;
+}
+
 TEST(CliConfig, ARelativeConfigPathIsResolvedAgainstTheWorkingDirectoryOfTheRun) {
     TempDir dir;
     write_file(dir.path() / "conf" / "mt.json", R"({"std":"c++20"})");

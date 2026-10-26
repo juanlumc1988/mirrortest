@@ -46,6 +46,30 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # The configuration reader without YAML: a .yaml file is refused with a clear error and what needs
+  # YAML skips itself, so a build that leaves yaml-cpp out is a build that works.
+  no-yaml:
+    name: without yaml-cpp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DMT_WERROR=ON \
+                -DMT_WITH_YAML=OFF
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   sanitizers:
     name: asan + ubsan
     runs-on: ubuntu-latest

@@ -19,7 +19,8 @@ namespace fs = std::filesystem;
 namespace {
 
 const char* const kKnownEntries[] = {"args.txt",   "input",     "existing",      "expected",
-                                     "stdout.txt", "stderr.txt", "exit_code.txt", "notes.md"};
+                                     "stdout.txt", "stderr.txt", "exit_code.txt", "notes.md",
+                                     "requires.txt"};
 
 std::string read_all(const fs::path& path) { return mt::test::read_file(path); }
 
@@ -185,7 +186,7 @@ bool load_spec(const fs::path& dir, Spec& spec, std::vector<std::string>& proble
         if (std::find(std::begin(kKnownEntries), std::end(kKnownEntries), name) == std::end(kKnownEntries)) {
             problems.push_back("unknown entry '" + name +
                                "' (known: args.txt, input/, existing/, expected/, stdout.txt, "
-                               "stderr.txt, exit_code.txt, notes.md)");
+                               "stderr.txt, exit_code.txt, notes.md, requires.txt)");
         }
     }
     for (const char* tree : {"input", "existing", "expected"}) {

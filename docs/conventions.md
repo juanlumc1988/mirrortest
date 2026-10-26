@@ -679,7 +679,7 @@ files are never overwritten: a differing one gets a `.new` beside it, and
 
 ## Configuration
 
-`--config FILE.json` (comments allowed). Precedence: built-in defaults, then the
+`--config FILE.json` (comments allowed) or `FILE.yaml`. Precedence: built-in defaults, then the
 file, then the command line. Unknown keys and wrong values are errors, all
 reported at once. The full list is in [docs/design.md](design.md), section 14;
 the ones people reach for first:
@@ -703,6 +703,26 @@ the ones people reach for first:
   "overrides": { "acme::Repo::count": { "returns": "std::size_t" } }
 }
 ```
+
+The same configuration as YAML (`--config mt.yaml`, or `.yml`), if you prefer to
+comment it and to write the header as a block:
+
+```yaml
+std: c++14
+default_namespace: acme
+guard: pragma-once
+file_header: |
+  // Copyright (c) ACME. All rights reserved.
+stub_policy: abort
+type_map:
+  unsigned int: std::uint32_t
+by_value_types: [Handle]
+```
+
+The keys and the errors are those of the JSON. A plain `true`, `false` and number have that type;
+anything quoted is text, and `yes`/`no`/`on`/`off` are not booleans. Anchors and aliases work; merge
+keys (`<<`), tags other than `!!str`, a key twice in one mapping and more than one document are
+errors. A build made with `-DMT_WITH_YAML=OFF` refuses a YAML file and says so.
 
 `type_map` rewrites what was *inferred* (never what you declared): handy to turn
 every `unsigned int` into `std::uint32_t`. `file_header` is emitted at the top of

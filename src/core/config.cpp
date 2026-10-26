@@ -594,11 +594,27 @@ bool apply_config_json(Config& config, std::string_view text, const std::string&
     return true;
 }
 
+namespace {
+
+bool ends_with_ignoring_case(const std::string& text, const std::string& tail) {
+    if (text.size() < tail.size()) return false;
+    for (std::size_t i = 0; i < tail.size(); ++i) {
+        const char c = text[text.size() - tail.size() + i];
+        if ((c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c) != tail[i]) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
 bool load_config_file(Config& config, const std::string& path, Diagnostics& diagnostics,
                       const std::filesystem::path& base_dir) {
     const std::optional<SourceFile> file = read_source(path, diagnostics, base_dir);
     if (!file) {
         return false;
+    }
+    if (ends_with_ignoring_case(path, ".yaml") || ends_with_ignoring_case(path, ".yml")) {
+        return apply_config_yaml(config, file->text, path, diagnostics);
     }
     return apply_config_json(config, file->text, path, diagnostics);
 }

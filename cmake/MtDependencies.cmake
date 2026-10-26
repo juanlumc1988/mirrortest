@@ -18,6 +18,7 @@
 #
 # Licences, all compatible with Apache-2.0:
 #   tree-sitter, tree-sitter-cpp, nlohmann/json, inja   MIT
+#   yaml-cpp (only with MT_WITH_YAML)                    MIT
 #   CLI11, GoogleTest                                   BSD-3-Clause
 
 include(FetchContent)
@@ -116,6 +117,12 @@ mt_declare(googletest
     https://github.com/google/googletest.git
     v1.16.0 6910c9d9165801d8827d628cb72eb7ea9dd538c5)
 
+# Only needed to read a configuration written in YAML (docs/design.md 14); the JSON reader stays
+# whether it is built or not.
+mt_declare(yaml_cpp
+    https://github.com/jbeder/yaml-cpp.git
+    0.8.0 f7320141120f720aecc4c32be25586e7da9eb978)
+
 # ---- tree-sitter runtime + C++ grammar ------------------------------------
 
 FetchContent_MakeAvailable(tree_sitter tree_sitter_cpp)
@@ -160,6 +167,22 @@ add_library(mt_inja INTERFACE)
 target_include_directories(mt_inja SYSTEM INTERFACE "${inja_SOURCE_DIR}/include")
 target_link_libraries(mt_inja INTERFACE nlohmann_json::nlohmann_json)
 add_library(mt::inja ALIAS mt_inja)
+
+# ---- yaml-cpp (optional) ---------------------------------------------------
+
+if(MT_WITH_YAML)
+    # yaml-cpp 0.8.0 still asks for CMake 3.4, which CMake 4 no longer accepts.
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    set(YAML_CPP_BUILD_TESTS   OFF CACHE INTERNAL "")
+    set(YAML_CPP_BUILD_TOOLS   OFF CACHE INTERNAL "")
+    set(YAML_CPP_BUILD_CONTRIB OFF CACHE INTERNAL "")
+    set(YAML_CPP_INSTALL       OFF CACHE INTERNAL "")
+    set(YAML_CPP_FORMAT_SOURCE OFF CACHE INTERNAL "")
+    set(YAML_BUILD_SHARED_LIBS OFF CACHE INTERNAL "")
+    FetchContent_MakeAvailable(yaml_cpp)
+    mt_verify(yaml_cpp)
+    mt_as_system(yaml-cpp)
+endif()
 
 # ---- CLI11 -----------------------------------------------------------------
 

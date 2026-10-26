@@ -36,7 +36,7 @@ README per version).
 | R15 | §4, §12 | "Smart" merge in phase 6, yet "it is the most important requirement" | Contradiction: without merge, the TDD loop (new test → regenerate) always ends in a manual `.new`. | Merge by marked regions in phase 3, right after the gen-impl MVP (§11). **[confirmed]** |
 | R16 | §11 (merge) | — | Comparing by full signature would add spurious overloads when the user changes `int` → `std::uint32_t`; and the return type does not distinguish overloads. | Merge key = (name, arity); by types only for overloads of one arity that the run wants; differences in types or `const` → warning, never a new member (§11.2). |
 | R17 | §2 | inja templates editable "without recompiling" | If they are loaded from disk, the binary depends on an installation path; and putting logic in templates leaves it untested. | Default templates **embedded** in the binary + `--templates DIR` to override. The logic (signatures, TODOs, default values) lives in C++ and reaches the template already formatted (§15). |
-| R18 | §10 | `tool.yaml` | YAML adds yaml-cpp; nlohmann/json is already mandatory because of inja. | Configuration in JSON for the MVP; the loader is isolated so that YAML can be added later. **[confirmed]** |
+| R18 | §10 | `tool.yaml` | YAML adds yaml-cpp; nlohmann/json is already mandatory because of inja. | Configuration in JSON for the MVP; the loader is isolated so that YAML can be added later. **[confirmed]** Added in plan 8.4 as `--config tool.yaml` (§14), behind `MT_WITH_YAML`; JSON stays the reference. |
 | R19 | §5 | Placeholder arguments in the generated tests | `{}` is ambiguous between `f(int)` and `f(double)` and does not bind to `T&`. Besides, **running** legacy methods with zero values can hang or touch hardware and take down the whole test binary. | Named locals of exact type; the placeholder (`FAIL()`/`QFAIL`) goes **first**: what follows compiles (it checks the API) but does not run (§9.2). |
 | R20 | §5 | Tests on a `const` object | — | `const Foo& const_sut = sut;` for `const` methods; `static_assert(noexcept(…))` for `noexcept` (§9.2). |
 | R21 | §4 | Free functions | Calls to the project's own macros (`MY_EXPECT_OK(x)`) or to libc (`strlen`) would be taken for functions under test. | ALL_CAPS identifiers = macros; a list of known C/standard functions + `external_functions` in the config (§7.8). |
@@ -1938,7 +1938,7 @@ mirrortest gen-tests [--header] FILE... --out DIR [--framework gtest|qtest]
                      [--qt-main appless|guiless|gui] [COMMON]
 COMMON:  -I DIR ... | --std c++11|c++14|c++17|c++20|c++23 (default c++17)
          --overwrite never|merge|force (default never) | --dry-run | --check
-         --config FILE.json | --templates DIR | --strict | --quiet | --verbose
+         --config FILE.json|FILE.yaml | --templates DIR | --strict | --quiet | --verbose
          --compile-commands FILE  (adds its -I, -isystem and -iquote directories)
 ```
 
@@ -2030,7 +2030,7 @@ diagnostics); an error suppresses diffs and summary.
 
 ---
 
-## 14. Configuration (`--config file.json`)
+## 14. Configuration (`--config file.json` or `file.yaml`)
 
 ```json
 {
@@ -2118,6 +2118,33 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
   long form of the annotation (§7.11).
 - `type_map` is applied last, to `Inferred`/`Defaulted` types (never to
   `Declared`/`Annotated`), comparing the normalised `base`.
+
+### 14.1 YAML
+
+A configuration whose name ends in `.yaml` or `.yml` (any case) is read as YAML (plan 8.4,
+`core/config_yaml.cpp`, option `MT_WITH_YAML`, on by default; it needs yaml-cpp 0.8.0, pinned by tag
+and commit like the other dependencies). Any other name is JSON, as before. The keys, the values and
+the errors are exactly the JSON ones, because the document is **converted to JSON and handed to the
+same reader** (`apply_config_json`): there is one place that knows what a key is, and a YAML file
+cannot drift from the JSON one.
+
+- **Scalars.** Plain: `true`/`True`/`TRUE` and the `false` spellings are booleans; digits (with an
+  optional sign) are integers; `null`, `~` and nothing are null; anything else is a string. **Quoted
+  and block scalars are always strings**, and so is `!!str x`. `yes`, `no`, `on` and `off` are not
+  booleans (they were in YAML 1.1): `no_stl: yes` is the error "must be true or false" instead of a
+  guess. A float or a hex number is text.
+- **YAML features.** Comments, flow style, block scalars (`file_header: |` is the natural way to write a
+  multi-line header), anchors and aliases, `---`/`...`. An empty document, one with only comments, `~`
+  or `null` changes nothing.
+- **Refused**, each with an `mt-config` error at the line and column: a syntax error
+  (`invalid YAML: ...`, yaml-cpp's own words), a key twice in one mapping, a key that is not a scalar,
+  a tag other than `!!str`, a document that is not a mapping, more than one document, and one that
+  expands to more than 100000 nodes or nests deeper than 64 levels (an alias that refers to itself).
+  Merge keys (`<<`) are not supported: `<<` is an unknown key like any other.
+- Errors about a key or a value (`unknown configuration key 'colour'`) have no line, as in JSON.
+- **Without YAML** (`-DMT_WITH_YAML=OFF`, no yaml-cpp) a `.yaml` file is read and refused with an
+  `mt-config` error that says how to build with it; the goldens that need it (`requires.txt`, `yaml`)
+  are skipped, and so are the unit tests.
 
 ---
 

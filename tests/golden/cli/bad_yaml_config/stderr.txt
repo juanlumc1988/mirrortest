@@ -1,0 +1,1 @@
+in/bad.yaml:3:6: error: invalid YAML: end of sequence flow not found [mt-config]

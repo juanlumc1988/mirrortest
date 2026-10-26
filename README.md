@@ -136,7 +136,7 @@ the API under test, literal suffixes where the type matters, optional
 | `--std c++11\|...\|c++23` | the standard the generated code must be valid in (default `c++17`) |
 | `--overwrite never\|merge\|force` | a differing file gets a `.new` beside it (default), gets the missing members inserted into its regions, or is replaced |
 | `--dry-run`, `--check` | show diffs without writing; exit 4 if anything would change |
-| `--config FILE.json`, `--templates DIR` | house style: [docs/conventions.md](docs/conventions.md#configuration), [docs/templates.md](docs/templates.md) |
+| `--config FILE.json` (or `.yaml`), `--templates DIR` | house style: [docs/conventions.md](docs/conventions.md#configuration), [docs/templates.md](docs/templates.md) |
 | `--strict`, `--quiet`, `--verbose` | warnings as errors; fewer lines; more lines |
 
 Exit codes: `0` success, `1` the input has errors (nothing is written), `2` usage,

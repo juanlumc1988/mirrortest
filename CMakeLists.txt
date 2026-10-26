@@ -6,6 +6,7 @@ project(mirrortest VERSION 0.1.0 LANGUAGES C CXX)
 
 option(MT_BUILD_TESTS "Build the unit, golden and round-trip tests" ON)
 option(MT_WERROR      "Treat warnings as errors" OFF)
+option(MT_WITH_YAML   "Read configuration files written in YAML (.yaml, .yml); needs yaml-cpp" ON)
 
 # The generator itself is C++17 throughout. It runs on the development host,
 # never on the target, so there is nothing to gain from a lower standard.
@@ -61,6 +62,7 @@ add_library(mt_core STATIC
     src/cli/run.cpp
     src/core/compile_commands.cpp
     src/core/config.cpp
+    src/core/config_yaml.cpp
     src/core/diagnostics.cpp
     src/core/diff.cpp
     src/core/include_search.cpp
@@ -90,6 +92,12 @@ target_include_directories(mt_core PUBLIC include)
 target_link_libraries(mt_core
     PUBLIC  mt::tree_sitter nlohmann_json::nlohmann_json
     PRIVATE mt::inja CLI11::CLI11)
+if(MT_WITH_YAML)
+    target_link_libraries(mt_core PRIVATE yaml-cpp::yaml-cpp)
+endif()
+# Whether the configuration reader knows YAML is a property of the library, and of whoever includes
+# its headers to ask (core/config.h: yaml_supported()), not of a macro they have to define.
+target_compile_definitions(mt_core PRIVATE MT_WITH_YAML=$<BOOL:${MT_WITH_YAML}>)
 set_source_files_properties(src/cli/run.cpp PROPERTIES
     COMPILE_DEFINITIONS MT_VERSION="${PROJECT_VERSION}")
 mt_configure(mt_core)
@@ -113,6 +121,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_code_frontend.cpp
         tests/unit/test_compile_commands.cpp
         tests/unit/test_config.cpp
+        tests/unit/test_config_yaml.cpp
         tests/unit/test_cxx_format.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_extract.cpp

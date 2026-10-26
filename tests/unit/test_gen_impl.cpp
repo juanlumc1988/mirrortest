@@ -461,6 +461,17 @@ TEST(GenImplHook, NoOtherPolicyWritesIt) {
     }
 }
 
+TEST(GenImplHook, AYamlConfigurationDrivesTheRunLikeTheJsonOne) {
+    if (!core::yaml_supported()) GTEST_SKIP() << "built without YAML";
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "mt.yaml", "stub_policy: hook\nno_exceptions: true\n");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--config", "mt.yaml"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.cpp"), "mt_not_implemented(\"acme::Foo::size() const\");"));
+    EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "std::abort();"));
+}
+
 TEST(GenImplHook, TheConfigurationFileCanChooseItAndNoExceptionsChangesTheDefaultHandlerOnly) {
     const TempDir dir;
     write_foo_test(dir);

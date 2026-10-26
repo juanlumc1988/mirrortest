@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <string>
@@ -15,6 +16,7 @@
 
 #include "golden.h"
 #include "mirrortest/cli/run.h"
+#include "mirrortest/core/config.h"
 
 namespace {
 
@@ -37,7 +39,29 @@ class GoldenCase : public ::testing::TestWithParam<mt::golden::Case> {};
 
 }  // namespace
 
+namespace {
+
+// The optional features a case lists in requires.txt (golden.h): "yaml", "libclang". A name nobody
+// knows is a mistake in the case and fails it.
+bool feature_available(const std::string& name, std::string& problem) {
+    if (name == "yaml") return mt::core::yaml_supported();
+    problem = "requires.txt names '" + name + "', which is not a feature of the build (yaml)";
+    return false;
+}
+
+}  // namespace
+
 TEST_P(GoldenCase, Matches) {
+    std::ifstream requires_file(GetParam().dir / "requires.txt");
+    for (std::string feature; std::getline(requires_file, feature);) {
+        while (!feature.empty() && (feature.back() == '\r' || feature.back() == ' ')) feature.pop_back();
+        if (feature.empty()) continue;
+        std::string problem;
+        if (!feature_available(feature, problem)) {
+            if (!problem.empty()) FAIL() << GetParam().name << ": " << problem;
+            GTEST_SKIP() << "needs " << feature;
+        }
+    }
     const bool update = update_requested();
     const std::vector<std::string> problems = mt::golden::check_case(GetParam(), mt::cli::run, update);
     for (const std::string& problem : problems) {

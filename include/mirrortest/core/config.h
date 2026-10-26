@@ -172,9 +172,25 @@ StubPolicy effective_stub_policy(const Config& config);
 bool apply_config_json(Config& config, std::string_view json, const std::string& origin,
                        Diagnostics& diagnostics);
 
-// Reads `path` (an `mt-io` error if it cannot be read) and applies it. A
-// relative path is resolved against `base_dir` if given; diagnostics show it
-// as written.
+// The same for a YAML document (docs/design.md, section 14). It is read with yaml-cpp, turned
+// into the JSON that apply_config_json reads and handed to it, so that what is valid, what is
+// an error and how it is worded are decided in one place. A scalar is a boolean for
+// true/false, an integer for digits, null for null, ~ or nothing, and a string otherwise
+// and always when quoted (`yes` is a string, not a boolean). Anchors and aliases work; merge
+// keys (`<<`), tags other than !!str, a key twice in a mapping, more than one document, a
+// key that is not a scalar and a document that expands to more than 100000 nodes are errors.
+// An empty document, or one with only comments, changes nothing.
+//
+// Without YAML support (-DMT_WITH_YAML=OFF) this records an `mt-config` error that says so.
+bool apply_config_yaml(Config& config, std::string_view yaml, const std::string& origin,
+                       Diagnostics& diagnostics);
+
+// Whether this build reads YAML (MT_WITH_YAML).
+bool yaml_supported();
+
+// Reads `path` (an `mt-io` error if it cannot be read) and applies it: as YAML when the name
+// ends in .yaml or .yml (any case), as JSON otherwise. A relative path is resolved against
+// `base_dir` if given; diagnostics show it as written.
 bool load_config_file(Config& config, const std::string& path, Diagnostics& diagnostics,
                       const std::filesystem::path& base_dir = {});
 

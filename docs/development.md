@@ -32,9 +32,13 @@ cmake -S . -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMT_WERROR=ON \
   -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
 ```
 
+Optional parts of the build: `-DMT_WITH_YAML=OFF` leaves out yaml-cpp (a `.yaml` configuration is then
+refused with a clear error; CI builds that way too), and `-DMT_WITH_LIBCLANG=ON` adds the libclang
+frontend (plan 8.5). The golden cases and unit tests that need a part skip themselves when it is not there.
+
 A second build tree can reuse the first one's downloads instead of fetching
 again: pass `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<first>/_deps/<name>-src` for
-`TREE_SITTER`, `TREE_SITTER_CPP`, `NLOHMANN_JSON`, `INJA`, `CLI11` and
+`TREE_SITTER`, `TREE_SITTER_CPP`, `NLOHMANN_JSON`, `INJA`, `CLI11`, `YAML_CPP` and
 `GOOGLETEST` (lower-case name in the path).
 
 Clang's sanitizer runtime may be missing on minimal images
