@@ -1840,6 +1840,33 @@ TEST(TestFrontendOperators, ACallComparedWithAnObjectDoesNotLoseWhatTheObjectSay
     EXPECT_EQ(hint(method(r, 0).use), "Point");
 }
 
+TEST(TestFrontendOperators, TheOperatorIsRecordedInTheNamespaceOfTheTest) {
+    const Read r = read("#include <gtest/gtest.h>\nnamespace acme {\nTEST(S, N) { Point a; Point b; EXPECT_TRUE(a == b); EXPECT_EQ(a[0], 1); }\n}\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(method(r, 0).ns, std::vector<std::string>{"acme"});
+    EXPECT_EQ(method(r, 1).ns, std::vector<std::string>{"acme"});
+}
+
+TEST(TestFrontendOperators, ATypedLeftSideKeepsTheOperatorEvenIfItIsAlsoACall) {
+    // std::string("x") has a type and comes from a call: its own operator, not the other side's.
+    const Read r = body("Point p;\nEXPECT_TRUE(std::string(\"x\") == p);\n");
+    ASSERT_GE(r.facts.method_calls.size(), 1u);
+    bool found = false;
+    for (const frontend::MethodCall& m : r.facts.method_calls) {
+        if (m.method != "operator==") continue;
+        found = true;
+        EXPECT_EQ(m.receiver.qualified(), "std::string");
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST(TestFrontendOperators, TheIndexOfAnObjectIsAnArgumentLikeAnyOtherCallOnTheCodeUnderTest) {
+    const Read r = body("Row row;\nSizer sizer;\nint n = row[sizer.count()];\n(void)n;\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(method(r, 0).method, "count");
+    EXPECT_EQ(method(r, 0).use.kind, UseKind::Argument);
+}
+
 TEST(TestFrontendOperators, TheResultOfAComparisonIsTheBoolItIs) {
     const Read r = body("Point a;\nPoint b;\nbool same = a == b;\n(void)same;\n");
     ASSERT_EQ(r.facts.method_calls.size(), 1u);

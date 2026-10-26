@@ -946,10 +946,10 @@ private:
                name == "operator>=";
     }
 
-    // `int` -> `int&`, for what `a[i] = 3` assigns to. A type that is a reference already, or has
-    // not been worked out, is left as it is.
+    // `int` -> `int&`, for what `a[i] = 3` assigns to. A type that is a reference already, and void,
+    // are left as they are.
     static ir::Type as_lvalue_reference(const ir::Type& t) {
-        if (t.empty() || t.ref != ir::RefKind::None || t.base == "void") return t;
+        if (t.ref != ir::RefKind::None || t.base == "void") return t;
         ir::Type out = ir::make_type(t.base, t.is_const, ir::RefKind::LValue, t.pointer_depth);
         out.origin = t.origin;
         out.reason = t.reason;

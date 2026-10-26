@@ -359,11 +359,11 @@ private:
         }
         for (const ir::Model& k : options_.known) {
             for (const ir::Class& c : k.classes) {
-                if (written_as(mention, c) && !c.header.empty()) return {c.header, nullptr, false};
+                if (written_as(mention, c) && !c.header.empty()) return {c.header};
             }
             for (const ir::Enum& e : k.enums) {
                 const std::string full = ir::qualified_name(e.ns, e.name);
-                if ((mention == e.name || mention == full) && !e.header.empty()) return {e.header, nullptr, false};
+                if ((mention == e.name || mention == full) && !e.header.empty()) return {e.header};
             }
         }
         return {};

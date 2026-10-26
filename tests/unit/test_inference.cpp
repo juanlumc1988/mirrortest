@@ -1196,6 +1196,34 @@ TEST(InferenceOperators, ACompoundAssignmentAlsoWritesAndTakesItsTypeFromAReader
     EXPECT_EQ(method(o, "Row", "operator[]", 1).ret.spelling, "int&");
 }
 
+TEST(InferenceOperators, TheReferenceKeepsWhereTheTypeCameFromAndWhy) {
+    const Outcome o = body("Row row;\nrow[0] = 7;\n");
+    const ir::Type& ret = method(o, "Row", "operator[]", 1).ret;
+    EXPECT_EQ(ret.spelling, "int&");
+    EXPECT_EQ(ret.origin, ir::Origin::Inferred);
+    EXPECT_EQ(ret.reason, "literal 7");
+    EXPECT_EQ(ret.where.line, 4u);
+}
+
+TEST(InferenceOperators, WithNothingSayingWhatIsAssignedTheTypeIsStillReportedAsUnknown) {
+    const Outcome o = body("Row row;\nrow[0] += 1;\n");
+    EXPECT_EQ(method(o, "Row", "operator[]", 1).ret.spelling, "int&") << "the placeholder of an unknown type, written to";
+    bool unknown = false;
+    for (const core::Diagnostic& d : o.diagnostics.sorted()) unknown = unknown || d.code == core::code::unknown_return;
+    EXPECT_TRUE(unknown);
+}
+
+TEST(InferenceOperators, ATypeThatIsAReferenceAlreadyOrVoidIsLeftAsItIs) {
+    core::Config config;
+    core::MemberOverride over;
+    over.returns = "const int&";
+    config.overrides["Row::operator[]"] = over;
+    EXPECT_EQ(method(body("Row row;\nrow[0] = 7;\n", config), "Row", "operator[]", 1).ret.spelling, "const int&");
+    over.returns = "void";
+    config.overrides["Row::operator[]"] = over;
+    EXPECT_EQ(method(body("Row row;\nrow[0] = 7;\n", config), "Row", "operator[]", 1).ret.spelling, "void");
+}
+
 TEST(InferenceOperators, AnIndexMayBeAString) {
     const Outcome o = body("Config cfg;\nEXPECT_EQ(cfg[\"name\"], std::string(\"x\"));\n");
     EXPECT_EQ(param_types(method(o, "Config", "operator[]", 1)), std::vector<std::string>{"const char*"});
@@ -1249,6 +1277,13 @@ TEST(InferenceEnums, EveryEnumeratorSaysWhereItCameFromAndTheFirstWhyTheNameIsAn
     EXPECT_EQ(color->enumerator_notes[0][1], "enumerator 'Red' inferred from Color::Red (t.cpp:4)");
     ASSERT_EQ(color->enumerator_notes[1].size(), 1u);
     EXPECT_EQ(color->enumerator_notes[1][0], "enumerator 'Blue' inferred from Color::Blue (t.cpp:5)");
+}
+
+TEST(InferenceEnums, AnAnnotationNamesTheHeaderOfTheEnum) {
+    const Outcome o = body("// @mt: class Color header \"acme/color.h\"\nPaint paint;\npaint.set(Color::Red);\n");
+    const ir::Enum* color = find_enum(o, "Color");
+    ASSERT_NE(color, nullptr);
+    EXPECT_EQ(color->header, "acme/color.h");
 }
 
 TEST(InferenceEnums, AMethodTakesAndReturnsTheEnumByValue) {

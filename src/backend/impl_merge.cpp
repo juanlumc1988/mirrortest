@@ -318,7 +318,7 @@ void merge_enumerators(Job& job, const std::string& label, const Region& generat
     std::size_t count = 0;
     for (const Block& block : header_blocks(generated_lines, generated_region)) {
         std::string name = trimmed(block.lines.back());
-        if (!name.empty() && name.back() == ',') name.pop_back();
+        name.erase(std::min(name.find(','), name.size()));   // "Red," is Red
         if (std::find(have->enumerators.begin(), have->enumerators.end(), name) != have->enumerators.end()) continue;
         for (const std::string& line : block.lines) to_insert.push_back(line);
         ++count;

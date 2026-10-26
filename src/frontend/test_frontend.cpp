@@ -648,13 +648,12 @@ private:
     // `a == b`, `a < b`, EXPECT_EQ(a, b): a call of a's operator when a is an object of a class,
     // returning a bool. When only b is known to be one (EXPECT_EQ(sensor.position(), expected): the
     // result takes its type from b) it is the operator of b's class.
-    std::optional<std::size_t> comparison_fact(const ValueInfo& a, const ValueInfo& b, const std::string& op, const Node& at) {
+    void comparison_fact(const ValueInfo& a, const ValueInfo& b, const std::string& op, const Node& at) {
         const bool a_is_unknown_result = !a.type && a.from.valid();
         const ValueInfo& object = a_is_unknown_result ? b : a;
-        std::optional<std::size_t> index = operator_fact(object, {b}, op, at);
-        if (!index) return std::nullopt;
-        facts_.method_calls[*index].use = use_of(Use::Condition, bool_hint("a comparison with " + op));
-        return index;
+        if (const std::optional<std::size_t> index = operator_fact(object, {b}, op, at)) {
+            facts_.method_calls[*index].use = use_of(Use::Condition, bool_hint("a comparison with " + op));
+        }
     }
 
     // ---- type uses ----------------------------------------------------------------------------------
@@ -885,7 +884,7 @@ private:
                 const ValueInfo a = expr(arg(0));
                 const ValueInfo b = expr(arg(1));
                 compare(a, b, name);
-                (void)comparison_fact(a, b, comparison_operator(name), call);
+                comparison_fact(a, b, comparison_operator(name), call);
                 for (std::size_t i = 2; i < args.size(); ++i) (void)expr(args[i]);   // QTRY_COMPARE_WITH_TIMEOUT's timeout
                 break;
             }
@@ -1368,7 +1367,7 @@ private:
 
         if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
             compare(a, b, "a comparison");
-            if (const std::optional<std::size_t> fact = comparison_fact(a, b, op, n)) v.from = {FactRef::Kind::MethodCall, *fact};
+            comparison_fact(a, b, op, n);
             v.type = inferred_type("bool", "result of " + op);
         } else if (op == "&&" || op == "||") {
             apply_use(a, use_of(Use::Condition, bool_hint("operand of " + op)));

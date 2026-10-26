@@ -976,6 +976,67 @@ TEST(ClassifyEnums, AnEnumOfAHeaderIsNotGeneratedEither) {
     EXPECT_EQ(r.result.facts.method_calls[1].args[0].type->spelling, "Color");
 }
 
+TEST(ClassifyEnums, AClassOfTheSameNameInAnotherNamespaceIsAnotherThing) {
+    const Outcome r = body("Paint paint;\npaint.set(a::Color::Red);\nb::Color color;\ncolor.run();\n");
+    EXPECT_EQ(enum_names(r), std::vector<std::string>{"a::Color"});
+    EXPECT_EQ(class_names(r), (std::vector<std::string>{"Paint", "b::Color"}));
+}
+
+TEST(ClassifyEnums, EveryComparisonOfEnumValuesIsABuiltInOne) {
+    for (const char* macro : {"EXPECT_EQ", "EXPECT_NE", "EXPECT_LT", "EXPECT_LE", "EXPECT_GT", "EXPECT_GE"}) {
+        const Outcome r = body("Color c = Color::Red;\nColor d = Color::Blue;\n" + std::string(macro) + "(c, d);\nbool same = c == d;\nsame = c <= d;\nsame = c >= d;\nsame = c != d;\nsame = c < d;\nsame = c > d;\n");
+        EXPECT_EQ(enum_names(r), std::vector<std::string>{"Color"}) << macro;
+        EXPECT_TRUE(r.result.classes.empty()) << macro;
+    }
+}
+
+TEST(ClassifyEnums, TheQualifierOfAnEnumNestedInAClassIsAClassWhateverMakesItOne) {
+    const Outcome by_type = body("Panel* panel = nullptr;\npaint.set(Panel::Mode::Fast);\n");
+    EXPECT_TRUE(by_type.result.enums.empty());
+    const Outcome by_static_call = body("Panel::create(1);\npaint.set(Panel::Mode::Fast);\n");
+    EXPECT_TRUE(by_static_call.result.enums.empty());
+    const Outcome by_nothing = body("paint.set(Panel::Mode::Fast);\n");
+    EXPECT_EQ(enum_names(by_nothing), std::vector<std::string>{"Panel::Mode"}) << "a namespace Panel, as far as anybody can tell";
+}
+
+TEST(ClassifyEnums, AnAnnotationPlacesTheEnumInANamespace) {
+    const Outcome r = body("// @mt: class Color namespace acme\nPaint paint;\npaint.set(Color::Red);\n");
+    EXPECT_EQ(enum_names(r), std::vector<std::string>{"acme::Color"});
+}
+
+TEST(ClassifyEnums, TheTypeOfAValueSaysWhereItCameFrom) {
+    const Outcome r = body("Paint paint;\npaint.set(Color::Red);\n");
+    ASSERT_TRUE(r.result.facts.method_calls[0].args[0].type.has_value());
+    EXPECT_EQ(r.result.facts.method_calls[0].args[0].type->where.line, 5u);
+}
+
+TEST(ClassifyEnums, EveryKindOfFactThatHoldsAnEnumeratorIsGivenItsType) {
+    const Outcome r = body(
+        "helper(Color::Red);\nEXPECT_EQ(other(), Color::Blue);\n"                   // free calls
+        "Util::run(Color::Green);\nEXPECT_EQ(Util::get(), Color::Red);\n"            // scoped calls
+        "Paint paint(Color::Blue);\nEXPECT_EQ(paint.field, Color::Green);\n"         // a construction, a field
+        "paint.make().run(Color::Red);\nEXPECT_EQ(paint.make().next(), Color::Blue);\n");   // pending calls
+    const frontend::Classified& c = r.result;
+    EXPECT_EQ(enum_names(r), std::vector<std::string>{"Color"});
+    ASSERT_EQ(c.facts.free_calls.size(), 2u);
+    EXPECT_EQ(c.facts.free_calls[0].args[0].type->spelling, "Color");
+    ASSERT_TRUE(c.facts.free_calls[1].use.hint.has_value());
+    EXPECT_EQ(c.facts.free_calls[1].use.hint->spelling, "Color");
+    ASSERT_EQ(c.facts.scoped_calls.size(), 2u);
+    EXPECT_EQ(c.facts.scoped_calls[0].args[0].type->spelling, "Color");
+    ASSERT_TRUE(c.facts.scoped_calls[1].use.hint.has_value());
+    EXPECT_EQ(c.facts.scoped_calls[1].use.hint->spelling, "Color");
+    ASSERT_GE(c.facts.constructions.size(), 1u);
+    EXPECT_EQ(c.facts.constructions[0].args[0].type->spelling, "Color");
+    ASSERT_EQ(c.facts.field_accesses.size(), 1u);
+    ASSERT_TRUE(c.facts.field_accesses[0].use.hint.has_value());
+    EXPECT_EQ(c.facts.field_accesses[0].use.hint->spelling, "Color");
+    ASSERT_EQ(c.facts.unresolved.size(), 2u);
+    EXPECT_EQ(c.facts.unresolved[0].call.args[0].type->spelling, "Color");
+    ASSERT_TRUE(c.facts.unresolved[1].call.use.hint.has_value());
+    EXPECT_EQ(c.facts.unresolved[1].call.use.hint->spelling, "Color");
+}
+
 TEST(ClassifyEnums, ATypeNestedInAClassOfTheTestIsNotAnEnumToGenerate) {
     const Outcome r = body("Panel panel;\npanel.set(Panel::Mode::Fast);\n");
     EXPECT_TRUE(r.result.enums.empty()) << "nested types are not generated";

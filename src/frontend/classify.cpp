@@ -385,19 +385,14 @@ private:
                method == "operator>" || method == "operator>=";
     }
 
-    // Is a name written anywhere as a type: a class, whatever else it might also be?
-    bool mentioned_as_type(const std::string& name) const {
+    // Is a name written as a type anywhere (every declaration, `new` and cast is a type use), or as the
+    // scope of a static call (`Panel::create()`)? Then it is a class, whatever else it might also be.
+    bool mentioned_as_class(const std::string& name) const {
         for (const TypeUse& u : facts_.type_uses) {
             if (u.type.name == name) return true;
         }
-        for (const Construction& c : facts_.constructions) {
-            if (c.type.name == name) return true;
-        }
-        for (const MethodCall& m : facts_.method_calls) {
-            if (m.receiver.name == name) return true;
-        }
-        for (const FieldAccess& f : facts_.field_accesses) {
-            if (f.receiver.name == name) return true;
+        for (const ScopedCall& c : facts_.scoped_calls) {
+            if (!c.scope.empty() && c.scope.back() == name) return true;
         }
         return false;
     }
@@ -436,7 +431,7 @@ private:
             // `Qt::AlignLeft` is no more ours than `std::string::npos`.
             const std::string& first = c.scope.scope.empty() ? c.scope.name : c.scope.scope.front();
             if (is_foreign_namespace(first) || is_external_type(c.scope) || !starts_upper(c.scope.name) || used_as_class(c.scope)) continue;
-            if (!c.scope.scope.empty() && mentioned_as_type(c.scope.scope.back())) continue;   // Foo::Mode::Fast: nested in a class
+            if (!c.scope.scope.empty() && mentioned_as_class(c.scope.scope.back())) continue;   // Foo::Mode::Fast: nested in a class
 
             EnumTarget target;
             target.name = c.scope.name;
@@ -451,7 +446,6 @@ private:
             if (header != facts_.annotations.class_header.end()) target.header = header->second;
             target.ns = c.scope.scope.empty() ? resolve_namespace(target.name, facts_.enumerators[c.uses.front()].ns, target.first_use, true)
                                               : c.scope.scope;
-            enum_types_.push_back({target.ns, target.name});
             known_types_.push_back({target.ns, target.name});   // not a class to generate, whatever else the test says of it
             typed.insert(c.uses.begin(), c.uses.end());
             enums_.push_back(std::move(target));
@@ -894,7 +888,7 @@ private:
     std::vector<ClassTarget>                       classes_;
     std::vector<FunctionTarget>                    functions_;
     std::vector<EnumTarget>                        enums_;
-    std::vector<KnownType>                         enum_types_;          // enums the file or a header declares, and those we generate
+    std::vector<KnownType>                         enum_types_;          // enums the file or a header declares
     std::vector<std::size_t>                       cast_class_;          // per free call: the class it constructs
     std::vector<std::size_t>                       scoped_cast_class_;   // per scoped call: the same, for ns::Foo(3)
     std::vector<bool>                              external_cast_;       // per free call: a cast to somebody else's type

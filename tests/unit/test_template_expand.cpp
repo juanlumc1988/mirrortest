@@ -185,6 +185,8 @@ TEST(TemplateArguments, SplitAtTheTopLevel) {
     EXPECT_EQ(backend::split_template_arguments("1 << 2, (3 < 4), std::vector<std::vector<int>>, a->b"),
               (Lines{"1 << 2", "(3 < 4)", "std::vector<std::vector<int>>", "a->b"}));
     EXPECT_EQ(backend::split_template_arguments("5 > 4, 2"), (Lines{"5 > 4", "2"})) << "a > with no < before it compares";
+    EXPECT_EQ(backend::split_template_arguments("a), b"), (Lines{"a)", "b"})) << "a bracket nobody opened closes nothing";
+    EXPECT_EQ(backend::split_template_arguments("a}, b, c]"), (Lines{"a}", "b", "c]"}));
 }
 
 // ---- the instantiations ----------------------------------------------------------------------------------------
@@ -350,6 +352,7 @@ TEST(TemplateExpand, ASubstitutedTypeKeepsWhereItCameFromAndWhy) {
     core::Diagnostics d;
     ir::Model model = frontend::read_header({"box.h", "template <typename T> class Box {\npublic:\n    T get(T value) const;\n};\n"}, "box.h", {}, d);
     ir::Method& get = model.classes[0].methods[0];
+    get.ret.origin = ir::Origin::Inferred;
     get.ret.reason = "because I said so";
     get.params[0].type.reason = "and so";
     core::Config config;
@@ -358,7 +361,7 @@ TEST(TemplateExpand, ASubstitutedTypeKeepsWhereItCameFromAndWhy) {
     ASSERT_EQ(made.classes.size(), 1u);
     const ir::Method& m = made.classes[0].methods[0];
     EXPECT_EQ(m.ret.spelling, "int");
-    EXPECT_EQ(m.ret.origin, get.ret.origin);
+    EXPECT_EQ(m.ret.origin, ir::Origin::Inferred);
     EXPECT_EQ(m.ret.reason, "because I said so");
     EXPECT_EQ(m.ret.where.line, 3u);
     EXPECT_EQ(m.params[0].type.reason, "and so");

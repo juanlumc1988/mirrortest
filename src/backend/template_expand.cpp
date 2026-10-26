@@ -20,11 +20,10 @@ bool is_name_start(char c) { return std::isalpha(static_cast<unsigned char>(c)) 
 bool is_name_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; }
 
 std::string trim(const std::string& s) {
-    std::size_t begin = 0;
-    std::size_t end = s.size();
-    while (begin < end && std::isspace(static_cast<unsigned char>(s[begin])) != 0) ++begin;
-    while (end > begin && std::isspace(static_cast<unsigned char>(s[end - 1])) != 0) --end;
-    return s.substr(begin, end - begin);
+    const char* const space = " \t\r\n\f\v";
+    const std::size_t begin = s.find_first_not_of(space);
+    if (begin == std::string::npos) return {};
+    return s.substr(begin, s.find_last_not_of(space) + 1 - begin);
 }
 
 // Where in a list of template parameters or arguments the scan is: inside brackets or not. Round,
@@ -86,11 +85,9 @@ std::size_t default_position(const std::string& part) {
 // The last identifier of a parameter's declaration: `typename T` -> "T", `int N` -> "N",
 // `template <typename> class C` -> "C", `typename` -> "".
 std::string parameter_name(const std::string& declaration) {
-    std::size_t end = declaration.size();
-    while (end > 0 && !is_name_char(declaration[end - 1])) --end;
-    std::size_t begin = end;
+    std::size_t begin = declaration.size();
     while (begin > 0 && is_name_char(declaration[begin - 1])) --begin;
-    const std::string word = declaration.substr(begin, end - begin);
+    const std::string word = declaration.substr(begin);
     // The keyword of an unnamed parameter is not its name.
     if (word == "typename" || word == "class" || word == "struct" || word == "int" || word == "unsigned" || word == "bool" ||
         word == "char" || word == "long" || word == "short" || word == "size_t") {
@@ -109,28 +106,27 @@ std::string substitute(const std::string& text, const std::map<std::string, std:
     while (i < text.size()) {
         const char c = text[i];
         if (std::isdigit(static_cast<unsigned char>(c)) != 0) {
+            // 3u, 0x1F: one token, none of it a name that could be a parameter.
             while (i < text.size() && is_name_char(text[i])) out += text[i++];
-            continue;
-        }
-        if (!is_name_start(c)) {
+        } else if (!is_name_start(c)) {
             out += c;
             ++i;
-            continue;
-        }
-        std::size_t end = i;
-        while (end < text.size() && is_name_char(text[end])) ++end;
-        const std::string word = text.substr(i, end - i);
-        const bool scoped = !out.empty() && (out.back() == ':' || out.back() == '.');
-        const bool templated = end < text.size() && text[end] == '<';   // `Box<T>` names the template, not the instance
-
-        if (!scoped && word == own_name && !templated) {
-            out += instance;
-        } else if (!scoped && with.count(word) != 0) {
-            out += with.at(word);
         } else {
-            out += word;
+            std::size_t end = i;
+            while (end < text.size() && is_name_char(text[end])) ++end;
+            const std::string word = text.substr(i, end - i);
+            const bool scoped = !out.empty() && (out.back() == ':' || out.back() == '.');
+            const bool templated = end < text.size() && text[end] == '<';   // `Box<T>` names the template, not the instance
+
+            if (!scoped && word == own_name && !templated) {
+                out += instance;
+            } else if (!scoped && with.count(word) != 0) {
+                out += with.at(word);
+            } else {
+                out += word;
+            }
+            i = end;
         }
-        i = end;
     }
     return out;
 }

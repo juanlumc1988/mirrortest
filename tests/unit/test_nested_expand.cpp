@@ -141,12 +141,13 @@ TEST(NestedExpand, ATypeQualifiedKeepsWhereItCameFromAndWhy) {
     core::Diagnostics d;
     ir::Model model = frontend::read_header({"tree.h", "class Tree {\npublic:\n    struct Node {};\n    struct Leaf {\n        Node first(Node n);\n    };\n};\n"}, "tree.h", {}, d);
     ir::Method& first = model.classes[0].nested_classes[1].methods[0];
+    first.ret.origin = ir::Origin::Inferred;
     first.ret.reason = "because I said so";
     first.params[0].type.reason = "and so";
     const ir::Model flattened = backend::flatten_nested_classes(model);
     const ir::Method& m = the_class(flattened, "Tree::Leaf").methods[0];
     EXPECT_EQ(m.ret.spelling, "Tree::Node");
-    EXPECT_EQ(m.ret.origin, first.ret.origin);
+    EXPECT_EQ(m.ret.origin, ir::Origin::Inferred);
     EXPECT_EQ(m.ret.reason, "because I said so");
     EXPECT_EQ(m.ret.where.line, 5u);
     EXPECT_EQ(m.params[0].type.reason, "and so");

@@ -1308,6 +1308,35 @@ TEST(ImplBackendEnums, AClassOfAnotherHeaderThatNamesTheEnumIncludesItsHeader) {
     EXPECT_TRUE(includes_of(view_of(g, "color.h")->header_view).empty());
 }
 
+TEST(ImplBackendEnums, AnEnumOfAHeaderThatExistsIsIncludedNotGenerated) {
+    ir::Model known;
+    ir::Enum mode = enumeration("Mode", {"Fast"}, {"acme"});
+    mode.header = "acme/mode.h";
+    ir::Enum hidden = enumeration("Hidden", {"A"}, {"acme"});   // no header: nothing to include
+    known.enums = {mode, hidden};
+    ir::Model model;
+    model.classes = {klass("Paint", {}, {method("set", "void", {param("acme::Mode", "m")}), method("get", "Mode"), method("hide", "Hidden"),
+                                         method("other", "Elsewhere")})};
+    backend::ImplOptions options = with_headers({"paint.h"});
+    options.known = {known};
+    const Generated g = build(model, options);
+    EXPECT_EQ(includes_of(g.views[0].header_view), Strings{"#include \"acme/mode.h\""});
+}
+
+TEST(ImplBackendEnums, ATypeOfAKnownClassIsIncludedFromItsHeaderToo) {
+    ir::Model known;
+    ir::Class base = klass("Base", {"acme"});
+    base.header = "acme/base.h";
+    ir::Class headless = klass("Headless", {"acme"});
+    known.classes = {base, headless};
+    ir::Model model;
+    model.classes = {klass("Paint", {}, {method("set", "void", {param("acme::Base", "b")}), method("get", "Headless")})};
+    backend::ImplOptions options = with_headers({"paint.h"});
+    options.known = {known};
+    const Generated g = build(model, options);
+    EXPECT_EQ(includes_of(g.views[0].header_view), Strings{"#include \"acme/base.h\""});
+}
+
 TEST(ImplBackendEnums, TheEnumIsFoundByAnyQualificationTheTestUsed) {
     ir::Model model;
     ir::Class paint = klass("Paint", {"acme"}, {method("get", "paint::Color")});
