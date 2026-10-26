@@ -50,6 +50,7 @@ add_library(mt_core STATIC
     src/backend/impl_merge.cpp
     src/backend/mock_planner.cpp
     src/backend/qtest_backend.cpp
+    src/backend/template_expand.cpp
     src/backend/test_planner.cpp
     src/backend/test_render.cpp
     src/cli/gen_impl.cpp
@@ -134,6 +135,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_regions.cpp
         tests/unit/test_source.cpp
         tests/unit/test_syntax_tree.cpp
+        tests/unit/test_template_expand.cpp
         tests/unit/test_test_frontend.cpp
         tests/unit/test_test_planner.cpp
         tests/unit/test_templates.cpp

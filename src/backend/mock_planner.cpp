@@ -46,6 +46,7 @@ public:
     std::vector<ir::MockClass> run() {
         std::vector<ir::MockClass> mocks;
         for (const ir::Class& c : model_.classes) {
+            if (c.name.find('<') != std::string::npos) continue;   // an instantiation of a template (design 9.1): no mock
             Pure pure;
             std::set<const ir::Class*> visited;
             collect(c, pure, visited);

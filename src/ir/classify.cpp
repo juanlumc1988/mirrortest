@@ -229,6 +229,10 @@ bool value_returnable(const std::string& base, const std::vector<const Model*>& 
     if (is_fundamental_words(written)) return true;
 
     const std::size_t angle = written.find('<');
+    // An instantiated class template is a class of the model called `Box<int>` (the planner's own).
+    if (angle != std::string::npos) {
+        if (const Class* instance = find_class_in(models, written)) return brace_constructible(*instance, allow_explicit);
+    }
     const std::string name = written.substr(0, angle);
     std::vector<std::string> args;
     if (angle != std::string::npos && ends_with(written, ">")) args = split_top_level(written.substr(angle + 1, written.size() - angle - 2));

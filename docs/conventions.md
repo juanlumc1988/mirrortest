@@ -469,6 +469,23 @@ an argument that is a mock, an rvalue reference or cannot be copied (a
 `unique_ptr`) stay as they were. For Qt Test also a type with a comma, and
 `const char*`, which `QTest::addColumn` refuses.
 
+### Class templates
+
+A class template is tested for the instantiations you list in the
+configuration; the key is its qualified name and each entry the text between the
+`<>`:
+
+```json
+{ "template_instantiations": { "acme::Box": ["int", "std::string, 8"] } }
+```
+
+You get a file and a suite for each: `box_int_test.cpp` with `Box_intTest`, and
+`box_std_string_8_test.cpp`, with `Box<int> sut;` where the plain case has
+`Box sut;`. A parameter you leave out takes its default. The members have to be in
+the header (a template has no `.cpp`), and a template you do not list is skipped
+with a warning that shows the line to add. Mocks (`gtest.mocks`) are not made of
+instantiations.
+
 ### Mocks of interfaces
 
 With `{"gtest": {"mocks": true}}` in the configuration, every **interface** of the
@@ -522,7 +539,7 @@ be a function Qt Test calls by itself, so its test is a slot with `_call` after
 the name (`init_call`).
 
 Not tested, and why: signals; deleted, protected and private members; member
-templates and class templates (they need instantiations); free functions (the
+templates, and class templates you do not list in `template_instantiations`; free functions (the
 run prints a note). A member declared under `#if` is tested as if it always
 existed, so the test builds only in a configuration that declares it. Existing
 files are never overwritten: a differing one gets a `.new` beside it, and

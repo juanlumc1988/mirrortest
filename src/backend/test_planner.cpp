@@ -4,6 +4,7 @@
 #include "mirrortest/backend/test_planner.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <optional>
 #include <set>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "mirrortest/backend/cxx_format.h"
+#include "mirrortest/backend/template_expand.h"
 #include "mirrortest/core/naming.h"
 #include "mirrortest/ir/classify.h"
 #include "mirrortest/ir/type.h"
@@ -104,6 +106,22 @@ private:
 
 ir::Type qualified(const ir::Type& t, const ir::Class& c) { return ir::type_from_spelling(qualify_nested(t.spelling, c)); }
 
+// What `{Class}` stands for in a name: "Box<int>" is "Box_int", "Box<std::string, 8>" is "Box_std_string_8".
+std::string identifier(const std::string& class_name) {
+    std::string out;
+    bool pending = false;
+    for (char ch : class_name) {
+        if (std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_') {
+            if (pending && !out.empty()) out += '_';
+            pending = false;
+            out += ch;
+        } else {
+            pending = true;
+        }
+    }
+    return out;
+}
+
 // A type that cannot be written before the name of a variable: function
 // pointers and references to arrays (`int(&)[3]`; an array cannot be returned
 // by value), and `auto`. (As an argument it is already "not constructible";
@@ -189,7 +207,8 @@ public:
             if (c.template_params) {
                 diag_.warning(core::code::unsupported,
                               "the class template '" + ir::qualified_name(c.ns, c.name) +
-                                  "' is skipped: tests for templates need instantiations, which are not supported yet",
+                                  "' is skipped: list the instantiations to test in template_instantiations (\"" +
+                                  ir::qualified_name(c.ns, c.name) + "\": [\"int\"])",
                               c.where);
                 continue;
             }
@@ -642,7 +661,7 @@ private:
 
         ir::TestSuite suite;
         suite.name = core::expand_pattern(qtest() ? options_.config.naming.qtest_class : options_.config.naming.suite,
-                                          core::snake_case(c.name), c.name);
+                                          core::snake_case(c.name), identifier(c.name));
         suite.target_class = c.name;
         suite.ns = c.ns;
         bool moves = false;
@@ -655,7 +674,7 @@ private:
 
         ir::TestPlan plan;
         plan.file = core::expand_pattern(qtest() ? options_.config.naming.qtest_file : options_.config.naming.gtest_file,
-                                         core::snake_case(c.name), c.name);
+                                         core::snake_case(c.name), identifier(c.name));
         plan.includes.push_back({qtest() ? "QtTest" : "gtest/gtest.h", true, {}});
         plan.includes.push_back({options_.header_include, false, {}});
         if (moves) plan.includes.push_back({"utility", true, {}});
@@ -678,7 +697,8 @@ private:
 }  // namespace
 
 std::vector<ir::TestPlan> plan_tests(const ir::Model& model, const PlannerOptions& options, core::Diagnostics& diagnostics) {
-    return Planner(model, options, diagnostics).run();
+    const ir::Model instantiated = instantiate_templates(model, options.config, diagnostics);
+    return Planner(instantiated, options, diagnostics).run();
 }
 
 }  // namespace mt::backend

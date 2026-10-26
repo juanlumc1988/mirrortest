@@ -6,10 +6,12 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "mirrortest/backend/template_expand.h"
 #include "mirrortest/backend/test_planner.h"
 #include "mirrortest/core/naming.h"
 #include "mirrortest/frontend/code_frontend.h"
@@ -1358,6 +1360,116 @@ TEST(TestPlannerTable, GoogleTestCanSpellAComma) {
 TEST(TestPlannerTable, DefaultedArgumentsAreLeftOutOfTheTable) {
     const Planned p = plan_table("class Foo { public: void f(int a, int b = 3); };");
     EXPECT_EQ(column_names(by(p, "f")), Lines{"int a"});
+}
+
+// ---- class templates (template_instantiations) --------------------------------------------------------------------------------
+
+namespace {
+
+Planned plan_instances(const std::string& header, std::map<std::string, std::vector<std::string>> instantiations,
+                       core::Config config = {}, ir::Framework framework = ir::Framework::GTest) {
+    config.template_instantiations = std::move(instantiations);
+    return plan(header, std::move(config), "foo.h", framework);
+}
+
+const char* const kBox = "namespace acme { template <typename T, int N = 4> class Box { public: Box(); explicit Box(T v); T get(int i) const; static int capacity(); }; }\n";
+
+}  // namespace
+
+TEST(TestPlannerTemplates, OnePlanPerInstantiationWithTheNamesOfItsOwn) {
+    const Planned p = plan_instances(kBox, {{"acme::Box", {"int", "std::string, 8"}}});
+    ASSERT_EQ(p.plans.size(), 2u);
+    EXPECT_EQ(p.plans[0].file, "box_int_test.cpp");
+    EXPECT_EQ(p.plans[1].file, "box_std_string_8_test.cpp");
+    EXPECT_EQ(suite(p, 0).name, "Box_intTest");
+    EXPECT_EQ(suite(p, 1).name, "Box_std_string_8Test");
+    EXPECT_EQ(suite(p, 0).target_class, "Box<int>");
+    EXPECT_EQ(suite(p, 0).ns, std::vector<std::string>{"acme"});
+}
+
+TEST(TestPlannerTemplates, TheTestsNameTheInstantiation) {
+    const Planned p = plan_instances(kBox, {{"acme::Box", {"std::string, 8"}}});
+    EXPECT_EQ(case_names(p), (Lines{"Constructs", "Constructs_std_string", "get", "capacity"}));
+    EXPECT_EQ(body(p, "get"), (Lines{
+        "placeholder: TODO(mt): write the test for acme::Box<std::string, 8>::get(int) const", "blank", "// Arrange",
+        "Box<std::string, 8> sut;", "int i{};", "// Act", "const Box<std::string, 8>& const_sut = sut;",
+        "const std::string result = const_sut.get(i);", "(void)result;", "// Assert", "// TODO(mt): compare result with the expected value"}));
+    EXPECT_EQ(body(p, "capacity")[4], "const int result = Box<std::string, 8>::capacity();");
+    EXPECT_EQ(body(p, "Constructs_std_string")[3], "std::string v{};");
+    EXPECT_EQ(body(p, "Constructs_std_string")[5], "Box<std::string, 8> sut(v);");
+}
+
+TEST(TestPlannerTemplates, AnInstantiationWithoutADefaultConstructorIsBuiltWithItsOtherConstructor) {
+    const Planned p = plan_instances("template <typename T> class Box { public: explicit Box(T v); T get() const; };\n", {{"Box", {"int"}}});
+    EXPECT_EQ(body(p, "get")[3], "int v{};");
+    EXPECT_EQ(body(p, "get")[4], "Box<int> sut(v);");
+}
+
+TEST(TestPlannerTemplates, ADefaultConstructorIsFoundForTheInstantiation) {
+    // `Box<int> sut();` would declare a function: the class named Box<int> is found, and is default constructible.
+    const Planned p = plan_instances("template <typename T> class Box { public: Box(); T get() const; };\n", {{"Box", {"int"}}});
+    EXPECT_EQ(body(p, "get")[3], "Box<int> sut;");
+}
+
+TEST(TestPlannerTemplates, AnotherTemplateOfTheSameHeaderStaysSkippedWithAnAdvice) {
+    const Planned p = plan_instances(
+        "template <typename T> class Box { public: T get() const; };\n"
+        "template <typename T> class Other { public: T get() const; };\n"
+        "class Plain { public: int size() const; };\n",
+        {{"Box", {"int"}}});
+    ASSERT_EQ(p.plans.size(), 2u);
+    ASSERT_EQ(p.diagnostics.all().size(), 1u);
+    EXPECT_EQ(p.diagnostics.all()[0].message,
+              "the class template 'Other' is skipped: list the instantiations to test in template_instantiations (\"Other\": [\"int\"])");
+}
+
+TEST(TestPlannerTemplates, TheConfigurationErrorsAreWarningsOnTheRun) {
+    const Planned p = plan_instances("template <typename T> class Box { public: T get() const; };\n", {{"Box", {"int, 3", "int"}}});
+    EXPECT_EQ(p.plans.size(), 1u);
+    bool said = false;
+    for (const core::Diagnostic& d : p.diagnostics.all()) said = said || d.code == core::code::config;
+    EXPECT_TRUE(said);
+}
+
+TEST(TestPlannerTemplates, QtTestGetsAClassAndAFileForEach) {
+    const Planned p = plan_instances("template <typename T> class Box { public: T get() const; };\n", {{"Box", {"int", "char"}}}, {}, ir::Framework::QTest);
+    ASSERT_EQ(p.plans.size(), 2u);
+    EXPECT_EQ(p.plans[0].file, "tst_box_int.cpp");
+    EXPECT_EQ(suite(p, 0).name, "TestBox_int");
+    EXPECT_EQ(suite(p, 1).name, "TestBox_char");
+}
+
+TEST(TestPlannerTemplates, TheNamingPatternsStillApply) {
+    core::Config config;
+    config.naming.suite = "{Class}Spec";
+    config.naming.gtest_file = "specs/{stem}.cpp";
+    const Planned p = plan_instances("template <typename T> class Box { public: T get() const; };\n", {{"Box", {"int"}}}, config);
+    EXPECT_EQ(p.plans[0].file, "specs/box_int.cpp");
+    EXPECT_EQ(suite(p).name, "Box_intSpec");
+}
+
+TEST(TestPlannerTemplates, AFixtureOwnsTheInstantiation) {
+    core::Config config;
+    config.gtest.fixture = true;
+    const Planned p = plan_instances("template <typename T> class Box { public: T get() const; };\n", {{"Box", {"int"}}}, config);
+    EXPECT_EQ(fixture_members(fixture_of_suite(p)), Lines{"Box<int> sut;"});
+    EXPECT_EQ(fixture_of_suite(p).name, "Box_intTest");
+}
+
+TEST(TestPlannerTemplates, NoMockIsMadeOfAnInstantiation) {
+    // A mock called MockSensor<int> would not be a name. (The interface that takes the mock as an
+    // argument is a class of the header; an instantiation is not.)
+    core::Diagnostics d;
+    const ir::Model model = frontend::read_header({"foo.h", "template <typename T> class Sensor { public: virtual T read() = 0; };\n"}, "foo.h", {}, d);
+    core::Config config;
+    config.gtest.mocks = true;
+    config.template_instantiations = {{"Sensor", {"int"}}};
+    backend::PlannerOptions options;
+    options.config = config;
+    const ir::Model instantiated = backend::instantiate_templates(model, config, d);
+    ASSERT_EQ(instantiated.classes.size(), 1u);
+    EXPECT_EQ(instantiated.classes[0].name, "Sensor<int>");
+    EXPECT_TRUE(backend::plan_mocks(instantiated, options, d).empty());
 }
 
 }  // namespace

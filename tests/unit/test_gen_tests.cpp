@@ -444,6 +444,34 @@ TEST(GenTestsMocks, TwoHeadersThatShareAnInterfaceNameAreRefused) {
     EXPECT_TRUE(contains(r.err, "both generate")) << r.err;
 }
 
+// ---- class templates ---------------------------------------------------------------------------------------
+
+TEST(GenTestsTemplates, AFileForEachListedInstantiation) {
+    const TempDir dir;
+    write_file(dir.path() / "include/box.h",
+               "namespace acme {\ntemplate <typename T, int N = 4> class Box { public: T get(int) const; };\n"
+               "template <typename T> class Other { public: T get() const; };\n}\n");
+    write_file(dir.path() / "mt.json", R"({"template_instantiations": {"acme::Box": ["int", "std::string, 8"]}})");
+    const Outcome r = gen_tests(dir, {"include/box.h", "--out", "tests", "--config", "mt.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    ASSERT_TRUE(exists(dir, "tests/box_int_test.cpp")) << r.err;
+    ASSERT_TRUE(exists(dir, "tests/box_std_string_8_test.cpp")) << r.err;
+    EXPECT_FALSE(exists(dir, "tests/other_test.cpp"));
+    EXPECT_TRUE(contains(read(dir, "tests/box_int_test.cpp"), "TEST(Box_intTest, get) {")) << read(dir, "tests/box_int_test.cpp");
+    EXPECT_TRUE(contains(read(dir, "tests/box_std_string_8_test.cpp"), "Box<std::string, 8> sut;"));
+    EXPECT_TRUE(contains(r.err, "the class template 'acme::Other' is skipped: list the instantiations to test in template_instantiations")) << r.err;
+}
+
+TEST(GenTestsTemplates, AnInstantiationThatCannotBeMadeIsAWarningNotAnError) {
+    const TempDir dir;
+    write_file(dir.path() / "include/box.h", "template <typename T> class Box { public: T get() const; };\n");
+    write_file(dir.path() / "mt.json", R"({"template_instantiations": {"Box": ["int, 3", "char"]}})");
+    const Outcome r = gen_tests(dir, {"include/box.h", "--out", "tests", "--config", "mt.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(exists(dir, "tests/box_char_test.cpp"));
+    EXPECT_TRUE(contains(r.err, "'Box<int, 3>' gives 2 arguments and the template has 1 [mt-config]")) << r.err;
+}
+
 // ---- Qt Test ------------------------------------------------------------------------------------------------
 
 TEST(GenTestsQt, WritesOneTestClassPerClassNamedAfterTheConfiguredPattern) {

@@ -261,7 +261,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 
 ## Phase 7 — Templates, inheritance, nested namespaces, operators
 
-- [ ] **7.1** Class templates with `template_instantiations` (gen-tests).
+- [x] **7.1** Class templates with `template_instantiations` (gen-tests; design 9.1).
 - [ ] **7.2** Inheritance: inherited methods are not tested in the derived
   class (note); `static_assert(std::is_base_of…)`.
 - [ ] **7.3** Complete nested classes.

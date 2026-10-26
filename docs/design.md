@@ -1219,17 +1219,46 @@ rest of the slots.
 
 ### 9.1 Cases
 
-- Per non-template class with anything public: suite `config.naming.suite`
-  (`{Class}Test`) in the class's namespace.
+- Per class (or instantiation of a class template, below) with anything public:
+  suite `config.naming.suite` (`{Class}Test`) in the class's namespace.
 - One case per public constructor (`Constructs`, and if there are several
   `Constructs_<types>`), per public method that is not deleted, and per
   destructor, and per Qt signal (QTest: a `QSignalSpy` skeleton). A deleted
   member, a member template (it needs instantiations, phase 7) and, until phase
   5, a signal get no case.
-- A class template is skipped with an `mt-unsupported` warning (phase 7); a class
-  with nothing public to test gets an `mt-unsupported` note and no plan. Both
-  are the only diagnostics the planner emits: what a header cannot give the
-  skeleton is said in the skeleton itself, as a `TODO(mt)`.
+- **A class template is tested through the instantiations the configuration
+  lists** (`template_instantiations`, plan 7.1; `backend/template_expand`).
+  Each entry is the text between the `<>` of one instantiation:
+  `"acme::Box": ["int", "std::string, 8"]`. Before planning, every template the
+  configuration names (by its qualified name) is replaced, where it stood, by one
+  class per entry, called `Box<int>` and `Box<std::string, 8>` (the arguments
+  as written, normalised), in which each template parameter is replaced by its
+  argument in every method's return and parameter types, default arguments, fields
+  and bases. A parameter without an argument takes its default, with the parameters
+  before it replaced (`typename A = std::allocator<T>`). The injected class name
+  (`Box clone()`) becomes the instantiation, and a name after `::` or `.` is left
+  alone, as is a number (`3u`). The instantiation is an ordinary class from there on:
+  `Box<int> sut;`, `Box<int>::capacity()`, `Box<int>::Item` for a nested type, and
+  `is_default_constructible` finds it by that name.
+  - One plan, one file and one suite for each instantiation, named from the
+    template and its arguments (`{Class}` is `Box_int`, `{stem}` its
+    `snake_case`, `box_int`): `box_int_test.cpp` and `Box_intTest`, `tst_box_int.cpp`
+    and `TestBox_int` for Qt Test, so every file keeps one class, one entry point.
+  - Reported as `mt-config` warnings on the run, each leaving that instantiation
+    out: more arguments than parameters, fewer than the parameters without a
+    default, a parameter pack (`typename... Ts`, which has no single argument; the
+    template then stays a template). When none of a template's instantiations can
+    be made it is skipped as if unlisted.
+  - A template the configuration does not name is skipped with an
+    `mt-unsupported` warning that says how to list it (`"Box": ["int"]`). A mock is
+    not made of an instantiation (§9.4).
+  - The test includes the header only; a template has no definitions to link, so
+    its members must be in the header. Member templates are skipped as for any
+    class.
+- A class with nothing public to test gets an `mt-unsupported` note and no plan.
+  Those and the template warnings are the only diagnostics the planner emits: what
+  a header cannot give the skeleton is said in the skeleton itself, as a
+  `TODO(mt)`.
 - **Members under `#if`** (§6.5) are all tested, as if each existed: the
   generated test compiles only in a configuration that declares the member it
   calls. Guarding the test with the same condition is a possible extension; the
