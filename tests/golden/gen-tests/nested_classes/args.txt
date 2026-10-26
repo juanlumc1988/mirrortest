@@ -1,0 +1,4 @@
+gen-tests
+${IN}/tree.h
+--out
+${OUT}

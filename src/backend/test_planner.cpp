@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "mirrortest/backend/cxx_format.h"
+#include "mirrortest/backend/nested_expand.h"
 #include "mirrortest/backend/template_expand.h"
 #include "mirrortest/core/naming.h"
 #include "mirrortest/ir/classify.h"
@@ -214,6 +215,7 @@ public:
             }
             std::vector<const ir::Method*> testable = testable_methods(c);
             if (testable.empty() && c.bases.empty()) {
+                if (!c.enclosing.empty()) continue;   // a struct nested in a class is mostly data: not worth a note each
                 core::Diagnostic d;
                 d.severity = core::Severity::Note;
                 d.code = core::code::unsupported;
@@ -723,7 +725,7 @@ private:
 }  // namespace
 
 std::vector<ir::TestPlan> plan_tests(const ir::Model& model, const PlannerOptions& options, core::Diagnostics& diagnostics) {
-    const ir::Model instantiated = instantiate_templates(model, options.config, diagnostics);
+    const ir::Model instantiated = flatten_nested_classes(instantiate_templates(model, options.config, diagnostics));
     return Planner(instantiated, options, diagnostics).run();
 }
 

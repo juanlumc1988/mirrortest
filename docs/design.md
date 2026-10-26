@@ -328,7 +328,7 @@ why it reads **declarations**, not headers: any translation unit will do.
 | `virtual` (anonymous token), `static`, `virtual_specifier` `override`/`final`, `const`, `noexcept`, ref-qualifier | flags |
 | `template_declaration` inside the class | method with `is_template` |
 | `field_declaration` with a non-function declarator (includes `int (*cb)(int)`, arrays, bitfields, `static constexpr`) | `Field` (one per declarator: `int a, *b;`) |
-| `field_declaration` with no declarator whose type is a class/enum, `type_definition`, `alias_declaration` | name goes to `nested_types` (and, for a public enum, to `nested_enums` too: `Foo::Mode m{};` is all a test needs of it); a nested class or struct with a body is also read, like any other, into `Class::nested_classes` (with `nested_access`, and the outer class's `ns`): it is not a `Class` of the model, so nothing that iterates `Model::classes` sees it, but a planner can ask whether `Foo::Item` is default-constructible. Unions and anonymous structs are not read |
+| `field_declaration` with no declarator whose type is a class/enum, `type_definition`, `alias_declaration` | name goes to `nested_types` (and, for a public enum, to `nested_enums` too: `Foo::Mode m{};` is all a test needs of it); a nested class or struct with a body is also read, like any other, into `Class::nested_classes` (with `nested_access`, and the outer class's `ns`): it is not a `Class` of the model, so nothing that iterates `Model::classes` sees it, but a planner can ask whether `Foo::Item` is default-constructible. The test planner makes the public ones classes of their own before it plans (§9.1, `flatten_nested_classes`). Unions and anonymous structs are not read |
 | `friend_declaration`, `using_declaration`, `static_assert_declaration` | not members |
 
 A method already present (same signature) is not added twice. The return type is
@@ -1279,6 +1279,32 @@ rest of the slots.
     planned for this case alone; it is no longer a class with nothing to test.
   - The bases of an instantiation of a class template are the template's with the
     arguments substituted (`Holder<int>`).
+- **A public class nested in another is tested as a class of its own** (plan 7.3;
+  `backend/nested_expand`). Before planning, each public class nested in a class of
+  the model (and in the public ones nested in those, depth first; also those of an
+  instantiation of a template, §9.1 above) becomes a class of the model right after
+  the class that holds it, called by its path, `Tree::Node`, with that path's
+  holder in `Class::enclosing`. The test is written in the namespace of the outer
+  class, where `Tree::Node sut;` is the one name that reaches it, so everything the
+  planner names it by follows from the name: the suite `Tree_NodeTest` and
+  `tree_node_test.cpp` (`{Class}` is `Tree_Node`, `{stem}` is `tree_node`), the
+  `static_assert` of its bases, `Tree::Node::key()` in the target.
+  - The types its members mention are written as in the class, where `Node` is the
+    sibling and `Order` the enum of the outer class; out of it they are
+    `Tree::Node` and `Tree::Order`. So the types the classes around it declare are
+    qualified with their path, the nearest class first (it hides the same name
+    further out, and a name already qualified, or after `::`, is left alone), in
+    return and parameter types, fields and bases, except the names the nested class
+    declares itself, which the planner qualifies with the nested class's own name
+    (`Tree::Leaf::Item`), as for any class.
+  - Not tested: a protected or private nested class (a test cannot name it) and
+    everything inside it, and a nested class template (it needs arguments of its
+    own; a nested template of an instantiated class is not expanded either). A
+    nested class with nothing public to test, and no bases, is **not reported**:
+    unlike the header's own classes, a struct of data nested in a class is the
+    norm, and a note for each would drown the ones that matter. No mock is
+    made of a nested interface (`MockOuter::Iface` is not a name), so an argument
+    of that type is not built with one.
 - A class with nothing public to test, and no bases, gets an `mt-unsupported` note
   and no plan. Those and the template warnings are the only diagnostics the planner emits: what
   a header cannot give the skeleton is said in the skeleton itself, as a

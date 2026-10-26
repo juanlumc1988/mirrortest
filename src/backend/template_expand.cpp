@@ -142,6 +142,14 @@ public:
         return m;
     }
 
+    // The members of `c` and of the classes nested in it, which use the parameters too.
+    void members(ir::Class& c) const {
+        for (ir::Method& m : c.methods) m = method(m);
+        for (ir::Field& f : c.fields) f.type = type(f.type);
+        for (ir::BaseSpec& b : c.bases) b.name = text(b.name);
+        for (ir::Class& n : c.nested_classes) members(n);
+    }
+
 private:
     const std::map<std::string, std::string>& with_;
     std::string                               own_name_;
@@ -238,9 +246,7 @@ ir::Model instantiate_templates(const ir::Model& model, const core::Config& conf
             ir::Class made = c;
             made.name = instance;
             made.template_params.reset();
-            for (ir::Method& m : made.methods) m = inst.method(m);
-            for (ir::Field& f : made.fields) f.type = inst.type(f.type);
-            for (ir::BaseSpec& b : made.bases) b.name = inst.text(b.name);
+            inst.members(made);
             out.classes.push_back(std::move(made));
             any = true;
         }

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "mirrortest/backend/nested_expand.h"
 #include "mirrortest/backend/template_expand.h"
 #include "mirrortest/backend/test_planner.h"
 #include "mirrortest/core/naming.h"
@@ -1572,6 +1573,124 @@ TEST(TestPlannerInheritance, AnInstantiationAssertsTheBaseWithItsArgumentsSubsti
     const Planned p = plan_instances("namespace acme { template <typename T> class Box : public Holder<T> { public: T get() const; }; }\n", {{"acme::Box", {"int"}}});
     EXPECT_EQ(body(p, "Inherits")[1],
               "static_assert(std::is_base_of<Holder<int>, Box<int>>::value, \"acme::Box<int> must derive from Holder<int>\")");
+}
+
+// ---- classes nested in others (nested_expand) --------------------------------------------------------------------------------
+
+TEST(TestPlannerNested, APublicNestedClassHasAPlanOfItsOwn) {
+    const Planned p = plan("class Tree { public: struct Node { int key() const; }; void walk(); };\n");
+    ASSERT_EQ(p.plans.size(), 2u);
+    EXPECT_EQ(case_names(p, 0), Lines{"walk"});
+    EXPECT_EQ(case_names(p, 1), Lines{"key"});
+    EXPECT_EQ(p.plans[1].file, "tree_node_test.cpp");
+    EXPECT_EQ(suite(p, 1).name, "Tree_NodeTest");
+    EXPECT_EQ(suite(p, 1).target_class, "Tree::Node");
+    EXPECT_TRUE(p.diagnostics.empty());
+}
+
+TEST(TestPlannerNested, TheTestNamesTheClassThroughItsOuterOne) {
+    const Planned p = plan("namespace acme { class Tree { public: struct Node { int key() const; }; }; }\n");
+    ASSERT_EQ(p.plans.size(), 1u) << "Tree has nothing public of its own";
+    EXPECT_EQ(suite(p).ns, Lines{"acme"});
+    EXPECT_EQ(body(p, "key"), (Lines{
+        "placeholder: TODO(mt): write the test for acme::Tree::Node::key() const", "blank", "// Arrange", "Tree::Node sut;",
+        "// Act", "const Tree::Node& const_sut = sut;", "const int result = const_sut.key();", "(void)result;",
+        "// Assert", "// TODO(mt): compare result with the expected value"}));
+}
+
+TEST(TestPlannerNested, AConstructorIsCalledThroughTheOuterClassToo) {
+    const Planned p = plan("class Tree { public: class Leaf { public: explicit Leaf(int depth); }; };\n");
+    EXPECT_EQ(case_names(p), Lines{"Constructs"});
+    EXPECT_EQ(body(p, "Constructs"), (Lines{
+        "placeholder: TODO(mt): write the test for Tree::Leaf::Leaf(int)", "blank", "// Arrange", "int depth{};",
+        "// Act", "Tree::Leaf sut(depth);", "(void)sut;", "// Assert", "// TODO(mt): check the state of sut"}));
+}
+
+TEST(TestPlannerNested, TheTypesOfTheOuterClassAreWrittenThroughIt) {
+    const Planned p = plan("class Tree { public: struct Node { int key; }; enum class Order { Pre, Post };\n"
+                           "  class Leaf { public: Node first(const Node& from, Order o) const; }; };\n");
+    EXPECT_EQ(body(p, "first"), (Lines{
+        "placeholder: TODO(mt): write the test for Tree::Leaf::first(const Tree::Node&, Tree::Order) const", "blank", "// Arrange",
+        "Tree::Leaf sut;", "Tree::Node from{};", "Tree::Order o{};", "// Act", "const Tree::Leaf& const_sut = sut;",
+        "const Tree::Node result = const_sut.first(from, o);", "(void)result;", "// Assert",
+        "// TODO(mt): compare result with the expected value"}));
+}
+
+TEST(TestPlannerNested, ATypeOfItsOwnIsQualifiedWithItsOwnName) {
+    const Planned p = plan("class Tree { public: struct Item {}; class Leaf { public: struct Item {}; Item make() const; }; };\n");
+    EXPECT_EQ(body(p, "make")[6], "const Tree::Leaf::Item result = const_sut.make();");
+}
+
+TEST(TestPlannerNested, ANestedClassThatIsNotPublicHasNoPlan) {
+    const Planned p = plan("class Tree { public: void walk(); protected: struct P { void f(); }; private: struct Q { void g(); };\n"
+                           "  public: class R { public: void h(); private: class S { public: void i(); }; }; };\n");
+    ASSERT_EQ(p.plans.size(), 2u);
+    EXPECT_EQ(case_names(p, 1), Lines{"h"});
+    EXPECT_EQ(suite(p, 1).target_class, "Tree::R");
+}
+
+TEST(TestPlannerNested, ANestedClassWithNothingToTestIsSilentAndAnOuterOneIsNot) {
+    const Planned data = plan("class Tree { public: void walk(); struct Node { int key; }; };\n");
+    ASSERT_EQ(data.plans.size(), 1u);
+    EXPECT_TRUE(data.diagnostics.empty()) << "a struct of data nested in a class is the norm";
+    const Planned outer = plan("class Tree { public: struct Node { int key; }; };\n");
+    EXPECT_TRUE(outer.plans.empty());
+    EXPECT_EQ(outer.diagnostics.all().size(), 1u) << "Tree itself has nothing: that is said";
+}
+
+TEST(TestPlannerNested, ClassesNestedDeeperHaveTheWholePath) {
+    const Planned p = plan("class A { public: class B { public: class C { public: void f(); }; }; };\n");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(p.plans[0].file, "a_b_c_test.cpp");
+    EXPECT_EQ(suite(p).name, "A_B_CTest");
+    EXPECT_EQ(body(p, "f")[3], "A::B::C sut;");
+}
+
+TEST(TestPlannerNested, ANestedClassThatDerivesAssertsItsBaseByItsPath) {
+    const Planned p = plan("class Tree { public: struct Node {}; class Leaf : public Node { public: void f(); }; };\n");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(body(p, "Inherits")[1],
+              "static_assert(std::is_base_of<Tree::Node, Tree::Leaf>::value, \"Tree::Leaf must derive from Tree::Node\")");
+}
+
+TEST(TestPlannerNested, QtTestNamesTheClassAndTheFileFromThePath) {
+    const Planned p = plan_qt("class Tree { public: struct Node { int key() const; }; };\n");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(p.plans[0].file, "tst_tree_node.cpp");
+    EXPECT_EQ(suite(p).name, "TestTree_Node");
+}
+
+TEST(TestPlannerNested, AFixtureOwnsTheNestedObject) {
+    core::Config config;
+    config.gtest.fixture = true;
+    const Planned p = plan("class Tree { public: struct Node { int key() const; }; };\n", config);
+    EXPECT_EQ(fixture_members(fixture_of_suite(p)), Lines{"Tree::Node sut;"});
+    EXPECT_EQ(fixture_of_suite(p).name, "Tree_NodeTest");
+}
+
+TEST(TestPlannerNested, ANestedClassOfAnInstantiationIsNamedThroughIt) {
+    const Planned p = plan_instances("template <typename T> class Box { public: struct Slot { T value() const; }; };\n", {{"Box", {"int"}}});
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(p.plans[0].file, "box_int_slot_test.cpp");
+    EXPECT_EQ(suite(p).name, "Box_int_SlotTest");
+    EXPECT_EQ(body(p, "value")[3], "Box<int>::Slot sut;");
+    EXPECT_EQ(body(p, "value")[6], "const int result = const_sut.value();");
+}
+
+TEST(TestPlannerNested, NoMockIsMadeOfANestedInterface) {
+    core::Diagnostics d;
+    const ir::Model model = frontend::read_header({"foo.h", "class Outer { public: class Iface { public: virtual void run() = 0; }; };\n"}, "foo.h", {}, d);
+    core::Config config;
+    config.gtest.mocks = true;
+    backend::PlannerOptions options;
+    options.config = config;
+    EXPECT_TRUE(backend::plan_mocks(backend::flatten_nested_classes(model), options, d).empty()) << "MockOuter::Iface would not be a name";
+}
+
+TEST(TestPlannerNested, ANestedClassCanBeBuiltAsAnArgumentOfTheOuterOne) {
+    const Planned p = plan("class Tree { public: struct Node { Node(); int key() const; }; void insert(const Node& n); };\n");
+    EXPECT_EQ(body(p, "insert")[3], "Tree sut;");
+    EXPECT_EQ(body(p, "insert")[4], "Tree::Node n{};");
 }
 
 }  // namespace

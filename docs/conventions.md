@@ -479,6 +479,15 @@ left to write, and it passes when the file compiles. What the class inherits is
 not tested again in its suite; test it with the base. An overriding function is
 the class's own and has its test.
 
+### Nested classes
+
+A public class nested in a class is tested like any other, by the name that
+reaches it from the namespace: `Tree::Node sut;` in `TEST(Tree_NodeTest, …)`,
+written to `tree_node_test.cpp`. A protected or private nested class has no test
+(the test could not name it), nor does a nested class template, and a nested
+class with nothing public to test (a struct of data) is not mentioned. Mocks
+(`gtest.mocks`) are not made of nested interfaces.
+
 ### Class templates
 
 A class template is tested for the instantiations you list in the

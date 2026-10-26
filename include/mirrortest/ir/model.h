@@ -160,6 +160,10 @@ struct Class {
     std::vector<Class>       nested_classes;
     // For a nested class: the access it was declared under in its outer class.
     Access                   nested_access = Access::Public;
+    // Only in the model the test planner works on (backend/nested_expand): a public nested class
+    // given a place of its own, called `Outer::Inner`; this is the name of the class that holds it
+    // (`Outer`, `Box<int>`), and empty for any other class.
+    std::string              enclosing;
     // "typename T, int N" for a class template; templates are only expanded
     // for instantiations listed in the configuration.
     std::optional<std::string> template_params;

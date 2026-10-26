@@ -46,7 +46,9 @@ public:
     std::vector<ir::MockClass> run() {
         std::vector<ir::MockClass> mocks;
         for (const ir::Class& c : model_.classes) {
-            if (c.name.find('<') != std::string::npos) continue;   // an instantiation of a template (design 9.1): no mock
+            // An instantiation of a template, or a class nested in another (design 9.1): `MockBox<int>` and
+            // `MockOuter::Inner` are not names.
+            if (c.name.find('<') != std::string::npos || !c.enclosing.empty()) continue;
             Pure pure;
             std::set<const ir::Class*> visited;
             collect(c, pure, visited);

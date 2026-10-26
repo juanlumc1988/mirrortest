@@ -264,7 +264,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 - [x] **7.1** Class templates with `template_instantiations` (gen-tests; design 9.1).
 - [x] **7.2** Inheritance: inherited methods are not tested in the derived
   class (a comment in its `Inherits` case); `static_assert(std::is_base_of…)` (design 9.1).
-- [ ] **7.3** Complete nested classes.
+- [x] **7.3** Complete nested classes (gen-tests: the public ones are tested as classes of their own; design 9.1).
 - [ ] **7.4** gen-impl: operators used in tests (`a == b`, `a < b`, `a[i]`),
   enums inferred from `E::X`, exception classes from `EXPECT_THROW` (opt-in).
 - [ ] **7.5** `= delete` on copy/move → `is_copy_constructible`
