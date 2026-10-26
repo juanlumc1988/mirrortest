@@ -10,8 +10,8 @@
 # somebody writes them? Not "does it look right" (the golden files do that).
 #
 #   1. gen-tests over the header of a golden case, into <work>/gen
-#   2. an example implementation of that header compiled as the strictest
-#      embedded code would be: C++11, -Wall -Wextra -Wpedantic -Werror
+#   2. an example implementation of that header compiled under strict rules:
+#      C++11, -Wall -Wextra -Wpedantic -Werror
 #   3. every generated test file compiled as a project's tests are: C++14,
 #      -Wall -Wextra -Werror -- so an unused variable in a skeleton is a failure
 #   4. linked with GoogleTest and run: with the default placeholder every test

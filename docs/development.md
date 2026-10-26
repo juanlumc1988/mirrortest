@@ -55,7 +55,7 @@ before committing.
 | `roundtrip.qt.gen_tests.<case>`, `roundtrip.qt.gen_impl.<case>` | the same for Qt Test, both directions, when Qt 6 (else Qt 5) with its Test module is installed (otherwise one test, `roundtrip.qt`, is reported as skipped). moc is run by the script; a `gen-impl` slot is run alone and must fail, because after the first exception QTest ends the program (`tests/roundtrip/run_qt_case.cmake`, the implementations in `tests/roundtrip/qt/`) |
 | `roundtrip.merge` | the TDD session: generate, implement a method, grow the test, `--overwrite merge`; the work survives and passes, the new stubs are red (`tests/roundtrip/run_merge.cmake`) |
 | `stubs.host.<case>` | the stubs of *every* gen-impl golden compile with `-fsyntax-only` as strict C++11 (`tests/roundtrip/syntax_case.cmake`) |
-| `stubs.arm.<case>` | the same with a cross compiler, if `-DMT_ARM_CXX=arm-linux-gnueabihf-g++` is given (CI does) |
+| `stubs.cross.<case>` | the same with a cross compiler for a 32-bit target, if `-DMT_CROSS_CXX=arm-linux-gnueabihf-g++` is given (CI does) |
 
 A new gen-impl golden case is a new `stubs.host.*` test the next time CMake
 configures; add it to the `roundtrip.*` list in `CMakeLists.txt` when it should be

@@ -71,8 +71,8 @@ parameter. Write the suffix when the type matters:
 | `"text"s`, `"text"sv` | `std::string`, `std::string_view` |
 | `5ms`, `2h` | `std::chrono::milliseconds`, `std::chrono::hours` |
 
-`long` is 4 bytes on ARM32 and 8 on x86-64, so a literal that only fits one of
-them gets a warning. A literal larger than `int` without a suffix is `long
+`long` is 4 bytes on 32-bit targets and on 64-bit Windows and 8 on 64-bit Linux, so
+a literal that only fits one of them gets a warning. A literal larger than `int` without a suffix is `long
 long`.
 
 ### Don't use `auto` for the results of the code under test

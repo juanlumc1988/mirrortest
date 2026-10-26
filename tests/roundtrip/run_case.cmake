@@ -11,7 +11,7 @@
 # running it say red".
 #
 #   1. gen-impl over the test of a golden case, into <work>/gen
-#   2. the stubs compiled as the strictest embedded code would be: C++11,
+#   2. the stubs compiled under strict rules: C++11,
 #      -Wall -Wextra -Wpedantic -Werror (plus -fno-exceptions -fno-rtti for the
 #      abort policy), with the headers the case brings (input/include) on -I
 #   3. the test compiled as the project's tests are: C++14, -Wall -Wextra -Werror

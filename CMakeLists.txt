@@ -187,7 +187,7 @@ if(MT_BUILD_TESTS)
     set_tests_properties(cmake.embed_clash PROPERTIES PASS_REGULAR_EXPRESSION "raw-string terminator")
 
     # gen-impl round trips (docs/design.md 16.3): generate from the test of a
-    # golden case, compile the stubs as strict embedded C++11, compile and run
+    # golden case, compile the stubs as strict C++11, compile and run
     # the test, require every test red, and require that a second run changes
     # nothing. Driven by compiler command lines, not a nested CMake project, so
     # the cases are fast and need no network; GoogleTest is the main build's.
@@ -356,10 +356,10 @@ if(MT_BUILD_TESTS)
     endif()
 
     # Do the stubs of *every* gen-impl golden compile as strict C++11? With the
-    # host compiler always, and with MT_ARM_CXX (a cross compiler, e.g.
-    # arm-linux-gnueabihf-g++, which CI installs) for the target they are for.
-    # Syntax only: nothing is linked or run.
-    set(MT_ARM_CXX "" CACHE STRING "Cross compiler for the stub syntax checks (empty: skip them)")
+    # host compiler always, and with MT_CROSS_CXX (a cross compiler for a 32-bit
+    # target, e.g. arm-linux-gnueabihf-g++, which CI installs) to see the stubs
+    # where `long` and `size_t` are narrower. Syntax only: nothing is linked or run.
+    set(MT_CROSS_CXX "" CACHE STRING "Cross compiler for the stub syntax checks (empty: skip them)")
     file(GLOB mt_golden_impl_cases LIST_DIRECTORIES true RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl"
          "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl/*")
     list(SORT mt_golden_impl_cases)
@@ -383,14 +383,14 @@ if(MT_BUILD_TESTS)
         if(case_qt AND NOT MT_QT)
             continue()
         endif()
-        foreach(kind host arm)
-            if(case_qt AND kind STREQUAL "arm")
+        foreach(kind host cross)
+            if(case_qt AND kind STREQUAL "cross")
                 continue()
             endif()
             if(kind STREQUAL "host")
                 set(compiler "${CMAKE_CXX_COMPILER}")
             else()
-                set(compiler "${MT_ARM_CXX}")
+                set(compiler "${MT_CROSS_CXX}")
             endif()
             if(compiler)
                 add_test(NAME stubs.${kind}.${case}

@@ -185,7 +185,7 @@ TEST(ConfigKeys, PartialNamingKeepsTheOtherPatterns) {
 }
 
 TEST(ConfigKeys, CommentsAreAllowedInTheFile) {
-    const Applied a = apply("{\n  // project policy\n  \"std\": \"c++11\", /* ARM target */\n  \"no_exceptions\": true\n}\n");
+    const Applied a = apply("{\n  // project policy\n  \"std\": \"c++11\", /* the project's standard */\n  \"no_exceptions\": true\n}\n");
     ASSERT_TRUE(a.ok);
     EXPECT_EQ(a.config.cxx_std, CxxStd::Cxx11);
     EXPECT_TRUE(a.config.no_exceptions);

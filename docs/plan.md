@@ -110,7 +110,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   expected model, field by field.
 - [x] **2.3 Literal classifier** — `frontend/literals` (§7.5) complete. Table
   of tests: every row of §7.5, including `-1`, `-1u`, `0xFFFFFFFF`,
-  `4294967296`, `1'000'000`, `5000000000l` (ARM32 warning), `1e-9`, `0x1p3`,
+  `4294967296`, `1'000'000`, `5000000000l` (32-bit `long` warning), `1e-9`, `0x1p3`,
   `'ab'`, `u8"x"` with `--std` 17 and 20, `"x"s`, `10ms`, `1.5_km`.
 - [x] **2.4 GTest recogniser + symbol table + facts** —
   `frontend/test_frontend`, `frontend/facts` (§7.1–7.4, §7.6). *C++ → facts*
@@ -172,12 +172,12 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   `multi_class_includes`, `no_exceptions`. Require compilation with the flags of
   §16.3, `failures == tests`, and idempotence. Also `stubs.host.<case>`: the
   stubs of every gen-impl golden compile as strict C++11.
-- [x] **2.12 CI: ARM and round trip** — a job that installs
-  `g++-arm-linux-gnueabihf` and defines `MT_ARM_CXX` (stubs with `-std=c++11
+- [x] **2.12 CI: cross compiler and round trip** — a job that installs
+  `g++-arm-linux-gnueabihf`, a 32-bit cross compiler, and defines `MT_CROSS_CXX` (stubs with `-std=c++11
   -Wall -Wextra -Wpedantic -Werror -fsyntax-only`; `no_exceptions` additionally
-  with `-fno-exceptions -fno-rtti`): `stubs.arm.<case>` for every gen-impl
+  with `-fno-exceptions -fno-rtti`): `stubs.cross.<case>` for every gen-impl
   golden. The round trips themselves run in the host and sanitizer jobs. (The
-  ARM job could not be run where this was written, which has no cross
+  cross job could not be run where this was written, which has no cross
   compiler; the same script runs with GCC and Clang.)
 - [x] **2.13 User documentation** — `docs/conventions.md`: how to write tests
   the tool understands (the rules of §7 in user language, with examples),

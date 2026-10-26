@@ -27,8 +27,8 @@ README per version).
 | R6 | §6 | Exceptions: use `QVERIFY_EXCEPTION_THROWN` | *Verified*: deprecated since Qt 6.3 in favour of `QVERIFY_THROWS_EXCEPTION(Type, expr)` — **reversed argument order** — which does not exist in Qt 5. | The frontend recognises both; the backend chooses according to `--qt 5\|6` (§9.6). |
 | R7 | §7 | Output compatible with `--std=c++11` | *Verified*: GoogleTest 1.12.x is the last one supporting C++11; 1.13–1.16 require C++14; 1.17 requires C++17. Tests generated for C++11 only compile with GTest ≤ 1.12. | Documented. GTest 1.16.0 is pinned so that C++14 output can be tested. The stub code (no GTest) is tested in C++11. |
 | R8 | §3 | Decide the parser with a spike | *Verified* (spike): tree-sitter-cpp 0.23.4 parses GTest without errors. QTest and Qt headers do **not**: `Q_OBJECT`, `slots`, `signals`, `Q_PROPERTY(…)` and export macros generate `ERROR` nodes and declarations get lost (11 errors in a typical header). With those macros replaced by spaces: 0 errors. | tree-sitter in both directions + a *blanking* preprocessing step that preserves offsets (§5.2). libclang stays as a possible future optional frontend. **[confirmed]** |
-| R9 | §11 | — | tree-sitter does not preprocess: it sees **all** branches of `#if/#else`. Embedded code with `#ifdef TARGET_ARM` can produce duplicate or contradictory declarations. | All branches are visited; exact duplicates are merged; different variants are kept with an `mt-conditional` note (§6.5). |
-| R10 | §4 | Types of integer literals | The type of a large integer depends on the data model: `long` is 32 bits on ARM32 (ILP32) and 64 on x86-64 (LP64). The generator runs on the host but the code is meant for ARM. | `long` is never deduced from magnitude, only from a suffix. Without a suffix and outside `int` → `long long` + warning. Suffix `l` with a value above 32 bits → ARM32 warning (§7.5). |
+| R9 | §11 | — | tree-sitter does not preprocess: it sees **all** branches of `#if/#else`. Code with per-platform `#ifdef`s can produce duplicate or contradictory declarations. | All branches are visited; exact duplicates are merged; different variants are kept with an `mt-conditional` note (§6.5). |
+| R10 | §4 | Types of integer literals | The type of a large integer depends on the data model: `long` is 32 bits on 32-bit targets (ILP32) and on 64-bit Windows (LLP64) and 64 on 64-bit Linux (LP64). The generator runs on the host but the code may be built for another data model. | `long` is never deduced from magnitude, only from a suffix. Without a suffix and outside `int` → `long long` + warning. Suffix `l` with a value above 32 bits → a warning that a 32-bit `long` cannot hold it (§7.5). |
 | R11 | §4 | — | *Verified*: tree-sitter lexes `-1` as a single `number_literal`, not as a unary minus. | The literal classifier accepts a sign. |
 | R12 | §4 | `Foo foo(args);` | `Foo f();` is the *most vexing parse*: it declares a function. *Verified*: tree-sitter gives it as a `function_declarator`. | `mt-vexing-parse` warning; no constructor is inferred. |
 | R13 | §4 | `Foo::bar()` | *Verified*: `Foo::create()` and `ns::create()` are syntactically identical (`namespace_identifier`). | Explicit scope-resolution rule (§7.7). |
@@ -40,7 +40,7 @@ README per version).
 | R19 | §5 | Placeholder arguments in the generated tests | `{}` is ambiguous between `f(int)` and `f(double)` and does not bind to `T&`. Besides, **running** legacy methods with zero values can hang or touch hardware and take down the whole test binary. | Named locals of exact type; the placeholder (`FAIL()`/`QFAIL`) goes **first**: what follows compiles (it checks the API) but does not run (§9.2). |
 | R20 | §5 | Tests on a `const` object | — | `const Foo& const_sut = sut;` for `const` methods; `static_assert(noexcept(…))` for `noexcept` (§9.2). |
 | R21 | §4 | Free functions | Calls to the project's own macros (`MY_EXPECT_OK(x)`) or to libc (`strlen`) would be taken for functions under test. | ALL_CAPS identifiers = macros; a list of known C/standard functions + `external_functions` in the config (§7.8). |
-| R22 | §8 | Stubs | With `-Werror -Wunused-parameter` (common in embedded) the stubs do not compile. | Commented-out parameter names in the definitions: `int Foo::f(int /*value*/)`. |
+| R22 | §8 | Stubs | With `-Werror -Wunused-parameter` (common in strict projects) the stubs do not compile. | Commented-out parameter names in the definitions: `int Foo::f(int /*value*/)`. |
 | R23 | §2, §8 | Deterministic | Not made concrete. | No timestamps or absolute paths; stable order (vectors, never `unordered_*` in emission); LF; final newline; no trailing spaces. The goldens verify it (§16). |
 | R24 | §7 | Dependencies through `FetchContent` with tags | Tags can move. *Verified* in this environment: GitHub's `/archive/` tarballs are blocked by the proxy; `git clone` works. | Shallow git by tag **and** verification of the commit SHA after the download (configure fails on mismatch). Offline mode with `FETCHCONTENT_SOURCE_DIR_*` (§17). *Implemented and tested.* |
 | R25 | §6 | `GTEST_SKIP()`, `INSTANTIATE_TEST_SUITE_P` | They exist since GTest 1.10; before that, `INSTANTIATE_TEST_CASE_P`. | The frontend recognises both names; the backend assumes GTest ≥ 1.10. |
@@ -62,7 +62,7 @@ README per version).
 | D7 | Default write mode `--overwrite=never`: if the file exists and differs, `<file>.new` is written and a warning is issued; if it is identical, it is not touched. | Non-destructive and idempotent (AT §4). |
 | D8 | All or nothing: if there is any error diagnostic, no file is written. Atomic writing (temporary file + `rename`). | Never leave a half-generated tree. |
 | D9 | Configuration: defaults < `--config file.json` < command line. No implicit discovery of configuration files. Unknown keys = error. | Predictable; typos in the config fail instead of being ignored. |
-| D10 | `#ifndef` guards by default (`"guard": "pragma-once"` optional). | Portability and the usual convention in embedded. |
+| D10 | `#ifndef` guards by default (`"guard": "pragma-once"` optional). | Portability and the most widespread convention. |
 | D11 | All generated text (comments, `TODO(mt)`, stub messages and diagnostics) in English. All documentation — design, plan, README, user documentation — and code comments in English as well. | Consistent with the owner's other repositories; the generated code ends up in third-party projects. |
 
 ---
@@ -534,10 +534,10 @@ test.
 | Literal | Type |
 |---|---|
 | unsuffixed integer that fits in 32 signed bits | `int` |
-| unsuffixed decimal integer outside `int` | `long long` + `mt-literal-range` warning (on ARM32 and x86-64 the real type differs) |
+| unsuffixed decimal integer outside `int` | `long long` + `mt-literal-range` warning (on a 32-bit and on a 64-bit data model the real type differs) |
 | unsuffixed hex/oct/bin in `(INT_MAX, UINT_MAX]` | `unsigned int` (the same in ILP32 and LP64) |
 | unsuffixed hex/oct/bin > `UINT_MAX` | `long long` if it fits, otherwise `unsigned long long`; + warning (the standard gives `long`/`unsigned long` in LP64 and `long long` in ILP32) |
-| suffixes `u` · `l` · `ul`/`lu` · `ll` · `ull`/`llu` | `unsigned int` · `long` · `unsigned long` · `long long` · `unsigned long long`; `l`/`ul` with a value outside 32 bits → warning "does not fit in ARM32's `long`" |
+| suffixes `u` · `l` · `ul`/`lu` · `ll` · `ull`/`llu` | `unsigned int` · `long` · `unsigned long` · `long long` · `unsigned long long`; `l`/`ul` with a value outside 32 bits → warning "does not fit a 32-bit long, which is what it is on 32-bit targets and on 64-bit Windows" |
 | `z` · `uz`/`zu` (C++23) | `std::ptrdiff_t` (note: the signed type corresponding to `size_t`) · `std::size_t`; if `--std` < 23 → warning |
 | floating-point unsuffixed · `f` · `l` | `double` · `float` · `long double` |
 | `f16`, `bf16`, … (C++23) | not supported → `mt-literal` |
@@ -569,7 +569,7 @@ the position of the type. Details settled while implementing it:
   `2147483648` does not fit in `int` whatever comes in front of it.
 - A `u` integer above `UINT_MAX` → `unsigned long long` + `mt-literal-range`
   (the standard would give `unsigned long` in LP64). `l` only gives `long`; if
-  the value does not fit in 32 bits, an ARM32 warning. `unsigned long long`
+  the value does not fit in 32 bits, a warning that a 32-bit `long` cannot hold it. `unsigned long long`
   overflow → that type + `mt-literal` "too large". An invalid or user-defined
   suffix (`3f`, `3_km`, `1.5s`, `1.5f16`) is `Unsupported` + `mt-literal`, with
   no type.
@@ -2198,9 +2198,9 @@ Implemented in `core/templates.h` (`TemplateStore`) and
        allowed to warn.
      - Not covered: `QTEST_MAIN` (it needs QtWidgets), hence no round trip for
        `qt_gui_main`.
-   - **ARM**: if `MT_ARM_CXX` is defined (CI installs
-     `g++-arm-linux-gnueabihf`), the same syntax checks run with the cross
-     compiler (`stubs.arm.<case>`): the generated stubs with
+   - **Cross**: if `MT_CROSS_CXX` is defined (CI installs
+     `g++-arm-linux-gnueabihf`, a 32-bit compiler), the same syntax checks run with
+     the cross compiler (`stubs.cross.<case>`): the generated stubs with
      `-std=c++11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only`, and with the
      `abort` policy also `-fno-exceptions -fno-rtti`.
 4. **Corpus of edge cases**: templates, nested namespaces,
@@ -2208,8 +2208,8 @@ Implemented in `core/templates.h` (`TemplateStore`) and
    `enum class`, smart pointers, Qt macros, `#if`.
 5. **Sanitizers** ASan/UBSan in CI on all the tests (already active).
 6. CI: GCC and Clang × Debug/RelWithDebInfo with `-Werror`; a sanitizers job; a
-   round-trip job with Qt 6 (and Qt 5 once the QTest backend exists); an ARM
-   job.
+   round-trip job with Qt 6 (and Qt 5 once the QTest backend exists); a
+   cross-compiler job for a 32-bit target.
 
 ---
 

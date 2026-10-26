@@ -575,10 +575,10 @@ TEST(CodeFrontendEnums, ScopedUnscopedAndUnderlyingTypes) {
 // ---- conditional compilation -----------------------------------------------------------------------------------------
 
 TEST(CodeFrontendConditional, EveryBranchIsRead) {
-    const Read r = read("#ifdef ARM\nint arm_only();\n#else\nint host_only();\n#endif\n");
+    const Read r = read("#ifdef PLATFORM_A\nint platform_a_only();\n#else\nint platform_b_only();\n#endif\n");
     ASSERT_EQ(r.model.functions.size(), 2u);
-    EXPECT_EQ(r.model.functions[0].name, "arm_only");
-    EXPECT_EQ(r.model.functions[1].name, "host_only");
+    EXPECT_EQ(r.model.functions[0].name, "platform_a_only");
+    EXPECT_EQ(r.model.functions[1].name, "platform_b_only");
 }
 
 TEST(CodeFrontendConditional, AClassDefinedInBothBranchesIsOneClassWithTheUnionOfItsMembers) {
@@ -728,7 +728,7 @@ std::vector<core::Diagnostic> with_code(const Read& r, const char* code) {
 TEST(CodeFrontendConditionalNotes, TwoBranchesDeclaringTheSameNameAndArityDifferentlyAreNoted) {
     const Read r = read(
         "class A {\npublic:\n"
-        "#ifdef ARM\n"
+        "#ifdef PLATFORM_A\n"
         "    void set(int v);\n"
         "#else\n"
         "    void set(double v);\n"
