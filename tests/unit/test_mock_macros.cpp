@@ -29,8 +29,15 @@ TEST(MockMacroName, TheTemplateAndCalltypeForms) {
     }
 }
 
+TEST(MockMacroName, TheNumberCanBeAnyOfTheDigits) {
+    for (const char* name : {"MOCK_METHOD0", "MOCK_METHOD1", "MOCK_METHOD2", "MOCK_METHOD3", "MOCK_METHOD4", "MOCK_METHOD5", "MOCK_METHOD6",
+                             "MOCK_METHOD7", "MOCK_METHOD8", "MOCK_METHOD9", "MOCK_CONST_METHOD9", "MOCK_METHOD19"}) {
+        EXPECT_TRUE(is_mock_method_macro(name)) << name;
+    }
+}
+
 TEST(MockMacroName, OtherWordsAreNot) {
-    for (const char* name : {"", "MOCK", "MOCK_", "MOCK_METHODS", "MOCK_METHOD_", "MOCK_METHOD1X", "MOCK_METHOD123", "MOCK_CONST_METHOD",
+    for (const char* name : {"", "1", "12", "_T", "0_WITH_CALLTYPE", "MOCK", "MOCK_", "MOCK_METHODS", "MOCK_METHOD_", "MOCK_METHOD1X", "MOCK_METHOD123", "MOCK_CONST_METHOD",
                              "MOCK_CONST_METHOD_T", "MOCK_METHOD1_WITH", "MOCK_METHOD1_T_T", "MOCK_METHOD1_CALLTYPE", "mock_method",
                              "MOCK_METHODX", "EXPECT_CALL", "ON_CALL", "FAKE_MOCK_METHOD", "MOCK_CONST_METHODS3"}) {
         EXPECT_FALSE(is_mock_method_macro(name)) << name;
@@ -39,6 +46,10 @@ TEST(MockMacroName, OtherWordsAreNot) {
 
 TEST(MockMacroName, ADeclarationOfAWordThatIsNotAMacroIsEmpty) {
     EXPECT_EQ(mock_method_declaration("EXPECT_CALL", "int, read, ()"), "");
+    // Arguments that would do for the old macros, or for the new one: it is the word that is wrong.
+    EXPECT_EQ(mock_method_declaration("EXPECT_CALL", "read, int()"), "");
+    EXPECT_EQ(mock_method_declaration("MOCK_METHODS", "read, int()"), "");
+    EXPECT_EQ(mock_method_declaration("12", "read, int()"), "");
     EXPECT_EQ(mock_method_declaration("", ""), "");
 }
 
@@ -116,6 +127,8 @@ TEST(MockMethodNew, NotWhatTheMacroTakesIsEmpty) {
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD", "int, read, int"), "");         // no parentheses around the arguments
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD", "int, read, (int"), "");
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD", "int, read, (int) (int)"), "");  // the parentheses close before the end
+    EXPECT_EQ(mock_method_declaration("MOCK_METHOD", "int, read, (()"), "");           // they never close
+    EXPECT_EQ(mock_method_declaration("MOCK_METHOD", "int, read, (), ((override)"), "");
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD", ", read, ()"), "");              // no return type
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD", "int, , ()"), "");               // no name
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD", "int, 1read, ()"), "");
@@ -173,6 +186,8 @@ TEST(MockMethodOld, NotWhatTheMacroTakesIsEmpty) {
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD1", "write, void"), "");
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD1", "write, (int)"), "");           // no return type
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD1", "write, void(int"), "");
+    EXPECT_EQ(mock_method_declaration("MOCK_METHOD1", "write, void)"), "");           // a ')' that nothing opened
+    EXPECT_EQ(mock_method_declaration("MOCK_METHOD1", "write, )"), "");
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD1", ", void(int)"), "");
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD1", "1write, void(int)"), "");
     EXPECT_EQ(mock_method_declaration("MOCK_METHOD1", "write, void(int, )"), "");

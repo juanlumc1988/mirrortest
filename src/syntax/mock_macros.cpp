@@ -60,8 +60,8 @@ std::vector<std::string_view> split_arguments(std::string_view text) {
 }
 
 // "(a, b)" -> "a, b" when the parentheses are the whole of the text and enclose it.
+// `text` is one of the parts split_arguments returns, so it has no white space at either end.
 bool unwrap(std::string_view& text) {
-    text = trim(text);
     if (text.size() < 2 || text.front() != '(' || text.back() != ')') return false;
     int depth = 0;
     for (std::size_t i = 0; i < text.size(); ++i) {
@@ -75,7 +75,6 @@ bool unwrap(std::string_view& text) {
 
 // A type that was parenthesised to protect its commas, or not at all.
 std::string plain_type(std::string_view text) {
-    text = trim(text);
     std::string_view inner = text;
     if (unwrap(inner)) return squeeze(inner);
     return squeeze(text);
@@ -105,10 +104,10 @@ struct Specs {
     std::string ref;   // "&", "&&" or ""
 };
 
-Specs read_specs(std::string_view text) {
-    Specs specs;
+// `(const, override)`. False if it is not a parenthesised list.
+bool read_specs(std::string_view text, Specs& specs) {
     std::string_view inner = text;
-    if (!unwrap(inner)) return specs;
+    if (!unwrap(inner)) return false;
     for (std::string_view word : split_arguments(inner)) {
         if (word == "const") specs.is_const = true;
         else if (word == "noexcept") specs.is_noexcept = true;
@@ -117,7 +116,7 @@ Specs read_specs(std::string_view text) {
         else if (starts_with(word, "ref(") && word.back() == ')') specs.ref = squeeze(word.substr(4, word.size() - 5));
         // Calltype(...) is the calling convention of a platform that has one; nothing here depends on it.
     }
-    return specs;
+    return true;
 }
 
 std::string with_specs(std::string declaration, const Specs& specs) {
@@ -145,7 +144,8 @@ std::string new_style(std::string_view arguments) {
             args.push_back(plain_type(arg));
         }
     }
-    const Specs specs = parts.size() == 4 ? read_specs(parts[3]) : Specs{};
+    Specs specs;
+    if (parts.size() == 4 && !read_specs(parts[3], specs)) return {};
     return with_specs(ret + " " + name + "(" + join(args) + ")", specs);
 }
 
@@ -168,7 +168,7 @@ std::string old_style(bool is_const, bool with_calltype, std::string_view argume
             break;
         }
     }
-    if (open == std::string_view::npos || open == 0) return {};
+    if (open == std::string_view::npos) return {};
     const std::string ret = squeeze(function.substr(0, open));
     const std::string_view list = function.substr(open + 1, function.size() - open - 2);
     if (ret.empty()) return {};

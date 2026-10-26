@@ -671,6 +671,13 @@ TEST(PreprocessMocks, AWordWithoutArgumentsIsLeftAlone) {
     }
 }
 
+TEST(PreprocessMocks, AWordFollowedBySomethingElseThanParenthesesIsLeftAlone) {
+    // Not even when a '(' comes a little later: that is not the macro's argument list.
+    for (const char* in : {"int MOCK_METHOD1 x (a);", "MOCK_METHOD", "MOCK_METHOD0 ", "MOCK_METHOD0\n// (a)\n", "x = MOCK_METHOD2 + (a, b);"}) {
+        EXPECT_EQ(preprocess(in, with_mocks()).text, in) << in;
+    }
+}
+
 TEST(PreprocessMocks, InCommentsAndStringsAreLeftAlone) {
     const std::string in = "// MOCK_METHOD(int, f, ());\n/* MOCK_METHOD0(f, int()); */\nconst char* s = \"MOCK_METHOD(int, f, ())\";\n";
     EXPECT_EQ(preprocess(in, with_mocks()).text, in);
