@@ -251,7 +251,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   functions), including the parentheses around types with commas
   (`MOCK_METHOD((std::map<int, int>), …)`). Opt-in with `gtest.mocks`: a mock
   header per interface (design 9.4).
-- [ ] **6.3b** gen-tests: hand the mock to the class that takes the interface —
+- [x] **6.3b** gen-tests: hand the mock to the class that takes the interface —
   `NiceMock<MockSensor>` for a `Sensor&`, `Sensor*` or smart-pointer argument of
   the constructor under `sut` and of a method call — so a class that needs a
   collaborator is built instead of commented out.

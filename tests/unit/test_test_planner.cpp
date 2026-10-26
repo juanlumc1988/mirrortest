@@ -930,4 +930,203 @@ TEST(TestPlannerFixture, QtTestHasNoFixtureYetWhateverTheConfigurationSays) {
     EXPECT_EQ(body(p, "run")[3], "Foo sut;");
 }
 
+// ---- mocks as arguments (gtest.mocks) -------------------------------------------------------------------------------------
+
+namespace {
+
+Planned plan_mocks_on(const std::string& header, core::Config config = {}, ir::Framework framework = ir::Framework::GTest) {
+    config.gtest.mocks = true;
+    return plan(header, std::move(config), "foo.h", framework);
+}
+
+const char* const kSensorAndLogger =
+    "class Sensor { public: virtual ~Sensor() = default; virtual int read() = 0; };\n"
+    "class Logger { public: virtual ~Logger() = default; virtual void log(const std::string& line) = 0; };\n";
+
+std::vector<std::string> include_paths(const Planned& p, std::size_t plan_index) {
+    std::vector<std::string> out;
+    for (const ir::Include& i : p.plans.at(plan_index).includes) out.push_back(i.path);
+    return out;
+}
+
+// The body of the first constructor case of the plan at `at`: the cases are named after their parameter types.
+Lines constructs(const Planned& p, std::size_t at) {
+    for (const ir::TestCase& c : suite(p, at).cases) {
+        if (c.name.rfind("Constructs", 0) == 0) {
+            Lines out;
+            for (const Stmt& st : c.body) out.push_back(show(st));
+            return out;
+        }
+    }
+    ADD_FAILURE() << "no constructor case";
+    return {};
+}
+
+// The plan of the class called `name`.
+std::size_t plan_of(const Planned& p, const char* name) {
+    for (std::size_t i = 0; i < p.plans.size(); ++i) {
+        if (!p.plans[i].suites.empty() && p.plans[i].suites[0].target_class == name) return i;
+    }
+    ADD_FAILURE() << "no plan for " << name;
+    return 0;
+}
+
+}  // namespace
+
+TEST(TestPlannerMockArgs, AReferenceToAnInterfaceIsAMock) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class Controller { public: explicit Controller(Sensor& sensor); };");
+    const std::size_t at = plan_of(p, "Controller");
+    EXPECT_EQ(constructs(p, at), (Lines{
+        "placeholder: TODO(mt): write the test for Controller::Controller(Sensor&)", "blank", "// Arrange",
+        "testing::NiceMock<MockSensor> sensor;", "// Act", "Controller sut(sensor);", "(void)sut;", "// Assert",
+        "// TODO(mt): check the state of sut"}));
+    EXPECT_EQ(include_paths(p, at), (Lines{"gtest/gtest.h", "foo.h", "mock_sensor.h"}));
+}
+
+TEST(TestPlannerMockArgs, ThatIsWhatMakesTheClassBuildable) {
+    const std::string header = std::string(kSensorAndLogger) + "class Controller { public: explicit Controller(Sensor& sensor); int value() const; };";
+    const Planned without = plan(header);
+    EXPECT_EQ(body(without, "value", plan_of(without, "Controller"))[3],
+              "// TODO(mt): 'Controller' has no public constructor that can be called with default values: build sut by hand")
+        << "an interface cannot be built, so neither can the class";
+    const Planned with = plan_mocks_on(header);
+    EXPECT_EQ(body(with, "value", plan_of(with, "Controller"))[3], "testing::NiceMock<MockSensor> sensor;");
+    EXPECT_EQ(include_paths(without, plan_of(without, "Controller")), (Lines{"gtest/gtest.h", "foo.h"}));
+}
+
+TEST(TestPlannerMockArgs, AnythingToAnInterfaceThatIsAPointerGetsItsAddress) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) +
+                                    "class Controller { public: Controller(Sensor* a, const Logger* b, Sensor* const c); };");
+    const Lines b = constructs(p, plan_of(p, "Controller"));
+    EXPECT_EQ(b[3], "testing::NiceMock<MockSensor> a;");
+    EXPECT_EQ(b[4], "testing::NiceMock<MockLogger> b;");
+    EXPECT_EQ(b[5], "testing::NiceMock<MockSensor> c;");
+    EXPECT_EQ(b[7], "Controller sut(&a, &b, &c);");
+}
+
+TEST(TestPlannerMockArgs, ASmartPointerOwnsATemporaryMock) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) +
+                                    "class Controller { public: Controller(std::unique_ptr<Sensor> a, std::shared_ptr<Logger> b, const std::shared_ptr<Sensor>& c); };");
+    const Lines b = constructs(p, plan_of(p, "Controller"));
+    ASSERT_GE(b.size(), 6u);
+    EXPECT_EQ(b[3], "// Act");
+    EXPECT_EQ(b[4],
+              "Controller sut(std::unique_ptr<Sensor>(new testing::NiceMock<MockSensor>), "
+              "std::make_shared<testing::NiceMock<MockLogger>>(), std::make_shared<testing::NiceMock<MockSensor>>());");
+}
+
+TEST(TestPlannerMockArgs, TwoOfTheSameInterfaceDoNotShareAName) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class Controller { public: Controller(Sensor& sensor, Sensor& sensor2, Sensor&); };");
+    const Lines b = constructs(p, plan_of(p, "Controller"));
+    EXPECT_EQ(b[3], "testing::NiceMock<MockSensor> sensor;");
+    EXPECT_EQ(b[4], "testing::NiceMock<MockSensor> sensor2;");
+    EXPECT_EQ(b[5], "testing::NiceMock<MockSensor> arg3;");
+    EXPECT_EQ(b[7], "Controller sut(sensor, sensor2, arg3);");
+}
+
+TEST(TestPlannerMockArgs, TheArgumentsOfAMethodToo) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) +
+                                    "class Controller { public: void attach(Sensor& sensor, int n); static void install(Logger* logger); };");
+    EXPECT_EQ(body(p, "attach", plan_of(p, "Controller")), (Lines{
+        "placeholder: TODO(mt): write the test for Controller::attach(Sensor&, int)", "blank", "// Arrange", "Controller sut;",
+        "testing::NiceMock<MockSensor> sensor;", "int n{};", "// Act", "sut.attach(sensor, n);", "// Assert",
+        "// TODO(mt): check the effect of the call"}));
+    EXPECT_EQ(body(p, "install", plan_of(p, "Controller"))[3], "testing::NiceMock<MockLogger> logger;");
+    EXPECT_EQ(include_paths(p, plan_of(p, "Controller")), (Lines{"gtest/gtest.h", "foo.h", "mock_logger.h", "mock_sensor.h"}));
+}
+
+TEST(TestPlannerMockArgs, ADestructorCaseBuildsItsSutWithMocksToo) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class Controller { public: explicit Controller(Sensor& s); ~Controller(); };");
+    EXPECT_EQ(body(p, "Destructs", plan_of(p, "Controller"))[3], "testing::NiceMock<MockSensor> s;");
+    EXPECT_EQ(body(p, "Destructs", plan_of(p, "Controller"))[4], "Controller sut(s);");
+}
+
+TEST(TestPlannerMockArgs, AFixtureOwnsTheMocksItsSutNeeds) {
+    core::Config config;
+    config.gtest.fixture = true;
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class Controller { public: explicit Controller(Sensor& s); int value() const; };", config);
+    const ir::Fixture& f = fixture_of_suite(p, plan_of(p, "Controller"));
+    EXPECT_EQ(fixture_members(f), (Lines{"testing::NiceMock<MockSensor> s;", "Controller sut;"}));
+    EXPECT_EQ(f.initialisers, Lines{"sut(s)"});
+    EXPECT_EQ(include_paths(p, plan_of(p, "Controller")), (Lines{"gtest/gtest.h", "foo.h", "mock_sensor.h"}));
+}
+
+TEST(TestPlannerMockArgs, TheConstructorTheClassDoesNotNeedIsNotIncluded) {
+    // Controller() is the simplest constructor: the interface of the other is never built, so its mock is not included.
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class Controller { public: Controller(); explicit Controller(Sensor& s); };");
+    EXPECT_EQ(include_paths(p, plan_of(p, "Controller")).size(), 3u) << "the constructor case that takes the mock includes it";
+    const Planned only = plan_mocks_on(std::string(kSensorAndLogger) + "class Controller { public: Controller(); void run(); };");
+    EXPECT_EQ(include_paths(only, plan_of(only, "Controller")), (Lines{"gtest/gtest.h", "foo.h"}));
+}
+
+TEST(TestPlannerMockArgs, ADifferentNamespaceNamesTheMockInFull) {
+    const Planned p = plan_mocks_on(
+        "namespace hw { class Sensor { public: virtual int read() = 0; }; }\n"
+        "namespace app { class Controller { public: explicit Controller(hw::Sensor& s); }; }\n");
+    EXPECT_EQ(constructs(p, plan_of(p, "Controller"))[3], "testing::NiceMock<hw::MockSensor> s;");
+}
+
+TEST(TestPlannerMockArgs, TheSameNamespaceNeedsNoQualifier) {
+    const Planned p = plan_mocks_on(
+        "namespace hw { class Sensor { public: virtual int read() = 0; };\n"
+        " class Controller { public: explicit Controller(Sensor& s); }; }\n");
+    EXPECT_EQ(constructs(p, plan_of(p, "Controller"))[3], "testing::NiceMock<MockSensor> s;");
+}
+
+TEST(TestPlannerMockArgs, TwoInterfacesOfOneNameTheClassOwnNamespaceWins) {
+    const Planned p = plan_mocks_on(
+        "namespace a { class Sensor { public: virtual int read() = 0; }; class User { public: explicit User(Sensor& s); }; }\n"
+        "namespace b { class Sensor { public: virtual int read() = 0; }; }\n");
+    EXPECT_EQ(constructs(p, plan_of(p, "User"))[3], "testing::NiceMock<MockSensor> s;");
+}
+
+TEST(TestPlannerMockArgs, TwoInterfacesOfOneNameAndNeitherIsTheClassOwnMeansNone) {
+    const Planned p = plan_mocks_on(
+        "namespace a { class Sensor { public: virtual int read() = 0; }; }\n"
+        "namespace b { class Sensor { public: virtual int read() = 0; }; }\n"
+        "namespace c { class User { public: explicit User(Sensor& s); }; }\n");
+    EXPECT_EQ(constructs(p, plan_of(p, "User"))[3], "// TODO(mt): an argument of type 'Sensor' cannot be built here");
+}
+
+TEST(TestPlannerMockArgs, AMockThatIsStillAbstractIsNotUsed) {
+    const Planned p = plan_mocks_on("class Sensor { public: virtual bool operator==(const Sensor&) const = 0; virtual int read() = 0; };\n"
+                                    "class User { public: explicit User(Sensor& s); };\n");
+    EXPECT_EQ(constructs(p, plan_of(p, "User"))[3], "// TODO(mt): an argument of type 'Sensor' cannot be built here");
+}
+
+TEST(TestPlannerMockArgs, WhatIsNotAnInterfaceOrNotMockableByItsShapeIsAsBefore) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) +
+                                    "class Plain { public: int a; };\n"
+                                    "class User { public: User(Plain& a, Sensor&& b, Sensor** c, std::vector<Sensor*> d); };\n");
+    const Lines b = constructs(p, plan_of(p, "User"));
+    ASSERT_GE(b.size(), 8u);
+    EXPECT_EQ(b[3], "// TODO(mt): an argument of type 'Sensor' cannot be built here") << "the first one that is not Plain";
+    for (const std::string& line : b) EXPECT_EQ(line.find("NiceMock"), std::string::npos) << line;
+}
+
+TEST(TestPlannerMockArgs, ByValueIsNotAnInterfaceEither) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class User { public: explicit User(Sensor s); };\n");
+    EXPECT_EQ(constructs(p, plan_of(p, "User"))[3], "// TODO(mt): an argument of type 'Sensor' cannot be built here");
+}
+
+TEST(TestPlannerMockArgs, QtTestHasNoMocks) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class User { public: explicit User(Sensor& s); };\n", {}, ir::Framework::QTest);
+    EXPECT_EQ(constructs(p, plan_of(p, "User"))[3], "// TODO(mt): an argument of type 'Sensor' cannot be built here");
+}
+
+TEST(TestPlannerMockArgs, TheMockFileOfAnotherNamePatternIsWhatIsIncluded) {
+    core::Config config;
+    config.naming.mock_file = "mocks/{stem}_mock.h";
+    config.naming.mock_class = "{Class}Mock";
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class User { public: explicit User(Sensor& s); };\n", config);
+    EXPECT_EQ(constructs(p, plan_of(p, "User"))[3], "testing::NiceMock<SensorMock> s;");
+    EXPECT_EQ(include_paths(p, plan_of(p, "User")), (Lines{"gtest/gtest.h", "foo.h", "mocks/sensor_mock.h"}));
+}
+
+TEST(TestPlannerMockArgs, PlanningTheTestsSaysNothingTheMocksDoNot) {
+    // The mocks are planned to know what an argument is built with; their notes are said once, by whoever writes them.
+    const Planned p = plan_mocks_on("template <typename T> class Sensor { public: virtual T read() = 0; };\nclass User { public: User(); };\n");
+    for (const core::Diagnostic& d : p.diagnostics.all()) EXPECT_EQ(d.message.find("no mock is generated"), std::string::npos) << d.message;
+}
+
 }  // namespace

@@ -1440,10 +1440,31 @@ TEST(FooTest, size) {
     with the name of the mock already (a note), when nothing is left to mock.
   - The same output name for two interfaces of two headers is the usual refusal
     of §10 (different content under one path).
-  - Nothing else changes: the tests of an interface are still comments (an
-    abstract class cannot be built), and a class that takes an interface as an
-    argument still gets a null pointer or a commented-out call. Handing it the
-    mock is the next step (plan 6.3b).
+  - **The mock is what an interface argument is built with** (plan 6.3b).
+    Wherever the planner makes the arguments of a call —the constructor under
+    `sut`, a constructor case, a method, the fixture's members— a parameter whose
+    type is an interface of this header with a mock takes the mock instead of a
+    local that cannot be built:
+    - `Sensor&`, `const Sensor&` → `testing::NiceMock<MockSensor> sensor;` and
+      `sensor`; `Sensor*`, `const Sensor*`, `Sensor* const` → the same and
+      `&sensor`;
+    - `std::unique_ptr<Sensor>` (by value) →
+      `std::unique_ptr<Sensor>(new testing::NiceMock<MockSensor>)`;
+      `std::shared_ptr<Sensor>` (by value or `const&`) →
+      `std::make_shared<testing::NiceMock<MockSensor>>()`: a temporary, so no
+      local;
+    - `NiceMock` because an uninteresting call to it is not a warning;
+      the mock's name carries the namespace when the interface's differs from the
+      class's (`hw::MockSensor`);
+    - by value, `&&`, `**`, a container of pointers: as before (a comment).
+    The interface is found by the simple name of the type; two interfaces of that
+    name in different namespaces: the one in the class's own, else none. A mock
+    that has notes (an operator, a base it cannot see) is still abstract and is
+    not used. The test file includes the mock headers it uses, by
+    `naming.mock_file` as it is (the file sits beside the tests), after the
+    header under test; the constructors the plan does not use add none. The
+    tests of the interface itself are still comments (an abstract class cannot be
+    built).
   - Round trip (§16.3): `tests/roundtrip/gen-tests/<case>.mocks.cpp` is one more
     translation unit that includes the generated mock headers and proves, at
     compile time, that each mock is not abstract and is its interface.

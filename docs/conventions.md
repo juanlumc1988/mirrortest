@@ -479,6 +479,15 @@ in the header (it may have pure functions of its own). Class templates get no
 mock, and neither does an interface whose mock name the header declares already.
 Nothing is written without the option, and Qt Test has no mocks.
 
+The mock is also what the other tests build with. A class that takes an interface
+of the header -- `Controller(Sensor& sensor, Logger* logger)` -- gets
+`testing::NiceMock<MockSensor> sensor;` and `Controller sut(sensor, &logger);`
+instead of a commented-out test, in the constructor under `sut`, in a method's
+arguments and in a fixture's members; a `std::unique_ptr<Sensor>` is given a
+`new testing::NiceMock<MockSensor>` and a `std::shared_ptr<Sensor>` a
+`std::make_shared<...>()`. The test then includes the mock header. An interface
+whose mock needs to be finished by hand (it has a `TODO(mt)`) is not used.
+
 With `--framework qtest` the file is `tst_foo.cpp` and holds a `QObject` called
 `TestFoo` whose private slots are the tests, an entry point (`--qt-main
 appless|guiless|gui`, `guiless` by default) and `#include "tst_foo.moc"` -- the

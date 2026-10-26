@@ -1,0 +1,1 @@
+With `gtest.mocks`, a class that takes an interface is built with the mock of it: `testing::NiceMock<MockSensor> sensor;` for a reference or a pointer (`&logger`), a temporary for a smart pointer. The tests include the mock headers they use, and `Controller` is buildable instead of a comment. Without the option the same header gives commented-out tests.

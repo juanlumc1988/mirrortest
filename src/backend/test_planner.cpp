@@ -148,6 +148,7 @@ struct Args {
     bool                     uses_move = false;   // meaningful only if ok: a commented-out call needs no <utility>
     std::string              left_out;   // what the call does not pass, for a TODO: "the arguments that have default values"
     std::string              why;       // when !ok: the first argument that cannot be built
+    std::vector<std::string> mock_headers;   // of the mocks that stand in for interfaces here (gtest.mocks)
 };
 
 // The object under test. A constructor that takes `T&&` is moved into here
@@ -160,6 +161,7 @@ struct Sut {
     std::string              declaration;   // "Foo sut" or "Foo sut(arg1, arg2)"
     std::string              initialiser;   // "sut(arg1, arg2)" for a fixture's constructor; empty if Foo is default constructed
     std::string              why;           // when !available
+    std::vector<std::string> mock_headers;  // as for Args
 };
 
 class Planner {
@@ -167,6 +169,10 @@ public:
     Planner(const ir::Model& model, const PlannerOptions& options, core::Diagnostics& diagnostics)
         : model_(model), options_(options), diag_(diagnostics) {
         models_.push_back(&model_);
+        // The mocks gtest.mocks writes are also what an interface argument is built with. What
+        // planning them has to say is said once, by whoever asks for them as files.
+        core::Diagnostics quiet;
+        mocks_ = plan_mocks(model_, options_, quiet);
     }
 
     std::vector<ir::TestPlan> run() {
@@ -220,6 +226,65 @@ private:
         return ir::is_default_constructible(t, models_, options_.config.default_constructible_types);
     }
 
+    // ---- mocks as arguments -----------------------------------------------------------------------------------
+
+    // How a parameter that takes an interface is filled with the mock of it (gtest.mocks).
+    struct MockUse {
+        enum class Kind { Local, Owned, Shared };
+        Kind        kind = Kind::Local;
+        bool        address = false;   // `&sensor` for a pointer
+        std::string type;              // "testing::NiceMock<MockSensor>"
+        std::string interface;         // as the parameter writes it, for a smart pointer: "Sensor"
+        std::string header;
+    };
+
+    static std::string without_scope(const std::string& name) {
+        const std::size_t sep = name.rfind("::");
+        return sep == std::string::npos ? name : name.substr(sep + 2);
+    }
+
+    // The mock whose interface is called `name`, if there is exactly one that can be built: one that
+    // says it leaves something out (an operator, a base it cannot see) is still abstract. Two interfaces
+    // of that name in different namespaces: the one in the class's own, else none.
+    const ir::MockClass* find_mock(const std::string& name, const ir::Class& c) const {
+        const std::string wanted = without_scope(name);
+        std::vector<const ir::MockClass*> found;
+        for (const ir::MockClass& m : mocks_) {
+            if (m.base == wanted) found.push_back(&m);
+        }
+        if (found.size() > 1) {
+            std::vector<const ir::MockClass*> same_namespace;
+            for (const ir::MockClass* m : found) {
+                if (m->ns == c.ns) same_namespace.push_back(m);
+            }
+            found = same_namespace;
+        }
+        if (found.size() != 1 || !found[0]->notes.empty()) return nullptr;
+        return found[0];
+    }
+
+    std::optional<MockUse> mock_for(const ir::Type& t, const ir::Class& c) const {
+        if (mocks_.empty() || is_exotic(t)) return std::nullopt;
+        std::string interface = t.base;
+        MockUse use;
+        if (t.pointer_depth == 0 && (t.ref == ir::RefKind::None || (t.ref == ir::RefKind::LValue && t.is_const)) &&
+            (starts_with(t.base, "std::unique_ptr<") || starts_with(t.base, "std::shared_ptr<")) && ends_with(t.base, ">")) {
+            use.kind = starts_with(t.base, "std::unique_ptr<") ? MockUse::Kind::Owned : MockUse::Kind::Shared;
+            const std::size_t open = t.base.find('<');
+            interface = t.base.substr(open + 1, t.base.size() - open - 2);
+        } else if (t.pointer_depth == 1 && t.ref == ir::RefKind::None) {
+            use.address = true;
+        } else if (!(t.pointer_depth == 0 && t.ref == ir::RefKind::LValue)) {
+            return std::nullopt;
+        }
+        const ir::MockClass* mock = find_mock(interface, c);
+        if (mock == nullptr) return std::nullopt;
+        use.type = "testing::NiceMock<" + (mock->ns == c.ns ? mock->name : ir::qualified_name(mock->ns, mock->name)) + ">";
+        use.interface = interface;
+        use.header = mock->file;
+        return use;
+    }
+
     // ---- arguments --------------------------------------------------------------------------------------------
 
     Args make_args(const ir::Class& c, const std::vector<ir::Param>& params, Names& names) const {
@@ -235,6 +300,20 @@ private:
                 break;
             }
             const ir::Type type = qualified(p.type, c);
+            if (const std::optional<MockUse> mock = mock_for(type, c)) {
+                args.mock_headers.push_back(mock->header);
+                if (mock->kind == MockUse::Kind::Owned) {
+                    args.expressions.push_back("std::unique_ptr<" + mock->interface + ">(new " + mock->type + ")");
+                } else if (mock->kind == MockUse::Kind::Shared) {
+                    args.expressions.push_back("std::make_shared<" + mock->type + ">()");
+                } else {
+                    const std::string name = names.reserve(p.name.empty() ? "arg" + std::to_string(i + 1) : p.name);
+                    args.locals.push_back(code(mock->type + " " + name));
+                    args.names.push_back(name);
+                    args.expressions.push_back(mock->address ? "&" + name : name);
+                }
+                continue;
+            }
             if (args.ok && !constructible(type)) {
                 args.ok = false;
                 args.why = "an argument of type '" + local_type(type) + "' cannot be built here";
@@ -292,6 +371,7 @@ private:
         sut.available = true;
         sut.setup = args.locals;
         sut.names = args.names;
+        sut.mock_headers = args.mock_headers;
         sut.declaration = c.name + " " + sut_name + "(" + join(args.expressions, ", ") + ")";
         sut.initialiser = sut_name + "(" + join(args.expressions, ", ") + ")";
         return sut;
@@ -340,8 +420,11 @@ private:
         return tc;
     }
 
+    void use_mocks(const std::vector<std::string>& headers) { mock_headers_.insert(headers.begin(), headers.end()); }
+
     void plan_constructor(const ir::Class& c, const ir::Method& m, Names& names, std::vector<Stmt>& body) {
         const Args args = make_args(c, m.params, names);
+        use_mocks(args.mock_headers);
         const bool buildable = args.ok && !is_abstract(c);
         if (!args.ok) body.push_back(comment("TODO(mt): " + args.why));
         if (is_abstract(c)) body.push_back(comment("TODO(mt): '" + c.name + "' is abstract: construct a class derived from it instead"));
@@ -368,6 +451,7 @@ private:
             return;
         }
         const Sut sut = make_sut(c, names, "sut");
+        use_mocks(sut.mock_headers);
         add_locals(body, sut.setup, false);
         if (!sut.available) body.push_back(comment("TODO(mt): " + sut.why));
         body.push_back(code(sut.available ? sut.declaration : c.name + " sut", !sut.available));
@@ -384,6 +468,7 @@ private:
     void plan_signal(const ir::Class& c, const ir::Method& m, Names& names, std::vector<Stmt>& body) {
         names.reserve("spy");
         const Sut sut = make_sut(c, names, "sut");
+        use_mocks(sut.mock_headers);
         add_locals(body, sut.setup, false);   // empty unless sut is available
         if (!sut.available) body.push_back(comment("TODO(mt): " + sut.why));
         body.push_back(code(sut.available ? sut.declaration : c.name + " sut", !sut.available));
@@ -410,6 +495,8 @@ private:
         sut.available = true;
         if (!m.is_static) sut = fixture_sut_ ? *fixture_sut_ : make_sut(c, names, "sut");
         const Args args = make_args(c, m.params, names);
+        use_mocks(sut.mock_headers);
+        use_mocks(args.mock_headers);
         const bool buildable = sut.available && args.ok;
 
         if (!m.is_static && !fixture_sut_) {
@@ -470,6 +557,7 @@ private:
         Names reserved;
         for (const char* used : {"sut", "const_sut", "result", "object"}) reserved.reserve(used);
         Sut sut = make_sut(c, reserved, "sut");
+        use_mocks(sut.mock_headers);
 
         ir::Fixture fixture;
         fixture.name = name;
@@ -505,6 +593,7 @@ private:
         suite.target_class = c.name;
         suite.ns = c.ns;
         bool moves = false;
+        mock_headers_.clear();
         if (fixture()) suite.fixture = plan_fixture(c, suite.name);
         for (std::size_t i = 0; i < testable.size(); ++i) {
             suite.cases.push_back(plan_case(c, *testable[i], names[i]));
@@ -517,6 +606,7 @@ private:
         plan.includes.push_back({qtest() ? "QtTest" : "gtest/gtest.h", true, {}});
         plan.includes.push_back({options_.header_include, false, {}});
         if (moves) plan.includes.push_back({"utility", true, {}});
+        for (const std::string& header : mock_headers_) plan.includes.push_back({header, false, {}});
         plan.suites.push_back(std::move(suite));
         return plan;
     }
@@ -526,6 +616,8 @@ private:
     core::Diagnostics&            diag_;
     std::vector<const ir::Model*> models_;
     bool                          uses_move_ = false;
+    std::vector<ir::MockClass>    mocks_;          // gtest.mocks: what an interface argument is built with
+    std::set<std::string>         mock_headers_;   // of the mocks the class being planned uses
     std::optional<Sut>            fixture_sut_;   // set by plan_fixture() for each class; read only when fixture() is on
 };
 
