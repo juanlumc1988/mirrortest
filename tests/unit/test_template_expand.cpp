@@ -116,6 +116,56 @@ TEST(TemplateParams, APackHasNoSingleArgument) {
     EXPECT_FALSE(backend::parse_template_params("typename T, int... Ns", p));
 }
 
+TEST(TemplateParams, SpacesAroundTheParametersAreNotPartOfThem) {
+    std::vector<TemplateParam> p;
+    ASSERT_TRUE(backend::parse_template_params("  typename T  ,\n  int N = 4  ", p));
+    ASSERT_EQ(p.size(), 2u);
+    EXPECT_EQ(p[0].name, "T");
+    EXPECT_EQ(p[1].name, "N");
+    EXPECT_EQ(p[1].default_value, "4");
+}
+
+TEST(TemplateParams, AnEqualsInTheTypeBeforeTheDefaultIsNotTheDefault) {
+    // The usual way to write an overload set: a non-type parameter of a type that contains `<=` or `==`.
+    std::vector<TemplateParam> p;
+    ASSERT_TRUE(backend::parse_template_params("typename T, std::enable_if_t<(sizeof(T) <= 4), int> = 0, std::enable_if_t<N == 3, int> = 1", p));
+    ASSERT_EQ(p.size(), 3u);
+    EXPECT_TRUE(p[1].has_default);
+    EXPECT_EQ(p[1].default_value, "0");
+    EXPECT_EQ(p[1].name, "") << "the parameter is unnamed: int, behind the closing bracket, is not its name";
+    EXPECT_EQ(p[2].default_value, "1");
+}
+
+TEST(TemplateParams, OperatorsInADefaultAreNotBrackets) {
+    std::vector<TemplateParam> p;
+    ASSERT_TRUE(backend::parse_template_params("int N = 1 << 3, int M = 2, typename T = decltype(a->b), bool B = (3 >= 2), int K = 8 >> 1, int L = 5", p));
+    ASSERT_EQ(p.size(), 6u);
+    EXPECT_EQ(p[0].default_value, "1 << 3");
+    EXPECT_EQ(p[1].default_value, "2");
+    EXPECT_EQ(p[2].default_value, "decltype(a->b)");
+    EXPECT_EQ(p[3].default_value, "(3 >= 2)");
+    EXPECT_EQ(p[4].default_value, "8 >> 1");
+    EXPECT_EQ(p[5].default_value, "5");
+}
+
+TEST(TemplateParams, NestedAngleBracketsCloseEachOther) {
+    std::vector<TemplateParam> p;
+    ASSERT_TRUE(backend::parse_template_params("typename A = std::map<int, std::vector<int>>, typename B = int", p));
+    ASSERT_EQ(p.size(), 2u);
+    EXPECT_EQ(p[0].default_value, "std::map<int, std::vector<int>>");
+    EXPECT_EQ(p[1].default_value, "int");
+}
+
+TEST(TemplateParams, WhatIsLeftInTheOutputIsReplaced) {
+    std::vector<TemplateParam> p;
+    ASSERT_TRUE(backend::parse_template_params("typename A, typename B", p));
+    ASSERT_TRUE(backend::parse_template_params("typename C", p));
+    ASSERT_EQ(p.size(), 1u);
+    EXPECT_EQ(p[0].name, "C");
+    ASSERT_TRUE(backend::parse_template_params("", p));
+    EXPECT_TRUE(p.empty());
+}
+
 TEST(TemplateParams, NoParametersIsFine) {
     std::vector<TemplateParam> p;
     EXPECT_TRUE(backend::parse_template_params("", p));
@@ -130,6 +180,11 @@ TEST(TemplateArguments, SplitAtTheTopLevel) {
               (Lines{"std::map<int, std::string>", "void(*)(int, int)", "3"}));
     EXPECT_TRUE(backend::split_template_arguments("").empty());
     EXPECT_TRUE(backend::split_template_arguments("   ").empty());
+    EXPECT_EQ(backend::split_template_arguments("  int ,\t8  "), (Lines{"int", "8"})) << "spaces belong to no argument";
+    EXPECT_EQ(backend::split_template_arguments("a<(b), c>, [d, e], {f, g}"), (Lines{"a<(b), c>", "[d, e]", "{f, g}"}));
+    EXPECT_EQ(backend::split_template_arguments("1 << 2, (3 < 4), std::vector<std::vector<int>>, a->b"),
+              (Lines{"1 << 2", "(3 < 4)", "std::vector<std::vector<int>>", "a->b"}));
+    EXPECT_EQ(backend::split_template_arguments("5 > 4, 2"), (Lines{"5 > 4", "2"})) << "a > with no < before it compares";
 }
 
 // ---- the instantiations ----------------------------------------------------------------------------------------
@@ -289,6 +344,49 @@ TEST(TemplateExpand, AnUnnamedParameterTakesItsArgumentAndSubstitutesNothing) {
 TEST(TemplateExpand, TheArgumentsAreNormalisedInTheName) {
     const Expanded e = expand("template <typename T> class Box { public: T get() const; };\n", {{"Box", {"std::map< int,int >"}}});
     EXPECT_EQ(class_names(e), (Lines{"Box<std::map<int, int>>"}));
+}
+
+TEST(TemplateExpand, ASubstitutedTypeKeepsWhereItCameFromAndWhy) {
+    core::Diagnostics d;
+    ir::Model model = frontend::read_header({"box.h", "template <typename T> class Box {\npublic:\n    T get(T value) const;\n};\n"}, "box.h", {}, d);
+    ir::Method& get = model.classes[0].methods[0];
+    get.ret.reason = "because I said so";
+    get.params[0].type.reason = "and so";
+    core::Config config;
+    config.template_instantiations = {{"Box", {"int"}}};
+    const ir::Model made = backend::instantiate_templates(model, config, d);
+    ASSERT_EQ(made.classes.size(), 1u);
+    const ir::Method& m = made.classes[0].methods[0];
+    EXPECT_EQ(m.ret.spelling, "int");
+    EXPECT_EQ(m.ret.origin, get.ret.origin);
+    EXPECT_EQ(m.ret.reason, "because I said so");
+    EXPECT_EQ(m.ret.where.line, 3u);
+    EXPECT_EQ(m.params[0].type.reason, "and so");
+    EXPECT_EQ(m.params[0].type.where.line, 3u);
+}
+
+TEST(TemplateExpand, ATypeThatMentionsNothingIsNotTouched) {
+    const Expanded e = expand("template <typename T> class Box { public: Box(); int size() const; };\n", {{"Box", {"int"}}});
+    const ir::Class& c = the_class(e, "Box<int>");
+    EXPECT_EQ(c.methods[0].ret.spelling, "");
+    EXPECT_EQ(c.methods[1].ret.spelling, "int");
+}
+
+TEST(TemplateExpand, TheArgumentsAndTheDefaultsAreNormalisedBeforeTheyAreSubstituted) {
+    const Expanded e = expand("template <typename T, typename A = std::allocator< T >> class Box { public: A alloc() const; T get() const; };\n",
+                              {{"Box", {"std::map< int , int >"}}});
+    const ir::Class& c = the_class(e, "Box<std::map<int, int>>");
+    EXPECT_EQ(c.methods[0].ret.spelling, "std::allocator<std::map<int, int>>");
+    EXPECT_EQ(c.methods[1].ret.spelling, "std::map<int, int>");
+}
+
+TEST(TemplateExpand, ANumberWithADotOrAQuoteIsNotMistakenForAName) {
+    const Expanded e = expand("template <typename f, typename x> class Box { public: std::array<f, 1'000> a(float s = 1.5f, double t = 2.0e3); };\n",
+                              {{"Box", {"int, char"}}});
+    const ir::Method& a = the_class(e, "Box<int, char>").methods[0];
+    EXPECT_EQ(a.ret.spelling, "std::array<int, 1'000>");
+    EXPECT_EQ(a.params[0].default_value.value_or(""), "1.5f");
+    EXPECT_EQ(a.params[1].default_value.value_or(""), "2.0e3");
 }
 
 TEST(TemplateExpand, NothingToInstantiateLeavesTheModelAlone) {

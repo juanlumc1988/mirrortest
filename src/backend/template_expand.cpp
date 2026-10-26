@@ -27,37 +27,58 @@ std::string trim(const std::string& s) {
     return s.substr(begin, end - begin);
 }
 
-// Splits `text` at the commas that are not inside <>, (), [] or {}.
+// Where in a list of template parameters or arguments the scan is: inside brackets or not. Round,
+// square and curly ones always count; an angle bracket only outside those, where `<` can only be a
+// comparison, and when it is not an operator (`<<`, `<=`, `->`). A `>` with no `<` open is a
+// comparison too.
+class Brackets {
+public:
+    bool at_top_level() const { return round_ == 0 && angle_ == 0; }
+
+    void feed(const std::string& text, std::size_t i) {
+        const char c = text[i];
+        const char before = i > 0 ? text[i - 1] : ' ';
+        const char after = i + 1 < text.size() ? text[i + 1] : ' ';
+        if (c == '(' || c == '[' || c == '{') {
+            ++round_;
+        } else if (c == ')' || c == ']' || c == '}') {
+            if (round_ > 0) --round_;
+        } else if (round_ == 0 && c == '<' && before != '<' && after != '<' && after != '=') {
+            ++angle_;
+        } else if (round_ == 0 && c == '>' && angle_ > 0 && before != '-') {
+            --angle_;
+        }
+    }
+
+private:
+    int round_ = 0;
+    int angle_ = 0;
+};
+
+// Splits `text` at the commas that are not inside brackets.
 std::vector<std::string> split_top_level(const std::string& text) {
     std::vector<std::string> out;
-    int depth = 0;
+    Brackets brackets;
     std::size_t begin = 0;
     for (std::size_t i = 0; i < text.size(); ++i) {
-        const char c = text[i];
-        if (c == '<' || c == '(' || c == '[' || c == '{') ++depth;
-        else if (c == '>' || c == ')' || c == ']' || c == '}') --depth;
-        else if (c == ',' && depth == 0) {
+        if (text[i] == ',' && brackets.at_top_level()) {
             out.push_back(trim(text.substr(begin, i - begin)));
             begin = i + 1;
         }
+        brackets.feed(text, i);
     }
     out.push_back(trim(text.substr(begin)));
     return out;
 }
 
-// The index of the `=` that starts a default, not one inside brackets (`N = (a == b)`) and not
-// part of `==`, `<=`, `>=`, `!=`; npos if there is none.
+// The index of the `=` that starts a default, the first one outside brackets: the declaration before
+// it can hold one (`std::enable_if_t<(sizeof(T) <= 4), int> = 0`), the default after it too, but it
+// is never reached; npos if there is none.
 std::size_t default_position(const std::string& part) {
-    int depth = 0;
+    Brackets brackets;
     for (std::size_t i = 0; i < part.size(); ++i) {
-        const char c = part[i];
-        if (c == '<' || c == '(' || c == '[' || c == '{') ++depth;
-        else if (c == '>' || c == ')' || c == ']' || c == '}') --depth;
-        else if (c == '=' && depth == 0) {
-            const char before = i > 0 ? part[i - 1] : ' ';
-            const char after = i + 1 < part.size() ? part[i + 1] : ' ';
-            if (after != '=' && before != '=' && before != '!' && before != '<' && before != '>') return i;
-        }
+        if (part[i] == '=' && brackets.at_top_level()) return i;
+        brackets.feed(part, i);
     }
     return std::string::npos;
 }
@@ -88,7 +109,7 @@ std::string substitute(const std::string& text, const std::map<std::string, std:
     while (i < text.size()) {
         const char c = text[i];
         if (std::isdigit(static_cast<unsigned char>(c)) != 0) {
-            while (i < text.size() && (is_name_char(text[i]) || text[i] == '.' || text[i] == '\'')) out += text[i++];
+            while (i < text.size() && is_name_char(text[i])) out += text[i++];
             continue;
         }
         if (!is_name_start(c)) {
@@ -100,10 +121,9 @@ std::string substitute(const std::string& text, const std::map<std::string, std:
         while (end < text.size() && is_name_char(text[end])) ++end;
         const std::string word = text.substr(i, end - i);
         const bool scoped = !out.empty() && (out.back() == ':' || out.back() == '.');
-        std::size_t next = end;
-        while (next < text.size() && text[next] == ' ') ++next;
+        const bool templated = end < text.size() && text[end] == '<';   // `Box<T>` names the template, not the instance
 
-        if (!scoped && word == own_name && !(next < text.size() && text[next] == '<')) {
+        if (!scoped && word == own_name && !templated) {
             out += instance;
         } else if (!scoped && with.count(word) != 0) {
             out += with.at(word);
@@ -123,10 +143,7 @@ public:
     std::string text(const std::string& s) const { return substitute(s, with_, own_name_, instance_); }
 
     ir::Type type(const ir::Type& t) const {
-        if (t.empty()) return t;
-        const std::string spelling = text(t.spelling);
-        if (spelling == t.spelling) return t;
-        ir::Type out = ir::type_from_spelling(spelling);
+        ir::Type out = ir::type_from_spelling(text(t.spelling));
         out.origin = t.origin;
         out.reason = t.reason;
         out.where = t.where;
@@ -216,7 +233,6 @@ ir::Model instantiate_templates(const ir::Model& model, const core::Config& conf
 
             // Each parameter's argument: the one given, else its default with the earlier parameters in it.
             std::map<std::string, std::string> with;
-            std::vector<std::string> values;
             bool complete = true;
             for (std::size_t i = 0; i < params.size() && complete; ++i) {
                 std::string value;
@@ -230,11 +246,8 @@ ir::Model instantiate_templates(const ir::Model& model, const core::Config& conf
                                             " arguments and parameter " + std::to_string(i + 1) + " of the template has no default",
                                         c.where);
                     complete = false;
-                    break;
                 }
-                value = ir::normalize_spelling(value);
-                values.push_back(value);
-                if (!params[i].name.empty()) with[params[i].name] = value;
+                if (complete && !params[i].name.empty()) with[params[i].name] = ir::normalize_spelling(value);
             }
             if (!complete) continue;
 
