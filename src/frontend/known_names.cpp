@@ -103,7 +103,16 @@ constexpr Name kForeignNamespaces[] = {
     "QTest", "Qt", "__gnu_cxx", "std", "testing",
 };
 
+// The header of the hook stub policy (backend/hook_header.h).
+constexpr Name kHookFunctions[] = {
+    "mt_current_not_implemented_handler", "mt_default_not_implemented_handler", "mt_not_implemented",
+    "mt_set_not_implemented_handler",
+};
+constexpr Name kHookTypes[] = {"mt_not_implemented_handler"};
+
 static_assert(is_sorted_unique(kStandardCTypes), "kStandardCTypes must be sorted and free of duplicates");
+static_assert(is_sorted_unique(kHookFunctions), "kHookFunctions must be sorted and free of duplicates");
+static_assert(is_sorted_unique(kHookTypes), "kHookTypes must be sorted and free of duplicates");
 static_assert(is_sorted_unique(kStdTypes), "kStdTypes must be sorted and free of duplicates");
 static_assert(is_sorted_unique(kCFunctions), "kCFunctions must be sorted and free of duplicates");
 static_assert(is_sorted_unique(kStdFunctions), "kStdFunctions must be sorted and free of duplicates");
@@ -135,6 +144,8 @@ bool is_standard_c_type(std::string_view name) { return contains(kStandardCTypes
 bool is_std_type(std::string_view name)        { return contains(kStdTypes, name); }
 bool is_c_function(std::string_view name)      { return contains(kCFunctions, name); }
 bool is_std_function(std::string_view name)    { return contains(kStdFunctions, name); }
+bool is_hook_function(std::string_view name)   { return contains(kHookFunctions, name); }
+bool is_hook_type(std::string_view name)       { return contains(kHookTypes, name); }
 bool is_testing_type(std::string_view name)    { return contains(kTestingTypes, name); }
 bool is_framework_member(std::string_view name) { return contains(kFrameworkMembers, name); }
 bool is_foreign_namespace(std::string_view name) { return contains(kForeignNamespaces, name); }

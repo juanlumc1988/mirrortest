@@ -40,6 +40,13 @@ TEST(IncludeSearchForeign, FrameworksQtAndTheStandardLibrary) {
     }
 }
 
+TEST(IncludeSearchForeign, TheHeaderOfTheHookPolicyIsWrittenByUsAsASupportFileNotAClassToGenerate) {
+    EXPECT_TRUE(core::is_foreign_include("mt_not_implemented.h"));
+    for (const char* p : {"acme/mt_not_implemented.h", "my_mt_not_implemented.h", "mt_not_implemented.hpp", "mt_not_implemented"}) {
+        EXPECT_EQ(core::is_foreign_include(p), std::string_view(p) == "mt_not_implemented") << p << ": only that file, as the stubs spell it";
+    }
+}
+
 TEST(IncludeSearchForeign, TheMocFileOfAQtTestIsWrittenByTheBuildNotByUs) {
     for (const char* p : {"tst_foo.moc", "acme/tst_foo.moc", "foo.moc"}) EXPECT_TRUE(core::is_foreign_include(p)) << p;
     for (const char* p : {"mocha.h", "moc_helpers.h", "foo.moc.h"}) EXPECT_FALSE(core::is_foreign_include(p)) << p;

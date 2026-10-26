@@ -472,6 +472,30 @@ TEST(GenImplHook, TheConfigurationFileCanChooseItAndNoExceptionsChangesTheDefaul
     EXPECT_FALSE(contains(read(dir, "src/mt_not_implemented.h"), "throw"));
 }
 
+TEST(GenImplHook, ATestThatInstallsAHandlerIncludesTheHeaderAndCallsItsFunctionsWithoutGeneratingThem) {
+    const TempDir dir;
+    write_file(dir.path() / "tests/foo_test.cpp",
+               "#include <gtest/gtest.h>\n"
+               "#include \"acme/foo.h\"\n"
+               "#include \"mt_not_implemented.h\"\n"
+               "\n"
+               "TEST(FooTest, StartsWithThreeItems) {\n"
+               "    mt_not_implemented_handler previous = mt_set_not_implemented_handler(nullptr);\n"
+               "    mt_set_not_implemented_handler(previous);\n"
+               "    const acme::Foo foo(3);\n"
+               "    EXPECT_EQ(foo.size(), 3u);\n"
+               "}\n");
+    for (int run = 0; run < 2; ++run) {   // the second one finds the header in the output directory
+        const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook"});
+        EXPECT_EQ(r.code, 0) << r.err;
+        EXPECT_FALSE(contains(r.err, "warning")) << r.err;
+        EXPECT_FALSE(contains(read(dir, "src/acme/foo.h"), "mt_")) << "nothing of it is generated";
+        EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "inline void mt_not_implemented(const char* signature) {"));
+    }
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "other", "--stub-policy", "throw"}).code, 0);
+    EXPECT_FALSE(exists(dir, "other/mt_not_implemented.h")) << "without the policy there is no such header; it is not an empty one either";
+}
+
 TEST(GenImplHook, AHookHeaderThatDiffersGetsANewFileBesideItLikeAnyOther) {
     const TempDir dir;
     write_foo_test(dir);

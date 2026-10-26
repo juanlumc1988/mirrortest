@@ -59,6 +59,20 @@ TEST(KnownNames, TestingTypes) {
     }
 }
 
+TEST(KnownNames, TheNamesOfTheHookHeader) {
+    for (const char* name : {"mt_not_implemented", "mt_set_not_implemented_handler", "mt_current_not_implemented_handler",
+                             "mt_default_not_implemented_handler"}) {
+        EXPECT_TRUE(is_hook_function(name)) << name;
+        EXPECT_FALSE(is_hook_type(name)) << name;
+    }
+    EXPECT_TRUE(is_hook_type("mt_not_implemented_handler"));
+    EXPECT_FALSE(is_hook_function("mt_not_implemented_handler"));
+    for (const char* name : {"not_implemented", "mt_not_implemented_", "mt_other", "Mt_not_implemented", ""}) {
+        EXPECT_FALSE(is_hook_function(name)) << name;
+        EXPECT_FALSE(is_hook_type(name)) << name;
+    }
+}
+
 TEST(KnownNames, CFunctionsAndTheKeywordLikeOperators) {
     for (const char* name : {"strlen", "memcpy", "memset", "abs", "printf", "snprintf", "malloc", "free", "sqrt",
                              "pow", "floor", "assert", "offsetof", "va_start", "alignof", "static_assert",

@@ -218,7 +218,7 @@ private:
     bool is_external_type(const TypeName& t) const {
         if (!t.scope.empty() && is_foreign_namespace(t.scope.front())) return true;
         if (t.scope.empty()) {
-            if (is_qt_class(t.name) || is_standard_c_type(t.name) || using_foreign_.count(t.name) != 0) return true;
+            if (is_qt_class(t.name) || is_standard_c_type(t.name) || is_hook_type(t.name) || using_foreign_.count(t.name) != 0) return true;
             if (using_std_ && is_std_type(t.name)) return true;
             if (using_testing_ && is_testing_type(t.name)) return true;
             if (local_classes_.count(t.name) != 0 || local_types_.count(t.name) != 0) return true;
@@ -697,7 +697,7 @@ private:
                 casts_[i] = TypeName{{}, name, ""};
                 continue;
             }
-            if (is_c_function(name) || is_qt_function(name) || is_framework_member(name)) continue;
+            if (is_c_function(name) || is_qt_function(name) || is_framework_member(name) || is_hook_function(name)) continue;
             if (using_foreign_.count(name) != 0) continue;                  // using std::swap;
             if (using_std_ && is_std_function(name)) continue;
             if (configured_external_function(name, {}) || is_known_function({}, name)) continue;

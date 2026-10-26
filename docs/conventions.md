@@ -490,7 +490,10 @@ struct Install { Install() { mt_set_not_implemented_handler(&fail_the_slot); } }
 }
 ```
 
-With that in the program, every slot runs and each reports the signatures it needs
+Put it in any file of the test program, or in the test itself — `#include
+"mt_not_implemented.h"` there is not something the tool generates, and neither are
+`mt_set_not_implemented_handler` and the other names of that header. With it in the
+program, every slot runs and each reports the signatures it needs
 (`FAIL!  : TestCounter::incrementsByOne(zero) acme::Counter::increment()`). In GoogleTest
 use `ADD_FAILURE() << signature`. After the hook returns, the stub gives an empty
 value as `default` does; a type that `{}` cannot build aborts, with a warning. A

@@ -1311,6 +1311,11 @@ compile or link: every function is `inline` and the handler is a function-local 
   signatures it is missing. A handler that returns without failing the test lets it
   pass without the code it tests, like `default` — which is why `mt-stub-may-pass`
   is not emitted: the policy does not return a value by itself, the handler decides.
+- A test may `#include "mt_not_implemented.h"` and call `mt_set_not_implemented_handler`
+  itself, in a fixture or in `initTestCase`: that include is never a header to generate
+  (`is_foreign_include`), and the names of the header (`is_hook_function`,
+  `is_hook_type` in `frontend/known_names.h`) are never functions or classes to
+  generate. The header only exists with the `hook` policy.
 - The header is written like any other file: `.new` beside it if it exists and
   differs (a run with `--no-exceptions` after one without), and left alone by
   `--overwrite merge`, which has no regions to merge in it.

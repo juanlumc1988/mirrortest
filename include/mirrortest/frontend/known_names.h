@@ -40,6 +40,14 @@ bool is_std_type(std::string_view name);
 // keyword-like operators that parse as calls. Available without any `using`.
 bool is_c_function(std::string_view name);
 
+// mt_not_implemented, mt_set_not_implemented_handler: the functions of the header that the
+// `hook` stub policy writes (backend/hook_header.h). A test that installs a handler calls
+// them, and they are not code to generate.
+bool is_hook_function(std::string_view name);
+
+// mt_not_implemented_handler: the type of that handler, for a test that keeps the previous one.
+bool is_hook_type(std::string_view name);
+
 // move, swap, make_pair, to_string, sort: the standard library's functions,
 // for when the file says `using namespace std;`.
 bool is_std_function(std::string_view name);

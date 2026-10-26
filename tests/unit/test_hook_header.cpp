@@ -9,6 +9,8 @@
 #include <string>
 
 #include "mirrortest/backend/hook_header.h"
+#include "mirrortest/core/include_search.h"
+#include "mirrortest/frontend/known_names.h"
 
 using namespace mt;
 
@@ -24,6 +26,18 @@ std::string first_line(const std::string& text) { return text.substr(0, text.fin
 
 TEST(HookHeader, ItsNameIsTheOneTheStubsInclude) {
     EXPECT_EQ(std::string(backend::kHookHeaderName), "mt_not_implemented.h");
+}
+
+TEST(HookHeader, ATestThatIncludesItOrCallsItsFunctionsIsNotAskedToGenerateThem) {
+    EXPECT_TRUE(core::is_foreign_include(backend::kHookHeaderName)) << "the include";
+    const std::string text = backend::hook_header(core::Config(), "t.cpp");
+    for (const char* name : {"mt_not_implemented", "mt_set_not_implemented_handler", "mt_current_not_implemented_handler",
+                             "mt_default_not_implemented_handler"}) {
+        EXPECT_TRUE(frontend::is_hook_function(name)) << name;
+        EXPECT_TRUE(contains(text, std::string(name) + "(")) << name << " is declared in the header";
+    }
+    EXPECT_TRUE(frontend::is_hook_type("mt_not_implemented_handler"));
+    EXPECT_TRUE(contains(text, "typedef void (*mt_not_implemented_handler)"));
 }
 
 TEST(HookHeader, TheDefaultHandlerThrowsAndNeedsTheExceptionHeaders) {
