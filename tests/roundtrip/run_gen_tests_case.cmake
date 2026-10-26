@@ -125,16 +125,18 @@ set(binary "${MT_WORK}/roundtrip")
 run("linking" 0 "${MT_CXX}" ${shared} ${objects} ${MT_GTEST_LIBS} -pthread -o "${binary}")
 
 # ---- 4. red, or skipped ---------------------------------------------------------------------------------------
-# A test called Inherits (design 9.1) is static_asserts and nothing left to write: compiling it was
-# the check, and it passes. Every other test is a placeholder and must be red (or skipped).
-execute_process(COMMAND "${binary}" --gtest_list_tests "--gtest_filter=*.Inherits" RESULT_VARIABLE code OUTPUT_VARIABLE listed ERROR_VARIABLE err)
+# A test called Inherits, IsNotCopyable or IsNotMovable (design 9.1) is static_asserts and nothing
+# left to write: compiling it was the check, and it passes. Every other test is a placeholder and
+# must be red (or skipped).
+set(structural_filter "*.Inherits:*.IsNotCopyable:*.IsNotMovable")
+execute_process(COMMAND "${binary}" --gtest_list_tests "--gtest_filter=${structural_filter}" RESULT_VARIABLE code OUTPUT_VARIABLE listed ERROR_VARIABLE err)
 if(NOT code EQUAL 0)
-    fail("listing the Inherits tests: exit ${code}\n${listed}${err}")
+    fail("listing the structural tests: exit ${code}\n${listed}${err}")
 endif()
-string(REGEX MATCHALL "\n  Inherits" inherits_found "\n${listed}")
-list(LENGTH inherits_found structural)
+string(REGEX MATCHALL "\n  (Inherits|IsNotCopyable|IsNotMovable)" structural_found "\n${listed}")
+list(LENGTH structural_found structural)
 if(structural GREATER 0)
-    run("running the Inherits tests" 0 "${binary}" "--gtest_filter=*.Inherits")
+    run("running the structural tests" 0 "${binary}" "--gtest_filter=${structural_filter}")
 endif()
 
 if(MT_EXPECT STREQUAL "fail")

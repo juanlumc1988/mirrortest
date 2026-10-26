@@ -1,0 +1,4 @@
+created out/handle_test.cpp
+created out/pinned_test.cpp
+created out/lock_test.cpp
+created out/plain_test.cpp

@@ -1,0 +1,4 @@
+gen-tests
+${IN}/handles.h
+--out
+${OUT}

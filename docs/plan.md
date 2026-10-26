@@ -271,8 +271,8 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   - [x] **7.4b** enums from `E::X` (design 7.7, 7.9, 8.1; `enums` golden and round trip).
   - [x] **7.4c** exception classes from `EXPECT_THROW`, opt-in through `exception_base`
     (design 7.7, 7.9, 8.2, 14; `exceptions` golden and round trip).
-- [ ] **7.5** `= delete` on copy/move → `is_copy_constructible`
-  `static_assert`s (gen-tests).
+- [x] **7.5** `= delete` on copy/move → `is_copy_constructible`
+  `static_assert`s (gen-tests; design 9.1; `non_copyable` golden and round trip).
 
 ## Phase 8 — Advanced configuration
 

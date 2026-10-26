@@ -123,6 +123,44 @@ std::string identifier(const std::string& class_name) {
     return out;
 }
 
+// Does a parameter type name the class (`const Foo&`, `Foo&&`; also `acme::Foo`, `Tree::Leaf`)? As it
+// is written it must be the end of the class's qualified name, from a `::`.
+bool names_class(const ir::Type& t, const ir::Class& c) {
+    const std::string base = t.base.compare(0, 2, "::") == 0 ? t.base.substr(2) : t.base;
+    const std::string full = ir::qualified_name(c.ns, c.name);
+    return full == base || (full.size() > base.size() + 2 && full.compare(full.size() - base.size() - 2, 2, "::") == 0 &&
+                            full.compare(full.size() - base.size(), base.size(), base) == 0);
+}
+
+// The special members a class deletes, which a test can check without running anything: the
+// compiler refuses a copy or a move of it.
+struct DeletedSpecials {
+    bool copy_constructor = false;
+    bool copy_assignment = false;
+    bool move_constructor = false;
+    bool move_assignment = false;
+};
+
+DeletedSpecials deleted_specials(const ir::Class& c) {
+    DeletedSpecials out;
+    // Q_DISABLE_COPY deletes the copy constructor and the assignment (and, in Qt 6.x, with _MOVE the moves,
+    // which the model does not tell apart: only the copy is asserted).
+    out.copy_constructor = out.copy_assignment = c.disable_copy;
+    for (const ir::Method& m : c.methods) {
+        if (!m.is_deleted || m.params.size() != 1 || !names_class(m.params[0].type, c)) continue;
+        const bool copies = m.params[0].type.ref == ir::RefKind::LValue;
+        const bool moves = m.params[0].type.ref == ir::RefKind::RValue;
+        if (m.kind == ir::MethodKind::Constructor) {
+            out.copy_constructor = out.copy_constructor || copies;
+            out.move_constructor = out.move_constructor || moves;
+        } else if (m.kind == ir::MethodKind::Operator && m.name == "operator=") {
+            out.copy_assignment = out.copy_assignment || copies;
+            out.move_assignment = out.move_assignment || moves;
+        }
+    }
+    return out;
+}
+
 // A type that cannot be written before the name of a variable: function
 // pointers and references to arrays (`int(&)[3]`; an array cannot be returned
 // by value), and `auto`. (As an argument it is already "not constructible";
@@ -214,7 +252,8 @@ public:
                 continue;
             }
             std::vector<const ir::Method*> testable = testable_methods(c);
-            if (testable.empty() && c.bases.empty()) {
+            std::vector<ir::TestCase> structure = structural_cases(c);
+            if (testable.empty() && structure.empty()) {
                 if (!c.enclosing.empty()) continue;   // a struct nested in a class is mostly data: not worth a note each
                 core::Diagnostic d;
                 d.severity = core::Severity::Note;
@@ -224,7 +263,7 @@ public:
                 diag_.add(std::move(d));
                 continue;
             }
-            plans.push_back(plan_class(c, testable));
+            plans.push_back(plan_class(c, testable, std::move(structure)));
         }
         return plans;
     }
@@ -648,14 +687,20 @@ private:
         return fixture;
     }
 
-    // What a derived class has of its own that a test can check without running anything: it
-    // derives from what the header says. What it inherits is not repeated (design 9.1).
-    ir::TestCase plan_inherits(const ir::Class& c, const std::string& name) {
-        const std::string qualified_class = ir::qualified_name(c.ns, c.name);
+    // What a class has of its own that a test can check without running anything: it derives from
+    // what the header says, and the copies and moves it deletes are refused. Each is a case of
+    // static_asserts and nothing else, named for what it says (design 9.1).
+    ir::TestCase structural_case(const ir::Class& c, const std::string& name) const {
         ir::TestCase tc;
         tc.name = name;
-        tc.target = qualified_class;
+        tc.target = ir::qualified_name(c.ns, c.name);
         tc.body.push_back(comment("Assert"));
+        return tc;
+    }
+
+    ir::TestCase inherits_case(const ir::Class& c) const {
+        const std::string qualified_class = ir::qualified_name(c.ns, c.name);
+        ir::TestCase tc = structural_case(c, "Inherits");
         std::string listed;
         for (const ir::BaseSpec& b : c.bases) {
             tc.body.push_back(static_assertion("std::is_base_of<" + b.name + ", " + c.name + ">::value", qualified_class + " must derive from " + b.name));
@@ -665,12 +710,37 @@ private:
         return tc;
     }
 
-    ir::TestPlan plan_class(const ir::Class& c, const std::vector<const ir::Method*>& testable) {
+    ir::TestCase refused_case(const ir::Class& c, const char* name, const std::vector<std::pair<const char*, const char*>>& refused) const {
+        const std::string qualified_class = ir::qualified_name(c.ns, c.name);
+        ir::TestCase tc = structural_case(c, name);
+        for (const auto& trait : refused) {
+            tc.body.push_back(static_assertion(std::string("!std::is_") + trait.first + "<" + c.name + ">::value",
+                                               qualified_class + " must not be " + trait.second));
+        }
+        return tc;
+    }
+
+    std::vector<ir::TestCase> structural_cases(const ir::Class& c) const {
+        std::vector<ir::TestCase> out;
+        if (!c.bases.empty()) out.push_back(inherits_case(c));
+        const DeletedSpecials deleted = deleted_specials(c);
+        std::vector<std::pair<const char*, const char*>> copies;
+        if (deleted.copy_constructor) copies.emplace_back("copy_constructible", "copy constructible");
+        if (deleted.copy_assignment) copies.emplace_back("copy_assignable", "copy assignable");
+        if (!copies.empty()) out.push_back(refused_case(c, "IsNotCopyable", copies));
+        std::vector<std::pair<const char*, const char*>> moves;
+        if (deleted.move_constructor) moves.emplace_back("move_constructible", "move constructible");
+        if (deleted.move_assignment) moves.emplace_back("move_assignable", "move assignable");
+        if (!moves.empty()) out.push_back(refused_case(c, "IsNotMovable", moves));
+        return out;
+    }
+
+    ir::TestPlan plan_class(const ir::Class& c, const std::vector<const ir::Method*>& testable,
+                            std::vector<ir::TestCase> structure) {
         std::vector<core::TestNameInput> inputs;
-        const bool inherits = !c.bases.empty();
-        if (inherits) {
+        for (const ir::TestCase& tc : structure) {
             core::TestNameInput in;
-            in.base = "Inherits";
+            in.base = tc.name;
             inputs.push_back(std::move(in));
         }
         for (const ir::Method* m : testable) {
@@ -692,8 +762,11 @@ private:
         bool moves = false;
         mock_headers_.clear();
         if (fixture()) suite.fixture = plan_fixture(c, suite.name);
-        const std::size_t first_method = inherits ? 1 : 0;
-        if (inherits) suite.cases.push_back(plan_inherits(c, names[0]));
+        for (std::size_t i = 0; i < structure.size(); ++i) {
+            structure[i].name = names[i];
+            suite.cases.push_back(std::move(structure[i]));
+        }
+        const std::size_t first_method = suite.cases.size();
         for (std::size_t i = 0; i < testable.size(); ++i) {
             suite.cases.push_back(plan_case(c, *testable[i], names[first_method + i]));
             moves = moves || uses_move_;
@@ -705,7 +778,7 @@ private:
         plan.includes.push_back({qtest() ? "QtTest" : "gtest/gtest.h", true, {}});
         plan.includes.push_back({options_.header_include, false, {}});
         if (moves) plan.includes.push_back({"utility", true, {}});
-        if (inherits) plan.includes.push_back({"type_traits", true, {}});
+        if (first_method > 0) plan.includes.push_back({"type_traits", true, {}});
         for (const std::string& header : mock_headers_) plan.includes.push_back({header, false, {}});
         plan.suites.push_back(std::move(suite));
         return plan;

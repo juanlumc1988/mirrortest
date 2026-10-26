@@ -138,7 +138,7 @@ TEST(TestPlannerPlan, CasesFollowTheDeclarationsAndOnlyThePublicOnesCount) {
         "class Foo {\npublic:\n  Foo();\n  ~Foo();\n  int size() const;\n  Foo(const Foo&) = delete;\n  void gone() = delete;\n"
         "protected:\n  void guarded();\nprivate:\n  void hidden();\n"
         "public:\n  template <typename T> void tpl(T);\n  void last();\n};\n");
-    EXPECT_EQ(case_names(p), (Lines{"Constructs", "Destructs", "size", "last"}));
+    EXPECT_EQ(case_names(p), (Lines{"IsNotCopyable", "Constructs", "Destructs", "size", "last"}));
 }
 
 TEST(TestPlannerPlan, SignalsAreNotTested) {
@@ -1691,6 +1691,126 @@ TEST(TestPlannerNested, ANestedClassCanBeBuiltAsAnArgumentOfTheOuterOne) {
     const Planned p = plan("class Tree { public: struct Node { Node(); int key() const; }; void insert(const Node& n); };\n");
     EXPECT_EQ(body(p, "insert")[3], "Tree sut;");
     EXPECT_EQ(body(p, "insert")[4], "Tree::Node n{};");
+}
+
+// ---- what a class refuses: copies and moves it deletes ------------------------------------------------------------------------
+
+TEST(TestPlannerDeleted, ADeletedCopyConstructorIsAssertedNotToBeThere) {
+    const Planned p = plan("class Conn { public: Conn(); Conn(const Conn&) = delete; void send(); };\n");
+    EXPECT_EQ(case_names(p), (Lines{"IsNotCopyable", "Constructs", "send"}));
+    EXPECT_EQ(body(p, "IsNotCopyable"), (Lines{
+        "// Assert", "static_assert(!std::is_copy_constructible<Conn>::value, \"Conn must not be copy constructible\")"}));
+    EXPECT_EQ(the_case(p, "IsNotCopyable").target, "Conn");
+    EXPECT_TRUE(p.diagnostics.empty());
+}
+
+TEST(TestPlannerDeleted, TheCopyAssignmentIsAnotherAssertionOfTheSameCase) {
+    const Planned p = plan("class Conn { public: Conn(const Conn&) = delete; Conn& operator=(const Conn&) = delete; };\n");
+    EXPECT_EQ(body(p, "IsNotCopyable"), (Lines{
+        "// Assert", "static_assert(!std::is_copy_constructible<Conn>::value, \"Conn must not be copy constructible\")",
+        "static_assert(!std::is_copy_assignable<Conn>::value, \"Conn must not be copy assignable\")"}));
+    const Planned only = plan("class Conn { public: Conn& operator=(const Conn&) = delete; };\n");
+    EXPECT_EQ(body(only, "IsNotCopyable"), (Lines{
+        "// Assert", "static_assert(!std::is_copy_assignable<Conn>::value, \"Conn must not be copy assignable\")"}));
+}
+
+TEST(TestPlannerDeleted, ADeletedMoveIsItsOwnCase) {
+    const Planned p = plan("class Pinned { public: Pinned(Pinned&&) = delete; Pinned& operator=(Pinned&&) = delete; };\n");
+    EXPECT_EQ(case_names(p), Lines{"IsNotMovable"});
+    EXPECT_EQ(body(p, "IsNotMovable"), (Lines{
+        "// Assert", "static_assert(!std::is_move_constructible<Pinned>::value, \"Pinned must not be move constructible\")",
+        "static_assert(!std::is_move_assignable<Pinned>::value, \"Pinned must not be move assignable\")"}));
+}
+
+TEST(TestPlannerDeleted, ACopyDeletedButMovableClassHasOnlyTheFirstCase) {
+    const Planned p = plan("class Handle { public: Handle(const Handle&) = delete; Handle(Handle&&) = default; void use(); };\n");
+    EXPECT_EQ(case_names(p), (Lines{"IsNotCopyable", "Constructs", "use"})) << "the move constructor is a constructor like another";
+}
+
+TEST(TestPlannerDeleted, TheCasesFollowInheritsAndPrecedeTheMethods) {
+    const Planned p = plan("class Pinned : public Base { public: void run(); Pinned(const Pinned&) = delete; Pinned(Pinned&&) = delete; };\n");
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "IsNotCopyable", "IsNotMovable", "run"}));
+}
+
+TEST(TestPlannerDeleted, OnlyTheSpecialMembersOfTheClassCount) {
+    const Planned p = plan(
+        "class Foo { public: Foo(int) = delete; Foo(const Other&) = delete; Foo(const Foo&, int) = delete; Foo& operator=(int) = delete;\n"
+        "  bool operator==(const Foo&) const = delete; void swap(const Foo&) = delete; void run(); };\n");
+    EXPECT_EQ(case_names(p), Lines{"run"});
+}
+
+TEST(TestPlannerDeleted, ADefaultedOrImplicitCopyIsNotAssertedEitherWay) {
+    const Planned p = plan("class Foo { public: Foo(const Foo&) = default; Foo& operator=(const Foo&) = default; void run(); };\n");
+    EXPECT_EQ(case_names(p), (Lines{"Constructs", "OperatorAssign", "run"})) << "no IsNot... case";
+}
+
+TEST(TestPlannerDeleted, AParameterOfTheClassMayBeQualified) {
+    const Planned p = plan("namespace acme { class Foo { public: Foo(const acme::Foo&) = delete; Foo& operator=(const ::acme::Foo&) = delete; }; }\n");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(case_names(p), Lines{"IsNotCopyable"});
+    EXPECT_EQ(body(p, "IsNotCopyable").size(), 3u) << "the constructor and the assignment";
+    EXPECT_EQ(body(p, "IsNotCopyable")[1], "static_assert(!std::is_copy_constructible<Foo>::value, \"acme::Foo must not be copy constructible\")");
+}
+
+TEST(TestPlannerDeleted, AParameterOfAnotherClassWithTheSameEndingIsNot) {
+    const Planned p = plan("class Foo { public: Foo(const SubFoo&) = delete; Foo(const other::Foo&) = delete; void run(); };\n");
+    EXPECT_EQ(case_names(p), Lines{"run"}) << "SubFoo is not Foo, and other::Foo is not this one";
+}
+
+TEST(TestPlannerDeleted, ADeletedPrivateCopyCountsToo) {
+    const Planned p = plan("class Foo { Foo(const Foo&) = delete; public: void run(); };\n");
+    EXPECT_EQ(case_names(p), (Lines{"IsNotCopyable", "run"}));
+}
+
+TEST(TestPlannerDeleted, AClassWithNothingElsePublicIsStillPlanned) {
+    const Planned p = plan("class Lock { Lock(const Lock&) = delete; };\n");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(case_names(p), Lines{"IsNotCopyable"});
+    EXPECT_TRUE(p.diagnostics.empty());
+}
+
+TEST(TestPlannerDeleted, TheTraitsHeaderIsIncluded) {
+    const Planned p = plan("class Lock { Lock(const Lock&) = delete; };\n");
+    EXPECT_EQ(include_paths(p), (std::vector<std::string>{"gtest/gtest.h", "foo.h", "type_traits"}));
+}
+
+TEST(TestPlannerDeleted, QtDisableCopyDeletesTheCopyAndTheAssignment) {
+    const Planned p = plan("class W : public QObject { Q_OBJECT\n  Q_DISABLE_COPY(W)\npublic:\n  void run();\n};\n");
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "IsNotCopyable", "run"}));
+    EXPECT_EQ(body(p, "IsNotCopyable"), (Lines{
+        "// Assert", "static_assert(!std::is_copy_constructible<W>::value, \"W must not be copy constructible\")",
+        "static_assert(!std::is_copy_assignable<W>::value, \"W must not be copy assignable\")"}));
+}
+
+TEST(TestPlannerDeleted, QtTestHasTheSameCase) {
+    const std::string header = "class Conn { public: Conn(const Conn&) = delete; };\n";
+    EXPECT_EQ(body(plan_qt(header), "IsNotCopyable"), body(plan(header), "IsNotCopyable"));
+    EXPECT_EQ(include_paths(plan_qt(header)), (std::vector<std::string>{"QtTest", "foo.h", "type_traits"}));
+}
+
+TEST(TestPlannerDeleted, AMethodCalledLikeTheCaseTakesTheNextName) {
+    const Planned p = plan("class Conn { public: Conn(const Conn&) = delete; void IsNotCopyable(); };\n");
+    EXPECT_EQ(case_names(p), (Lines{"IsNotCopyable", "IsNotCopyable_2"}));
+    EXPECT_EQ(the_case(p, "IsNotCopyable_2").body.front().kind, Stmt::Kind::Placeholder);
+}
+
+TEST(TestPlannerDeleted, AnInstantiationNamesItselfInTheTrait) {
+    const Planned p = plan_instances("namespace acme { template <typename T> class Box { public: Box(const Box&) = delete; T get() const; }; }\n", {{"acme::Box", {"int"}}});
+    EXPECT_EQ(body(p, "IsNotCopyable")[1], "static_assert(!std::is_copy_constructible<Box<int>>::value, \"acme::Box<int> must not be copy constructible\")");
+}
+
+TEST(TestPlannerDeleted, ANestedClassNamesItselfThroughItsOuterOne) {
+    const Planned p = plan("class Tree { public: class Leaf { public: Leaf(const Leaf&) = delete; void run(); }; };\n");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(body(p, "IsNotCopyable")[1], "static_assert(!std::is_copy_constructible<Tree::Leaf>::value, \"Tree::Leaf must not be copy constructible\")");
+}
+
+TEST(TestPlannerDeleted, AFixtureDoesNotChangeTheCase) {
+    core::Config config;
+    config.gtest.fixture = true;
+    const Planned p = plan("class Conn { public: Conn(); Conn(const Conn&) = delete; };\n", config);
+    EXPECT_EQ(case_names(p), (Lines{"IsNotCopyable", "Constructs"}));
+    EXPECT_EQ(body(p, "IsNotCopyable").size(), 2u);
 }
 
 }  // namespace

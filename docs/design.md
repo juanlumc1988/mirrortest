@@ -1359,6 +1359,24 @@ rest of the slots.
     planned for this case alone; it is no longer a class with nothing to test.
   - The bases of an instantiation of a class template are the template's with the
     arguments substituted (`Holder<int>`).
+- **A class that deletes its copies or moves has them asserted** (plan 7.5), in cases
+  that follow `Inherits` and precede those of the members: `IsNotCopyable` for the copy
+  constructor (`T(const T&) = delete`) and the copy assignment (`operator=(const T&) =
+  delete`) — one `static_assert(!std::is_copy_constructible<T>::value, "… must not be copy
+  constructible")` each, `is_copy_assignable` for the second — and `IsNotMovable` for
+  `T(T&&) = delete` and `operator=(T&&) = delete` (`is_move_constructible`,
+  `is_move_assignable`). A parameter counts as the class when, as written, it is the end of
+  its qualified name from a `::` (`Foo`, `acme::Foo`, `::acme::Foo`; `Tree::Leaf` for a
+  nested class, `Box<int>` for an instantiation), and with one parameter only; a deleted
+  function that is not a special member (`Foo(int) = delete`, `bool operator==(const Foo&)
+  = delete`) is nothing to assert. Access does not matter, for the traits do not see it, so
+  a deleted private copy constructor counts. Q_DISABLE_COPY and Q_DISABLE_COPY_MOVE (the
+  model does not tell them apart) are the copy constructor and assignment, deleted. A
+  defaulted or implicit copy is not asserted: nothing says the author meant it. Like
+  `Inherits` they are all `static_assert`: no placeholder, passing; they are planned for a
+  class that has nothing else public, and the round-trip scripts expect the three names
+  (`Inherits`, `IsNotCopyable`, `IsNotMovable`) to pass. `<type_traits>` is included for
+  any of them.
 - **A public class nested in another is tested as a class of its own** (plan 7.3;
   `backend/nested_expand`). Before planning, each public class nested in a class of
   the model (and in the public ones nested in those, depth first; also those of an

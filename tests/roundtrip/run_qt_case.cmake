@@ -155,12 +155,12 @@ function(check_program binary kind)
     if(count LESS 1)
         fail("${binary} has no test function:\n${listing}")
     endif()
-    # A slot called Inherits (design 9.1) is static_asserts and nothing left to write: compiling it
-    # was the check, and it passes. Every other slot is a placeholder.
+    # A slot called Inherits, IsNotCopyable or IsNotMovable (design 9.1) is static_asserts and nothing
+    # left to write: compiling it was the check, and it passes. Every other slot is a placeholder.
     set(structural "")
     set(written "")
     foreach(function IN LISTS functions)
-        if(function STREQUAL "Inherits")
+        if(function MATCHES "^(Inherits|IsNotCopyable|IsNotMovable)$")
             list(APPEND structural "${function}")
         else()
             list(APPEND written "${function}")
