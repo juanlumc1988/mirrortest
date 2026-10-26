@@ -26,6 +26,29 @@ and never business logic. The output is deterministic, compilable and meant
 to be reviewed: every guess is marked `TODO(mt)` with the reason and the
 source line it came from.
 
+## Scope
+
+`gen-impl` infers, from what the tests do with them:
+
+- classes and structs, constructors (one per arity used), methods (`const`,
+  `static`, overloads), fields, free functions and namespaces;
+- the comparison operators and `operator[]` a test uses on its objects;
+- enums, from `Color::Red`;
+- exception classes, from `EXPECT_THROW` (opt in with `exception_base`);
+- the interface that a test double (`MOCK_METHOD`, a hand-written fake) stands for.
+
+`gen-tests` writes, for every public class of a header:
+
+- one test per constructor, destructor, method and operator, and per signal for
+  Qt Test;
+- the `static_assert`s of what the class declares: the bases it derives from
+  and the copies and moves it deletes;
+- class templates, for the instantiations you list, and nested classes;
+- opt in: a fixture, gmock mocks of the interfaces, and tests over a table of
+  arguments (`TEST_P`, or `_data()` and `QFETCH`).
+
+The rules, with examples, are in [docs/conventions.md](docs/conventions.md).
+
 ## Principles
 
 - **Never pretend.** A generated stub never returns a value that could make a
@@ -147,9 +170,9 @@ $ cmake -S . -B build \
 
 Git checkouts given this way are still verified against the pinned commits.
 
-The generator runs on the development host. The code it *generates* targets
-whatever the project targets — ARM included — and defaults to C++11-valid
-output with no RTTI and, on request, no exceptions.
+The generator runs on the development host and only writes text, so the code it
+generates does not depend on the target architecture: it defaults to
+C++11-valid output with no RTTI and, on request, no exceptions.
 
 ## Documentation
 
