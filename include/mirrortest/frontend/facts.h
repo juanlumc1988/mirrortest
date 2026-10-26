@@ -141,6 +141,7 @@ struct MethodCall {
     std::vector<ValueInfo> args;
     bool        on_const = false;           // called through a const object, reference or pointer
     bool        via_arrow = false;
+    bool        writes_result = false;      // the result is assigned to: `a[i] = 3`, so the call is an lvalue
     ResultUse   use;
     CallAnnotation annotation;              // `// @mt:` on the statement (7.11)
     ir::SourceLoc where;                    // the method name

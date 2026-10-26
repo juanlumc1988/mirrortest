@@ -826,6 +826,27 @@ diagnostics)`, a pure function). Details settled while implementing it:
   arity. `ignore`d calls contribute nothing. `Operator` for names starting with
   `operator`. A non-const method with no parameters whose result is compared gets
   the note "consider making this const" unless `const` was stated.
+- **Operators** (plan 7.4): a comparison `a == b`, `!=`, `<`, `<=`, `>`, `>=` and an
+  assertion that is one (`EXPECT_EQ`/`NE`/`LT`/`LE`/`GT`/`GE`, `ASSERT_*`,
+  `QCOMPARE`, `QTRY_COMPARE`, `QCOMPARE_NE` …) is a `MethodCall` fact named
+  `operator==` … on the class of `a` (`receiver_of(a)`: an object, or a reference
+  to one, not a pointer) with `b` as its only argument and a `Condition` use with
+  the hint `bool`. When `a` is a call whose type is not known and `b` is an
+  object (`EXPECT_EQ(sensor.position(), expected)`), the operator is `b`'s
+  class's: the comparison is what gives `position()` its type, and the same type
+  has the operator. `a[i]` is an `operator[]` fact with the indices as its arguments
+  (`subscript_expression`), whose result is used like any call's; assigning to it
+  (`=`, `+=` …) sets `MethodCall::writes_result`, and `=` also gives it the type
+  of the value as a hint. A comparison fact is its expression's `from`, so the
+  expression is never claimed by another use. The operators of the standard
+  library's types are facts too; classification (§7.7) ignores them as it does
+  their methods.
+  Inference: the comparison operators are `const` however the test reached them
+  (`Config::overrides` can still say otherwise) and, with the hint, return `bool`;
+  `operator[]` is `const`, unless some call writes its result, in which case it is
+  not `const` and returns a reference to the type it would have (`int&`). The
+  rest is a method like another: one per (name, arity), parameters from the
+  arguments (`const Point&` for a variable, `int` for a literal).
 - **Fields** are public, typed like a return value but always as a value; a class
   with fields and nothing else is emitted as a `struct`.
 - **Overrides** (`Classified::overrides`, §7.11) win over inference for the

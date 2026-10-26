@@ -1133,4 +1133,87 @@ TEST(InferenceDoubles, AnInterfaceWithoutOverridesIsStillGenerated) {
     EXPECT_EQ(signatures(the_class(o, "Sensor")), std::vector<std::string>{});
 }
 
+// ---- operators of the objects a test compares and indexes ----------------------------------------------------------------
+
+TEST(InferenceOperators, ComparingTwoObjectsAsksForAConstOperatorReturningBool) {
+    const Outcome o = body("Point a(1, 2);\nPoint b(1, 2);\nEXPECT_TRUE(a == b);\n");
+    const ir::Method& m = method(o, "Point", "operator==", 1);
+    EXPECT_EQ(m.kind, ir::MethodKind::Operator);
+    EXPECT_EQ(m.ret.spelling, "bool");
+    EXPECT_TRUE(m.is_const) << "comparing does not change the object, even when the test did it through a non-const one";
+    EXPECT_EQ(param_types(m), std::vector<std::string>{"const Point&"});
+}
+
+TEST(InferenceOperators, EveryComparisonIsConstAndBool) {
+    const Outcome o = body("Point a;\nPoint b;\nEXPECT_NE(a, b);\nEXPECT_LT(a, b);\nEXPECT_LE(a, b);\nEXPECT_GT(a, b);\nEXPECT_GE(a, b);\n");
+    for (const char* name : {"operator!=", "operator<", "operator<=", "operator>", "operator>="}) {
+        EXPECT_EQ(method(o, "Point", name, 1).ret.spelling, "bool") << name;
+        EXPECT_TRUE(method(o, "Point", name, 1).is_const) << name;
+    }
+}
+
+TEST(InferenceOperators, TheOtherOperandCanBeANumber) {
+    const Outcome o = body("Meter m;\nEXPECT_EQ(m, 5);\nEXPECT_TRUE(m > 2.5);\n");
+    EXPECT_EQ(param_types(method(o, "Meter", "operator==", 1)), std::vector<std::string>{"int"});
+    EXPECT_EQ(param_types(method(o, "Meter", "operator>", 1)), std::vector<std::string>{"double"});
+}
+
+TEST(InferenceOperators, TheUsesOfOneOperatorAreOneMethod) {
+    const Outcome o = body("Point a;\nPoint b;\nEXPECT_TRUE(a == b);\nEXPECT_EQ(a, b);\nASSERT_EQ(b, a);\n");
+    int count = 0;
+    for (const ir::Method& m : the_class(o, "Point").methods) count += m.name == "operator==" ? 1 : 0;
+    EXPECT_EQ(count, 1);
+}
+
+TEST(InferenceOperators, TheResultOfACallComparedWithAnObjectIsThatObjectsType) {
+    const Outcome o = body("Sensor sensor;\nPoint expected;\nEXPECT_EQ(sensor.position(), expected);\n");
+    EXPECT_EQ(method(o, "Sensor", "position").ret.spelling, "Point");
+    EXPECT_EQ(method(o, "Point", "operator==", 1).ret.spelling, "bool");
+}
+
+TEST(InferenceOperators, NoClassIsMadeOfTheStandardLibrarysOperands) {
+    const Outcome o = body("std::string a;\nstd::string b;\nEXPECT_TRUE(a == b);\nstd::vector<int> v;\nEXPECT_EQ(v[0], 1);\n");
+    EXPECT_TRUE(o.model.classes.empty());
+}
+
+TEST(InferenceOperators, ReadingByIndexIsConstAndReturnsWhatItIsComparedWith) {
+    const Outcome o = body("Row row;\nEXPECT_EQ(row[2], 7);\n");
+    const ir::Method& m = method(o, "Row", "operator[]", 1);
+    EXPECT_EQ(m.ret.spelling, "int");
+    EXPECT_TRUE(m.is_const);
+    EXPECT_EQ(param_types(m), std::vector<std::string>{"int"});
+}
+
+TEST(InferenceOperators, WritingByIndexReturnsAReferenceAndIsNotConst) {
+    const Outcome o = body("Row row;\nrow[0] = 5;\nEXPECT_EQ(row[1], 6);\n");
+    const ir::Method& m = method(o, "Row", "operator[]", 1);
+    EXPECT_EQ(m.ret.spelling, "int&");
+    EXPECT_FALSE(m.is_const);
+}
+
+TEST(InferenceOperators, ACompoundAssignmentAlsoWritesAndTakesItsTypeFromAReader) {
+    const Outcome o = body("Row row;\nrow[0] += 2;\nEXPECT_EQ(row[0], 6);\n");
+    EXPECT_EQ(method(o, "Row", "operator[]", 1).ret.spelling, "int&");
+}
+
+TEST(InferenceOperators, AnIndexMayBeAString) {
+    const Outcome o = body("Config cfg;\nEXPECT_EQ(cfg[\"name\"], std::string(\"x\"));\n");
+    EXPECT_EQ(param_types(method(o, "Config", "operator[]", 1)), std::vector<std::string>{"const char*"});
+    EXPECT_EQ(method(o, "Config", "operator[]", 1).ret.spelling, "std::string");
+}
+
+TEST(InferenceOperators, AnOverrideMayStillMakeAnOperatorNonConst) {
+    core::Config config;
+    core::MemberOverride over;
+    over.is_const = false;
+    config.overrides["Point::operator=="] = over;
+    const Outcome o = body("Point a;\nPoint b;\nEXPECT_TRUE(a == b);\n", config);
+    EXPECT_FALSE(method(o, "Point", "operator==", 1).is_const);
+}
+
+TEST(InferenceOperators, AClassOfOperatorsOnlyIsNotAStruct) {
+    const Outcome o = body("Point a;\nPoint b;\nEXPECT_TRUE(a == b);\n");
+    EXPECT_FALSE(the_class(o, "Point").is_struct);
+}
+
 }  // namespace

@@ -197,6 +197,7 @@ struct Call {
     std::string                    name;
     bool                           is_static = false;
     bool                           on_const = false;
+    bool                           writes_result = false;   // `a[i] = 3`: the result is an lvalue
 };
 
 struct Returned {
@@ -443,7 +444,7 @@ private:
 
     Call view_method(std::size_t i, bool is_static) const {
         const MethodCall& m = c_.facts.method_calls[i];
-        return {{FactRef::Kind::MethodCall, i}, &m.args, &m.use, &m.annotation, m.where, m.method, is_static, m.on_const};
+        return {{FactRef::Kind::MethodCall, i}, &m.args, &m.use, &m.annotation, m.where, m.method, is_static, m.on_const, m.writes_result};
     }
     Call view_scoped(std::size_t i, bool is_static) const {
         const ScopedCall& s = c_.facts.scoped_calls[i];
@@ -929,6 +930,22 @@ private:
         return base == target.name;
     }
 
+    static bool is_comparison_operator(const std::string& name) {
+        return name == "operator==" || name == "operator!=" || name == "operator<" || name == "operator<=" || name == "operator>" ||
+               name == "operator>=";
+    }
+
+    // `int` -> `int&`, for what `a[i] = 3` assigns to. A type that is a reference already, or has
+    // not been worked out, is left as it is.
+    static ir::Type as_lvalue_reference(const ir::Type& t) {
+        if (t.empty() || t.ref != ir::RefKind::None || t.base == "void") return t;
+        ir::Type out = ir::make_type(t.base, t.is_const, ir::RefKind::LValue, t.pointer_depth);
+        out.origin = t.origin;
+        out.reason = t.reason;
+        out.where = t.where;
+        return out;
+    }
+
     void build_methods(const ClassPlan& plan, ir::Class& cls) {
         for (const Group& g : plan.methods) {
             const Slot& slot = *g.slot;
@@ -941,13 +958,17 @@ private:
             const core::MemberOverride& over = slot.over;
             m.is_static = over.is_static.value_or(std::any_of(g.calls.begin(), g.calls.end(), [](const Call* c) { return c->is_static; }));
             const bool used_on_const = std::any_of(g.calls.begin(), g.calls.end(), [](const Call* c) { return !c->is_static && c->on_const; });
-            m.is_const = !m.is_static && over.is_const.value_or(used_on_const);
+            // `a[i] = 3` needs a reference to assign to, which a const object cannot give.
+            const bool written = std::any_of(g.calls.begin(), g.calls.end(), [](const Call* c) { return c->writes_result; });
+            // Comparing and reading by index do not change the object, whatever it was called through.
+            const bool const_by_nature = !written && (is_comparison_operator(g.name) || g.name == "operator[]");
+            m.is_const = !m.is_static && over.is_const.value_or(used_on_const || const_by_nature);
             m.is_virtual = over.is_virtual.value_or(false);
             m.is_noexcept = over.is_noexcept.value_or(false);
 
             m.params = infer_params(slot.subject, g.arity, g.calls, over, m.notes);
             const Returned& r = returned(*g.slot);
-            m.ret = r.type;
+            m.ret = written ? as_lvalue_reference(r.type) : r.type;
             for (const std::string& n : r.notes) m.notes.push_back(n);
 
             // Nothing is invented, but a getter that is only ever called through

@@ -167,6 +167,18 @@ Assert classify_assertion(std::string_view name) {
     return Assert::Opaque;
 }
 
+// The operator an assertion macro compares with: EXPECT_LT(a, b) says `a < b`; EXPECT_EQ and QCOMPARE, `a == b`.
+std::string comparison_operator(std::string_view assertion) {
+    const std::size_t sep = assertion.rfind('_');
+    const std::string_view tail = sep == std::string_view::npos ? assertion : assertion.substr(sep + 1);
+    if (tail == "NE") return "!=";
+    if (tail == "LT") return "<";
+    if (tail == "LE") return "<=";
+    if (tail == "GT") return ">";
+    if (tail == "GE") return ">=";
+    return "==";
+}
+
 bool is_literal_node(std::string_view type) {
     return type == "number_literal" || type == "char_literal" || type == "string_literal" ||
            type == "raw_string_literal" || type == "concatenated_string" ||
@@ -610,6 +622,35 @@ private:
         apply_use(b, for_b);
     }
 
+    // The call `object.operator<op>(args)` of an object of a class, as a fact; nothing if what the
+    // test calls it on is not known to be one. Returns the fact's index.
+    std::optional<std::size_t> operator_fact(const ValueInfo& object, const std::vector<ValueInfo>& args, const std::string& op,
+                                             const Node& at) {
+        const std::optional<Receiver> r = receiver_of(object, false);
+        if (!r) return std::nullopt;
+        MethodCall call;
+        call.receiver = r->cls;
+        call.method = "operator" + op;
+        call.args = args;
+        call.on_const = r->on_const;
+        call.where = loc(at);
+        call.ns = ns_;
+        facts_.method_calls.push_back(std::move(call));
+        return facts_.method_calls.size() - 1;
+    }
+
+    // `a == b`, `a < b`, EXPECT_EQ(a, b): a call of a's operator when a is an object of a class,
+    // returning a bool. When only b is known to be one (EXPECT_EQ(sensor.position(), expected): the
+    // result takes its type from b) it is the operator of b's class.
+    std::optional<std::size_t> comparison_fact(const ValueInfo& a, const ValueInfo& b, const std::string& op, const Node& at) {
+        const bool a_is_unknown_result = !a.type && a.from.valid();
+        const ValueInfo& object = a_is_unknown_result ? b : a;
+        std::optional<std::size_t> index = operator_fact(object, {b}, op, at);
+        if (!index) return std::nullopt;
+        facts_.method_calls[*index].use = use_of(Use::Condition, bool_hint("a comparison with " + op));
+        return index;
+    }
+
     // ---- type uses ----------------------------------------------------------------------------------
 
     void add_type_use(const TypeName& name, const Node& where, bool from_throw = false) {
@@ -838,6 +879,7 @@ private:
                 const ValueInfo a = expr(arg(0));
                 const ValueInfo b = expr(arg(1));
                 compare(a, b, name);
+                (void)comparison_fact(a, b, comparison_operator(name), call);
                 for (std::size_t i = 2; i < args.size(); ++i) (void)expr(args[i]);   // QTRY_COMPARE_WITH_TIMEOUT's timeout
                 break;
             }
@@ -1161,6 +1203,7 @@ private:
         if (type == "unary_expression") return unary(n);
         if (type == "pointer_expression") return pointer_expression(n);
         if (type == "binary_expression") return binary(n);
+        if (type == "subscript_expression") return subscript(n);
         if (type == "conditional_expression") return conditional(n);
         if (type == "assignment_expression") return assignment(n);
         if (type == "lambda_expression") return lambda(n);
@@ -1298,6 +1341,7 @@ private:
 
         if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
             compare(a, b, "a comparison");
+            if (const std::optional<std::size_t> fact = comparison_fact(a, b, op, n)) v.from = {FactRef::Kind::MethodCall, *fact};
             v.type = inferred_type("bool", "result of " + op);
         } else if (op == "&&" || op == "||") {
             apply_use(a, use_of(Use::Condition, bool_hint("operand of " + op)));
@@ -1306,6 +1350,16 @@ private:
         } else if (op == "<<" || op == ">>") {
             // stream insertion or shift: nothing is implied about the operands
         }
+        return v;
+    }
+
+    // `a[i]` on an object of a class is a call of its operator[].
+    ValueInfo subscript(const Node& n) {
+        const ValueInfo object = expr(n.child_by_field("argument"));
+        const std::vector<ValueInfo> indices = arguments(n.child_by_field("indices"));
+        for (const ValueInfo& i : indices) apply_use(i, use_of(Use::Argument));
+        ValueInfo v = value_of(n);
+        if (const std::optional<std::size_t> fact = operator_fact(object, indices, "[]", n)) v.from = {FactRef::Kind::MethodCall, *fact};
         return v;
     }
 
@@ -1324,6 +1378,12 @@ private:
         const std::string op(n.child_by_field("operator").text());
         const ValueInfo left = expr(left_node);
         const ValueInfo right = expr(n.child_by_field("right"));
+
+        // `a[i] = v` (or `+=`): the call of operator[] is an lvalue, and the value says what it is.
+        if (left.from.kind == FactRef::Kind::MethodCall && facts_.method_calls[left.from.index].method == "operator[]") {
+            facts_.method_calls[left.from.index].writes_result = true;
+            if (op == "=" && right.type) apply_use(left, use_of(Use::Assigned, right.type));
+        }
 
         if (op == "=") {
             // `obj.x = 5;` says what x is; `n = foo.count();` says what count returns.

@@ -111,6 +111,31 @@ EXPECT_EQ(repo.find(1).name(), std::string("root"));
 or declare it elsewhere (`Item item = repo.find(1);`). Without it, you get
 `mt-chained-call`.
 
+### Operators
+
+A variable of a generated class that the test compares or indexes asks for the
+operator it uses:
+
+```cpp
+Point a(1, 2), b(1, 2);
+EXPECT_TRUE(a == b);       // bool operator==(const Point& b) const;
+EXPECT_LT(a, b);           // bool operator<(const Point& b) const;
+EXPECT_EQ(a[0], 1);        // int operator[](int) const;
+grid[3] = 7;               // int& operator[](int);
+```
+
+`==`, `!=`, `<`, `<=`, `>` and `>=` (also as `EXPECT_EQ` … `EXPECT_GE`,
+`QCOMPARE` and `QCOMPARE_NE` …) are `const` and return `bool`, however they were
+reached; the parameter is whatever the other side is (`const Point&`, `int`).
+`EXPECT_EQ(sensor.position(), origin)` makes `position()` return `origin`'s type
+and that type the operator. `operator[]` is `const` and returns what it is
+compared with or assigned to; if the test assigns to it (`grid[3] = 7`,
+`grid[3] += 1`) it returns a reference and is not `const`. Other operators
+(`+`, `<<`, unary ones) are not inferred, and neither is an operator whose
+left operand is not an object of a generated class (`5 == a` needs a free
+function). A variable has to be declared with its class for this: the result of
+a call you have not typed (`EXPECT_EQ(a.next(), b.next())`) says nothing.
+
 ### Constructors
 
 One constructor is generated per **arity** used. A single parameter is
@@ -634,8 +659,9 @@ Honest list of what it does not do (yet):
   header differently are an error.
 - Templates (`Box<int>`) get a warning and a plain class; template function
   calls get `mt-unsupported`.
-- Inheritance is inferred only from test doubles (above); operators and
-  conversion operators are not inferred from tests.
+- Inheritance is inferred only from test doubles (above); conversion operators
+  are not inferred from tests, and of the other operators only the comparisons
+  and `operator[]` (above).
 - `EXPECT_CALL(mock, f(...))` says nothing about `f`: declare what the code
   under test calls by calling it.
 - Namespace-scope variables in a test file are not visited.

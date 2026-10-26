@@ -1257,8 +1257,9 @@ TEST(TestFrontendFixture, GetParamFromWithParamInterfaceAndStructParameters) {
     const Read r = read(
         "class P : public Base, public ::testing::WithParamInterface<std::pair<int, std::string>> { Foo foo_; };\n"
         "TEST_P(P, Runs) { EXPECT_EQ(foo_.value(), GetParam()); }\n");
-    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    ASSERT_EQ(r.facts.method_calls.size(), 2u) << "value(), and the operator== of the pair that it is compared with";
     EXPECT_EQ(hint(method(r).use), "std::pair<int, std::string>");
+    EXPECT_EQ(r.facts.method_calls[1].method, "operator==");
 }
 
 TEST(TestFrontendFixture, GetParamWithoutAParameterTypeIsAnOrdinaryCall) {
@@ -1762,3 +1763,140 @@ TEST(TypeName, EmptyAndOddInputsDoNotCrash) {
 }
 
 }  // namespace
+
+// ---- operators of the objects a test compares and indexes ----------------------------------------------------------------
+
+TEST(TestFrontendOperators, ComparingTwoObjectsCallsTheOperatorOfTheFirst) {
+    const Read r = body("Point a(1, 2);\nPoint b(1, 2);\nEXPECT_TRUE(a == b);\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(method(r).receiver.qualified(), "Point");
+    EXPECT_EQ(method(r).method, "operator==");
+    ASSERT_EQ(method(r).args.size(), 1u);
+    EXPECT_EQ(arg(method(r).args, 0).var_name, "b");
+    EXPECT_EQ(type_of(arg(method(r).args, 0)), "Point");
+    EXPECT_EQ(method(r).use.kind, UseKind::Condition) << "the result of a comparison is a bool whatever the test does with it";
+    EXPECT_EQ(hint(method(r).use), "bool");
+    EXPECT_EQ(method(r).where.line, 6u);
+}
+
+TEST(TestFrontendOperators, EveryComparisonOperatorIsItsOwnMethod) {
+    const Read r = body("Point a;\nPoint b;\nbool x = a != b;\nx = a < b;\nx = a <= b;\nx = a > b;\nx = a >= b;\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Point::operator!=", "Point::operator<", "Point::operator<=", "Point::operator>",
+                                                           "Point::operator>="}));
+}
+
+TEST(TestFrontendOperators, AnAssertionMacroComparesWithItsOperator) {
+    const Read r = body("Point a;\nPoint b;\nEXPECT_EQ(a, b);\nASSERT_NE(a, b);\nEXPECT_LT(a, b);\nEXPECT_LE(a, b);\nASSERT_GT(a, b);\nEXPECT_GE(a, b);\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Point::operator==", "Point::operator!=", "Point::operator<", "Point::operator<=",
+                                                           "Point::operator>", "Point::operator>="}));
+    for (const frontend::MethodCall& m : r.facts.method_calls) EXPECT_EQ(m.use.kind, UseKind::Condition);
+}
+
+TEST(TestFrontendOperators, QtComparesWithTheOperatorToo) {
+    const Read r = body("Point a;\nPoint b;\nQCOMPARE(a, b);\nQCOMPARE_NE(a, b);\nQCOMPARE_GE(a, b);\nQTRY_COMPARE(a, b);\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Point::operator==", "Point::operator!=", "Point::operator>=", "Point::operator=="}));
+}
+
+TEST(TestFrontendOperators, TheOtherSideCanBeAnythingTheFirstCanBeComparedWith) {
+    const Read r = body("Point a;\nEXPECT_EQ(a, 5);\nEXPECT_TRUE(a == \"origin\");\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(type_of(arg(method(r, 0).args, 0)), "int");
+    EXPECT_TRUE(arg(method(r, 1).args, 0).is_string_literal);
+}
+
+TEST(TestFrontendOperators, ThroughAConstReferenceTheCallIsOnAConstObject) {
+    const Read r = body("Point a;\nconst Point& c = a;\nEXPECT_TRUE(c == a);\n");
+    EXPECT_TRUE(method(r).on_const);
+}
+
+TEST(TestFrontendOperators, ObjectsAreComparedThroughTheirValueNotThePointer) {
+    const Read r = body("Point a;\nPoint* p = &a;\nPoint* q = &a;\nEXPECT_TRUE(p == q);\nEXPECT_EQ(p, q);\nEXPECT_TRUE(*p == a);\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Point::operator=="})) << "only the dereferenced object has an operator";
+}
+
+TEST(TestFrontendOperators, NumbersAndUnknownThingsHaveNoOperatorToCall) {
+    const Read r = body("int n = 3;\nunsigned u = 4;\nEXPECT_EQ(n, 3);\nEXPECT_TRUE(n < u);\nEXPECT_EQ(mystery, other);\n");
+    for (const std::string& called : methods_called(r)) EXPECT_EQ(called.find("operator"), std::string::npos) << called;
+}
+
+TEST(TestFrontendOperators, TheResultOfACallComparedWithAnObjectIsOfItsClass) {
+    // EXPECT_EQ(sensor.position(), expected) makes position() return a Point: the operator is Point's.
+    const Read r = body("Sensor sensor;\nPoint expected;\nEXPECT_EQ(sensor.position(), expected);\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(method(r, 0).method, "position");
+    EXPECT_EQ(hint(method(r, 0).use), "Point");
+    EXPECT_EQ(method(r, 1).receiver.qualified(), "Point");
+    EXPECT_EQ(method(r, 1).method, "operator==");
+}
+
+TEST(TestFrontendOperators, TheResultOfACallComparedWithANumberHasNoClassToCall) {
+    const Read r = body("Sensor sensor;\nEXPECT_EQ(sensor.size(), 3u);\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Sensor::size"}));
+}
+
+TEST(TestFrontendOperators, ACallComparedWithAnObjectDoesNotLoseWhatTheObjectSaysAboutIt) {
+    const Read r = body("Point a;\nSensor sensor;\nEXPECT_TRUE(a == sensor.position());\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Sensor::position", "Point::operator=="}));
+    EXPECT_EQ(hint(method(r, 0).use), "Point");
+}
+
+TEST(TestFrontendOperators, TheResultOfAComparisonIsTheBoolItIs) {
+    const Read r = body("Point a;\nPoint b;\nbool same = a == b;\n(void)same;\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(method(r).use.kind, UseKind::Condition) << "the declaration does not turn the operator's result into an Assigned one";
+}
+
+TEST(TestFrontendOperators, IndexingAnObjectCallsItsSubscriptOperator) {
+    const Read r = body("Row row;\nEXPECT_EQ(row[2], 7);\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(method(r).receiver.qualified(), "Row");
+    EXPECT_EQ(method(r).method, "operator[]");
+    ASSERT_EQ(method(r).args.size(), 1u);
+    EXPECT_EQ(type_of(arg(method(r).args, 0)), "int");
+    EXPECT_EQ(method(r).use.kind, UseKind::Compared);
+    EXPECT_EQ(hint(method(r).use), "int");
+    EXPECT_FALSE(method(r).writes_result);
+}
+
+TEST(TestFrontendOperators, TheIndexIsAnArgumentLikeAnyOther) {
+    const Read r = body("Row row;\nstd::string key;\nint n = row[key];\n(void)n;\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(arg(method(r).args, 0).var_name, "key");
+    EXPECT_EQ(method(r).use.kind, UseKind::Assigned);
+}
+
+TEST(TestFrontendOperators, AssigningToAnElementIsWritingTheResult) {
+    const Read r = body("Row row;\nrow[0] = 5;\nrow[1] += 2;\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_TRUE(method(r, 0).writes_result);
+    EXPECT_EQ(method(r, 0).use.kind, UseKind::Assigned);
+    EXPECT_EQ(hint(method(r, 0).use), "int") << "what is assigned says what the element is";
+    EXPECT_TRUE(method(r, 1).writes_result);
+    EXPECT_EQ(method(r, 1).use.kind, UseKind::Unknown) << "`+=` says less about the type of the element";
+}
+
+TEST(TestFrontendOperators, ReadingAnElementIsNotWritingIt) {
+    const Read r = body("Row row;\nint x = row[0];\nEXPECT_EQ(row[1], x);\nrow[2] == 3;\n");
+    for (const frontend::MethodCall& m : r.facts.method_calls) {
+        if (m.method == "operator[]") {
+            EXPECT_FALSE(m.writes_result);
+        }
+    }
+}
+
+TEST(TestFrontendOperators, ArraysPointersAndLibraryContainersAreNotRowsOfTheCodeUnderTest) {
+    const Read r = body("int values[3] = {1, 2, 3};\nint* p = values;\nEXPECT_EQ(values[0], 1);\nEXPECT_EQ(p[1], 2);\nEXPECT_EQ(mystery[0], 3);\n");
+    EXPECT_TRUE(r.facts.method_calls.empty());
+}
+
+TEST(TestFrontendOperators, AStandardContainerIsRecordedForClassificationToIgnore) {
+    // The facts decide nothing: std::vector is a receiver like another until the classification says it is not ours.
+    const Read r = body("std::vector<int> v;\nEXPECT_EQ(v[0], 1);\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(method(r).receiver.qualified(), "std::vector");
+}
+
+TEST(TestFrontendOperators, TheCallOfAFunctorStillIsOperatorCall) {
+    const Read r = body("Adder add;\nint n = add(1, 2);\n(void)n;\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Adder::operator()"}));
+}
