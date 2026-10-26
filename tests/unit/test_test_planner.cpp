@@ -1659,6 +1659,28 @@ TEST(TestPlannerNested, ABaseThatIsAPrivateNestedClassIsNotNamedInTheAssertion) 
     EXPECT_EQ(case_names(p), Lines{"run"}) << "no base left to assert, so no case";
 }
 
+TEST(TestPlannerNested, APrivateClassAnywhereOnTheWayToABaseHidesIt) {
+    const Planned middle = plan("class A { class B { public: struct C {}; }; public: struct D : public B::C { void run(); }; };\n");
+    EXPECT_EQ(case_names(middle), Lines{"run"}) << "A::B is private, so A::B::C cannot be written";
+    const Planned last = plan("class A { public: class B { class C {}; public: struct D : public C { void run(); }; }; };\n");
+    EXPECT_EQ(case_names(last), Lines{"run"});
+    const Planned open = plan("class A { public: class B { public: struct C {}; struct D : public C { void run(); }; }; };\n");
+    EXPECT_EQ(case_names(open), (Lines{"Inherits", "run"})) << "public all the way";
+}
+
+TEST(TestPlannerNested, AGlobalSpellingOfTheBaseIsJudgedLikeAnyOther) {
+    const Planned p = plan("class Tree { class Impl {}; public: struct Pub : public ::Tree::Impl { void run(); }; };\n");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(case_names(p), Lines{"run"});
+}
+
+TEST(TestPlannerNested, ANestedClassOfAnotherClassWithTheSameNameDoesNotHideIt) {
+    // Other::Impl is private, Tree::Impl is not: the base Tree::Impl is Tree's.
+    const Planned p = plan("class Other { class Impl {}; public: void f(); };\n"
+                           "class Tree { public: struct Impl {}; struct Pub : public Impl { void run(); }; };\n");
+    EXPECT_EQ(case_names(p, 1), (Lines{"Inherits", "run"}));
+}
+
 TEST(TestPlannerNested, OnlyThePublicBasesAreAsserted) {
     const Planned p = plan("class Tree { class Impl {}; public: struct Node {}; class Pub : public Impl, public Node, public Elsewhere { public: void run(); }; };\n");
     EXPECT_EQ(body(p, "Inherits"), (Lines{

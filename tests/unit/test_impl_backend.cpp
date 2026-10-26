@@ -1323,6 +1323,27 @@ TEST(ImplBackendEnums, AnEnumOfAHeaderThatExistsIsIncludedNotGenerated) {
     EXPECT_EQ(includes_of(g.views[0].header_view), Strings{"#include \"acme/mode.h\""});
 }
 
+TEST(ImplBackendEnums, AKnownEnumIsFoundByItsNameAloneOrByItsQualifiedName) {
+    ir::Model known;
+    ir::Enum mode = enumeration("Mode", {"Fast"}, {"acme"});
+    mode.header = "acme/mode.h";
+    known.enums = {mode};
+    backend::ImplOptions options = with_headers({"paint.h"});
+    options.known = {known};
+
+    ir::Model plain;
+    plain.classes = {klass("Paint", {}, {method("get", "Mode")})};
+    EXPECT_EQ(includes_of(build(plain, options).views[0].header_view), Strings{"#include \"acme/mode.h\""});
+
+    ir::Model qualified;
+    qualified.classes = {klass("Paint", {}, {method("get", "acme::Mode")})};
+    EXPECT_EQ(includes_of(build(qualified, options).views[0].header_view), Strings{"#include \"acme/mode.h\""});
+
+    ir::Model unrelated;
+    unrelated.classes = {klass("Paint", {}, {method("get", "Elsewhere")})};
+    EXPECT_TRUE(includes_of(build(unrelated, options).views[0].header_view).empty());
+}
+
 TEST(ImplBackendEnums, ATypeOfAKnownClassIsIncludedFromItsHeaderToo) {
     ir::Model known;
     ir::Class base = klass("Base", {"acme"});
@@ -1467,6 +1488,23 @@ TEST(ImplBackendBases, ThePlaceholderOfAClassOfOurOwnIsIncludedLikeAnyOther) {
     model.classes = {klass("Base", {}, {method("run", "void")}), derived};
     const Generated g = build(model, with_headers({"base.h", "derived.h"}));
     EXPECT_EQ(includes_of(view_of(g, "derived.h")->header_view), Strings{"#include \"base.h\""});
+}
+
+TEST(ImplBackendBases, ABaseIsHeldByValueSoItsIncludeCannotBecomeAForwardDeclaration) {
+    // derived.h and base.h include each other; the include of the base cannot be what the cycle breaks at.
+    ir::Model model;
+    ir::Class derived = klass("Derived");
+    ir::BaseSpec b;
+    b.name = "Base";
+    derived.bases.push_back(b);
+    derived.header = "derived.h";
+    ir::Class base = klass("Base", {}, {method("take", "void", {param("Derived*", "d")})});
+    base.header = "base.h";
+    model.classes = {derived, base};
+    const Generated g = build(model, with_headers({"derived.h", "base.h"}));
+    EXPECT_EQ(includes_of(view_of(g, "derived.h")->header_view), Strings{"#include \"base.h\""});
+    EXPECT_TRUE(includes_of(view_of(g, "base.h")->header_view).empty());
+    EXPECT_TRUE(codes(g).empty());
 }
 
 TEST(ImplBackendBases, TheNotesOfTheClassGoAboveItsFirstMember) {

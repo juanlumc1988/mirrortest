@@ -1094,6 +1094,19 @@ TEST(ClassifyExceptions, TheFirstThrowIsWhereItIsSaidToHaveBeenThrown) {
     EXPECT_EQ(the_class(r, "ParseError").constructions.size(), 0u);
 }
 
+TEST(ClassifyExceptions, AThrowBeforeTheFirstOtherUseIsTheFirstUse) {
+    const Outcome r = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\nParseError error(3);\n", "", throwing());
+    EXPECT_EQ(the_class(r, "ParseError").first_use.line, 5u);
+    EXPECT_EQ(the_class(r, "ParseError").thrown_at.line, 5u);
+}
+
+TEST(ClassifyExceptions, AQualifiedNameIsNotTheClassOfTheSameNameInAnotherNamespace) {
+    const Outcome r = body("Parser parser;\nErr err(1);\nEXPECT_THROW(parser.parse(\"x\"), ns::Err);\n", "", throwing());
+    EXPECT_EQ(class_names(r), (std::vector<std::string>{"Parser", "Err", "ns::Err"}));
+    EXPECT_FALSE(the_class(r, "Err").thrown);
+    EXPECT_TRUE(the_class(r, "ns::Err").thrown);
+}
+
 TEST(ClassifyExceptions, AClassTheTestAlsoUsesIsThrownAsWell) {
     const Outcome r = body("Parser parser;\nParseError error(3);\nEXPECT_EQ(error.code(), 3);\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n", "", throwing());
     EXPECT_EQ(class_names(r), (std::vector<std::string>{"Parser", "ParseError"}));
