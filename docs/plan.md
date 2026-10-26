@@ -278,7 +278,9 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 
 - [x] **8.1** `--compile-commands`: extract `-I` from the file (design 13.1; `core/compile_commands.h`;
   `compile_commands` golden cases for both commands).
-- [ ] **8.2** `--no-stl` (§8.3).
+- [x] **8.2** `--no-stl` (§8.3): stubs abort instead of throwing a `std::logic_error`, and a generated
+  header that includes a library header for a type of the tests is reported (`mt-no-stl`;
+  `no_stl` and `no_stl_library_types` golden cases and round trips).
 - [ ] **8.3** `hook` stub policy (R26).
 - [ ] **8.4** (Optional) YAML loader if confirmed (R18).
 - [ ] **8.5** (Optional) libclang frontend behind `MT_WITH_LIBCLANG` (D1).

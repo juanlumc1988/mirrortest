@@ -241,7 +241,10 @@ public:
 
     std::vector<ImplViews> run() {
         const std::vector<Unit>& units = assignment_.units();
-        for (const Unit& unit : units) needs_.push_back(scan(unit));
+        for (const Unit& unit : units) {
+            needs_.push_back(scan(unit));
+            if (options_.config.no_stl) report_library_headers(unit, needs_.back());
+        }
         break_cycles();
         std::vector<ImplViews> out;
         for (std::size_t i = 0; i < units.size(); ++i) out.push_back(views_for(units[i], needs_[i]));
@@ -259,6 +262,9 @@ private:
     // header's needs are known.
     struct Needs {
         std::set<std::string> system;     // <vector>
+        // The ones among them that are the standard library proper, each with the first
+        // name that asked for it ("vector" -> "std::vector"): what `no_stl` reports.
+        std::map<std::string, std::string> library;
         std::set<std::string> local;      // "other.h"
         // The headers whose classes this one holds by value: an include that a
         // forward declaration cannot stand in for.
@@ -307,10 +313,23 @@ private:
 
     // ---- includes -------------------------------------------------------------------------------------------
 
+    // With `no_stl` the types of the tests are still written as they are, but the user is told which
+    // header ends up including a library header because of one.
+    void report_library_headers(const Unit& unit, const Needs& needs) const {
+        for (const auto& [header, name] : needs.library) {
+            ir::SourceLoc where;
+            where.file = options_.source;
+            diag_.warning(core::code::no_stl,
+                          "'" + unit.header + "' includes <" + header + "> for '" + name + "', but no_stl says the project does not use the standard library",
+                          where);
+        }
+    }
+
     void note(const std::string& name, const Unit& unit, bool by_value, Needs& needs) const {
         const std::string sys = ir::system_include_for(name);
         if (!sys.empty()) {
             needs.system.insert(sys);
+            if (ir::is_standard_library_header(sys)) needs.library.emplace(sys, name);
             return;
         }
         const Declaration d = declaration_of(name);

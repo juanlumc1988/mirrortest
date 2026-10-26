@@ -683,6 +683,80 @@ TEST(ImplBackendStub, AbortAndDefaultPolicies) {
     EXPECT_EQ(definition_lines(build(model, def).views[0].source_view), (Strings{"int Foo::f() {", "    return {};", "}", "void Foo::g() {}"}));
 }
 
+TEST(ImplBackendStub, NoStlAbortsInsteadOfThrowingAndSoNeedsNoLibraryHeader) {
+    ir::Model model;
+    model.classes = {klass("Foo", {}, {method("f", "int"), method("g", "void")})};
+
+    backend::ImplOptions o = with_headers({"foo.h"});
+    o.config.no_stl = true;
+    const Generated g = build(model, o);
+    EXPECT_EQ(definition_lines(g.views[0].source_view),
+              (Strings{"int Foo::f() {", "    std::abort();", "}", "void Foo::g() {", "    std::abort();", "}"}));
+    EXPECT_EQ(includes_of(g.views[0].source_view), Strings{"#include <cstdlib>"});
+    EXPECT_TRUE(g.diagnostics.empty());
+
+    o.config.stub_policy = core::StubPolicy::Default;   // an explicit default is kept, as under no_exceptions
+    EXPECT_EQ(definition_lines(build(model, o).views[0].source_view), (Strings{"int Foo::f() {", "    return {};", "}", "void Foo::g() {}"}));
+}
+
+// ---- no_stl: the library headers a header has to include ---------------------------------------------------------
+
+backend::ImplOptions no_stl_options(Strings headers) {
+    backend::ImplOptions o = with_headers(std::move(headers));
+    o.config.no_stl = true;
+    return o;
+}
+
+TEST(ImplBackendNoStl, ALibraryHeaderThatTheApiNeedsIsReportedOncePerHeaderAndNamesTheTypeThatAskedForIt) {
+    ir::Model model;
+    model.classes = {klass("Foo", {}, {method("names", "std::vector<std::string>"), method("label", "const std::string&"),
+                                       method("more", "std::vector<int>")})};
+    const Generated g = build(model, no_stl_options({"foo.h"}));
+    const std::vector<core::Diagnostic> all = g.diagnostics.sorted();
+    ASSERT_EQ(all.size(), 2u);
+    EXPECT_EQ(all[0].message, "'foo.h' includes <string> for 'std::string', but no_stl says the project does not use the standard library");
+    EXPECT_EQ(all[1].message, "'foo.h' includes <vector> for 'std::vector', but no_stl says the project does not use the standard library");
+    for (const core::Diagnostic& d : all) {
+        EXPECT_EQ(d.severity, core::Severity::Warning);
+        EXPECT_EQ(d.code, "mt-no-stl");
+        EXPECT_EQ(d.where.file, "tests/t.cpp") << "the test is where the type comes from";
+    }
+    EXPECT_EQ(includes_of(g.views[0].header_view), (Strings{"#include <string>", "#include <vector>"})) << "the types are written as the test has them";
+}
+
+TEST(ImplBackendNoStl, NothingIsReportedWithoutTheOptionOrForTheCLibraryAndQt) {
+    ir::Model model;
+    model.classes = {klass("Foo", {}, {method("names", "std::vector<int>")})};
+    EXPECT_TRUE(build(model, with_headers({"foo.h"})).diagnostics.empty());
+
+    ir::Model plain;
+    plain.classes = {klass("Foo", {}, {method("size", "std::size_t"), method("byte", "std::uint8_t"), method("name", "QString"),
+                                       method("big", "qint64"), method("count", "unsigned int")})};
+    const Generated g = build(plain, no_stl_options({"foo.h"}));
+    EXPECT_TRUE(g.diagnostics.empty());
+    EXPECT_EQ(includes_of(g.views[0].header_view), (Strings{"#include <QString>", "#include <QtGlobal>", "#include <cstddef>", "#include <cstdint>"}));
+}
+
+TEST(ImplBackendNoStl, AParameterAFieldAndABaseAreReportedToo) {
+    ir::Model model;
+    ir::Class foo = klass("Foo", {}, {method("set", "void", {param("const std::map<int, int>&", "m")})});
+    foo.fields.push_back(field("std::unique_ptr<int>", "owner"));
+    foo.bases.push_back(ir::BaseSpec{"std::runtime_error", ir::Access::Public, false});
+    model.classes = {foo};
+    const Generated g = build(model, no_stl_options({"foo.h"}));
+    Strings headers;
+    for (const core::Diagnostic& d : g.diagnostics.sorted()) headers.push_back(d.message.substr(0, d.message.find(" for ")));
+    EXPECT_EQ(headers, (Strings{"'foo.h' includes <map>", "'foo.h' includes <memory>", "'foo.h' includes <stdexcept>"}));
+}
+
+TEST(ImplBackendNoStl, EachHeaderIsReportedForItsOwnTypes) {
+    ir::Model model;
+    model.classes = {klass("Foo", {}, {method("names", "std::vector<int>")}), klass("Bar", {}, {method("size", "int")})};
+    const Generated g = build(model, no_stl_options({"foo.h", "bar.h"}));
+    ASSERT_EQ(g.diagnostics.all().size(), 1u);
+    EXPECT_EQ(g.diagnostics.all()[0].message.rfind("'foo.h' includes <vector>", 0), 0u) << g.diagnostics.all()[0].message;
+}
+
 TEST(ImplBackendStub, DefaultSaysOnceThatStubsMayPassAndFallsBackToAbortWhereItCannotReturnAnEmptyValue) {
     ir::Model model;
     ir::Method ref = method("ref", "const std::string&");

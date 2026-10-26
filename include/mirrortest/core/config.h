@@ -127,6 +127,10 @@ struct Config {
 
     StubPolicy  stub_policy       = StubPolicy::Throw;
     bool        no_exceptions     = false;          // see effective_stub_policy()
+    // The project does not use the standard library. A stub does not throw a `std::logic_error`
+    // (it aborts, as under no_exceptions), and a generated header that has to include a library
+    // header for a type of the tests is reported (`mt-no-stl`).
+    bool        no_stl            = false;
     bool        no_rtti           = false;
     Placeholder placeholder       = Placeholder::Fail;
     AutoPolicy  auto_policy       = AutoPolicy::Error;
@@ -155,8 +159,9 @@ struct Config {
     std::map<std::string, std::vector<std::string>>  template_instantiations;  // "ns::Box" -> {"int", ...}
 };
 
-// Without exceptions a stub cannot throw, so `throw` becomes `abort`. An
-// explicit `default` is kept: it never throws either.
+// Without exceptions a stub cannot throw, and without the standard library it has no
+// `std::logic_error` to throw, so `throw` becomes `abort`. An explicit `default` is kept:
+// it never throws either.
 StubPolicy effective_stub_policy(const Config& config);
 
 // Applies the keys present in `json` on top of `config`. Comments (// and

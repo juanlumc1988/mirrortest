@@ -337,7 +337,7 @@ TEST(CliParse, GenImplOptionsReachTheOptionsAndTheConfig) {
     TempDir dir;
     write_file(dir.path() / "none.json", "{}");
     const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--framework", "qtest",
-                            "--stub-policy", "default", "--no-exceptions", "--no-rtti",
+                            "--stub-policy", "default", "--no-exceptions", "--no-rtti", "--no-stl",
                             "--auto-policy", "todo", "--std", "c++11", "--overwrite", "force",
                             "--dry-run", "--check", "--strict", "--verbose",
                             "--templates", "tpl", "--config", "none.json"},
@@ -348,6 +348,7 @@ TEST(CliParse, GenImplOptionsReachTheOptionsAndTheConfig) {
     EXPECT_EQ(o.config.stub_policy, core::StubPolicy::Default);
     EXPECT_TRUE(o.config.no_exceptions);
     EXPECT_TRUE(o.config.no_rtti);
+    EXPECT_TRUE(o.config.no_stl);
     EXPECT_EQ(o.config.auto_policy, core::AutoPolicy::Todo);
     EXPECT_EQ(o.config.cxx_std, core::CxxStd::Cxx11);
     EXPECT_EQ(o.overwrite, core::OverwriteMode::Force);
@@ -423,6 +424,20 @@ TEST(CliConfig, AFileTurningOnNoExceptionsIsKeptWithoutTheFlag) {
     write_file(dir.path() / "mt.json", R"({"no_exceptions":true})");
     const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--config", "mt.json"}, dir.path());
     EXPECT_TRUE(p.options->config.no_exceptions);
+}
+
+TEST(CliConfig, NoStlOnTheCommandLineWinsOverAFileThatSaysFalseAndAFileThatSaysTrueIsKept) {
+    TempDir dir;
+    write_file(dir.path() / "off.json", R"({"no_stl":false})");
+    write_file(dir.path() / "on.json", R"({"no_stl":true})");
+    EXPECT_TRUE(parse({"gen-impl", "t.cpp", "--out", "o", "--config", "off.json", "--no-stl"}, dir.path()).options->config.no_stl);
+    EXPECT_TRUE(parse({"gen-impl", "t.cpp", "--out", "o", "--config", "on.json"}, dir.path()).options->config.no_stl);
+    EXPECT_FALSE(parse({"gen-impl", "t.cpp", "--out", "o", "--config", "off.json"}, dir.path()).options->config.no_stl);
+    EXPECT_FALSE(parse({"gen-impl", "t.cpp", "--out", "o"}, dir.path()).options->config.no_stl);
+}
+
+TEST(CliUsage, NoStlBelongsToGenImpl) {
+    EXPECT_EQ(invoke({"gen-tests", "h.h", "--out", "o", "--no-stl"}).code, 2);
 }
 
 TEST(CliConfig, ARelativeConfigPathIsResolvedAgainstTheWorkingDirectoryOfTheRun) {

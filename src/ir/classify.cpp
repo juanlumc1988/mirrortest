@@ -299,6 +299,11 @@ std::string system_include_for(std::string_view qualified) {
     return {};
 }
 
+bool is_standard_library_header(std::string_view header) {
+    static const std::set<std::string_view> c_library = {"cstddef", "cstdint", "cstdio", "cstdlib"};
+    return !header.empty() && header[0] != 'Q' && c_library.count(header) == 0;
+}
+
 std::vector<std::string> mentioned_names(std::string_view spelling) {
     std::vector<std::string> out;
     std::size_t i = 0;

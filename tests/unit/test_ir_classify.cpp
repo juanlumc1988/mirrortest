@@ -85,6 +85,26 @@ TEST(IrClassifyInclude, CTypesWithOrWithoutStd) {
     EXPECT_EQ(ir::system_include_for("std::FILE"), "cstdio");
 }
 
+TEST(IrClassifyInclude, TheStandardLibraryProperIsNeitherTheCLibraryNorQt) {
+    for (const char* h : {"string", "vector", "stdexcept", "memory", "chrono", "utility", "optional", "functional", "array"}) {
+        EXPECT_TRUE(ir::is_standard_library_header(h)) << h;
+    }
+    for (const char* h : {"cstddef", "cstdint", "cstdio", "cstdlib", "QString", "QObject", "QtGlobal", "Q"}) {
+        EXPECT_FALSE(ir::is_standard_library_header(h)) << h;
+    }
+    EXPECT_FALSE(ir::is_standard_library_header("")) << "no header, no library";
+    EXPECT_TRUE(ir::is_standard_library_header("qstring_like")) << "only a capital Q is Qt's";
+}
+
+TEST(IrClassifyInclude, EveryHeaderTheTableGivesForAStdNameIsEitherTheLibraryOrACLibraryOne) {
+    for (const char* name : {"std::string", "std::size_t", "std::uint8_t", "std::runtime_error", "std::chrono::seconds", "size_t", "FILE"}) {
+        const std::string header = ir::system_include_for(name);
+        ASSERT_FALSE(header.empty()) << name;
+        const bool c_library = header == "cstddef" || header == "cstdint" || header == "cstdio";
+        EXPECT_EQ(ir::is_standard_library_header(header), !c_library) << name << " -> " << header;
+    }
+}
+
 TEST(IrClassifyInclude, SpellingsThatLookLikeFixedWidthTypesButAreNot) {
     for (const char* name : {"int", "int_t", "uint_t", "int7_t", "int128_t", "int_fast7_t", "uint8", "my_uint8_t_", "xint8_t", "int_fast_t"}) {
         EXPECT_EQ(ir::system_include_for(name), "") << name;

@@ -67,6 +67,7 @@ inline constexpr const char* merge_no_region  = "mt-merge-no-region";
 inline constexpr const char* merge_mismatch   = "mt-merge-mismatch";
 inline constexpr const char* merge_broke      = "mt-merge-broke";
 inline constexpr const char* std_version      = "mt-std";
+inline constexpr const char* no_stl           = "mt-no-stl";
 }  // namespace code
 
 // A secondary location attached to a diagnostic: "first inferred here".

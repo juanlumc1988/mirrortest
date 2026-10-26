@@ -36,7 +36,7 @@ struct Raw {
     std::string stub_policy, placeholder, auto_policy;
     int         qt = 0;
 
-    bool no_exceptions = false, no_rtti = false;
+    bool no_exceptions = false, no_rtti = false, no_stl = false;
     bool dry_run = false, check = false, strict = false, quiet = false, verbose = false;
 };
 
@@ -208,6 +208,9 @@ std::optional<Options> parse_options(const std::vector<std::string>& args, const
                                               "The target has no exceptions: stubs abort instead of throwing");
     CLI::Option* impl_no_rtti = impl->add_flag("--no-rtti", raw.no_rtti,
                                                "The target has no RTTI: never emit typeid/dynamic_cast");
+    CLI::Option* impl_no_stl = impl->add_flag("--no-stl", raw.no_stl,
+                                              "The project does not use the standard library: stubs abort instead of throwing, "
+                                              "and a header that needs a library header for a type of the tests is reported");
     CLI::Option* impl_auto = impl->add_option("--auto-policy", raw.auto_policy,
                                               "What to do with an 'auto' holding a result (default error)")
                                  ->type_name(join(core::auto_policy_names()))
@@ -319,6 +322,7 @@ std::optional<Options> parse_options(const std::vector<std::string>& args, const
         if (impl_stub->count() > 0) options.config.stub_policy = *core::parse_stub_policy(raw.stub_policy);
         if (impl_no_exc->count() > 0) options.config.no_exceptions = true;
         if (impl_no_rtti->count() > 0) options.config.no_rtti = true;
+        if (impl_no_stl->count() > 0) options.config.no_stl = true;
         if (impl_auto->count() > 0) options.config.auto_policy = *core::parse_auto_policy(raw.auto_policy);
     } else {
         if (tests_placeholder->count() > 0) {

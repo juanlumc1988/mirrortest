@@ -55,6 +55,7 @@ TEST(ConfigDefaults, MatchTheDesignDocument) {
     EXPECT_EQ(c.file_header, "");
     EXPECT_EQ(c.stub_policy, StubPolicy::Throw);
     EXPECT_FALSE(c.no_exceptions);
+    EXPECT_FALSE(c.no_stl);
     EXPECT_FALSE(c.no_rtti);
     EXPECT_EQ(c.placeholder, Placeholder::Fail);
     EXPECT_EQ(c.auto_policy, AutoPolicy::Error);
@@ -95,6 +96,7 @@ TEST(ConfigKeys, EveryKeyIsRead) {
         "file_header": "// Copyright ACME\n// All rights reserved\n",
         "stub_policy": "default",
         "no_exceptions": true,
+        "no_stl": true,
         "no_rtti": true,
         "placeholder": "skip",
         "auto_policy": "todo",
@@ -132,6 +134,7 @@ TEST(ConfigKeys, EveryKeyIsRead) {
     EXPECT_EQ(c.file_header, "// Copyright ACME\n// All rights reserved");
     EXPECT_EQ(c.stub_policy, StubPolicy::Default);
     EXPECT_TRUE(c.no_exceptions);
+    EXPECT_TRUE(c.no_stl);
     EXPECT_TRUE(c.no_rtti);
     EXPECT_EQ(c.placeholder, Placeholder::Skip);
     EXPECT_EQ(c.auto_policy, AutoPolicy::Todo);
@@ -434,6 +437,32 @@ TEST(ConfigHelpers, NoExceptionsTurnsThrowIntoAbortButKeepsDefault) {
 
     c.stub_policy = StubPolicy::Abort;
     EXPECT_EQ(effective_stub_policy(c), StubPolicy::Abort);
+}
+
+TEST(ConfigHelpers, NoStlTurnsThrowIntoAbortToo) {
+    Config c;
+    c.no_stl = true;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Abort) << "there is no std::logic_error to throw";
+
+    c.no_exceptions = true;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Abort);
+
+    c.no_exceptions = false;
+    c.stub_policy = StubPolicy::Default;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Default) << "an explicit default is kept";
+
+    c.stub_policy = StubPolicy::Abort;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Abort);
+
+    c.no_stl = false;
+    c.stub_policy = StubPolicy::Throw;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Throw) << "and only no_stl, no_exceptions or both change it";
+}
+
+TEST(ConfigKeys, NoStlIsABoolean) {
+    EXPECT_TRUE(apply(R"({"no_stl":true})").config.no_stl);
+    EXPECT_FALSE(apply(R"({"no_stl":false})").config.no_stl);
+    EXPECT_EQ(only_error(apply(R"({"no_stl":"yes"})")), "configuration key 'no_stl' must be true or false");
 }
 
 // ---- files --------------------------------------------------------------------------------

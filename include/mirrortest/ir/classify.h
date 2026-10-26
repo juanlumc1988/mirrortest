@@ -36,6 +36,12 @@ namespace mt::ir {
 // has it put back before it reaches a backend); the C types in either form.
 std::string system_include_for(std::string_view qualified_name);
 
+// Is this header, spelled as `system_include_for` gives it, one of the C++ standard
+// library proper -- containers, strings, smart pointers, exceptions -- as opposed to
+// the C library's (<cstddef>, <cstdint>, <cstdio>, <cstdlib>) or Qt's? It is what a
+// project that does not use the standard library (`no_stl`) cannot include.
+bool is_standard_library_header(std::string_view header);
+
 // The names a type spelling mentions, as written, in order of appearance and
 // without repeats: the qualified identifiers, not the keywords, builtin types or
 // numbers.

@@ -1,0 +1,5 @@
+gen-impl
+${IN}/inventory_test.cpp
+--out
+${OUT}
+--no-stl

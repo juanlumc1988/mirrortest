@@ -492,6 +492,7 @@ void Reader::read_root(const json& root, Config& c) {
         else if (key == "file_header")                 read_file_header(v, c.file_header);
         else if (key == "stub_policy")                 read_choice(v, key, kStubPolicies, c.stub_policy);
         else if (key == "no_exceptions")               read_bool(v, key, c.no_exceptions);
+        else if (key == "no_stl")                      read_bool(v, key, c.no_stl);
         else if (key == "no_rtti")                     read_bool(v, key, c.no_rtti);
         else if (key == "placeholder")                 read_choice(v, key, kPlaceholders, c.placeholder);
         else if (key == "auto_policy")                 read_choice(v, key, kAutoPolicies, c.auto_policy);
@@ -564,7 +565,7 @@ int to_number(CxxStd value) {
 }
 
 StubPolicy effective_stub_policy(const Config& config) {
-    if (config.no_exceptions && config.stub_policy == StubPolicy::Throw) {
+    if ((config.no_exceptions || config.no_stl) && config.stub_policy == StubPolicy::Throw) {
         return StubPolicy::Abort;
     }
     return config.stub_policy;

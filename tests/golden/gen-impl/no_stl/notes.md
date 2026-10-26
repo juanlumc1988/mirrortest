@@ -1,0 +1,1 @@
+`--no-stl`: the project does not use the standard library, so a stub cannot throw a `std::logic_error`: it aborts and the source includes `<cstdlib>` (the C library's), as under `--no-exceptions`. Nothing the tests say needs a library header, so there is no warning.

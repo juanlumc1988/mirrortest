@@ -460,7 +460,11 @@ unsigned int Foo::size() const {
 
 `--no-exceptions` makes `throw` behave as `abort`, for projects that build with
 `-fno-exceptions` (and `--no-rtti` is a promise that no `typeid` or
-`dynamic_cast` is emitted). `default` can make a test pass by accident — a stub
+`dynamic_cast` is emitted). `--no-stl` does the same, because a stub that throws
+needs `std::logic_error`, and also reports every generated header that has to include a
+header of the standard library for a type your tests use (`mt-no-stl`; `<cstddef>`,
+`<cstdint>`, `<cstdio>`, `<cstdlib>` and Qt's do not count): the header is written as the
+test has it, and the warning tells you where the project's rule and the test disagree. `default` can make a test pass by accident — a stub
 that returns `0` satisfies `EXPECT_EQ(x.f(), 0)` — so it says
 `mt-stub-may-pass`; a return type that `{}` cannot build (a reference, a class
 without a default constructor) falls back to `abort` with a warning. List types
@@ -699,6 +703,7 @@ differences.
 | `mt-annotation` | a malformed annotation, or one that does not hit exactly one call | fix the comment; use the file-level form for several calls |
 | `mt-unsupported` | a construct outside the supported subset (see [Limits](#limits)), a QTest file, or two test files that write the same file differently | see the message |
 | `mt-stub-may-pass` | `--stub-policy default` | by design; a reminder |
+| `mt-no-stl` | `--no-stl`, and a generated header that includes a standard library header for a type of the test | use a type the project has, or `type_map` |
 | `mt-framework` | the test framework could not be told, or the file uses both | `--framework gtest` |
 | `mt-merge-region` | an error: the regions of a file being merged are nested, unclosed or repeated | fix the `// <mt:begin>` / `// <mt:end>` lines |
 | `mt-merge-no-region`, `mt-merge-mismatch`, `mt-merge-broke` | warnings of `--overwrite merge`: a class has no region (so a `.new` is written), a member exists with other types (left alone), a merge would have broken the file | see [Merging](#merging) |

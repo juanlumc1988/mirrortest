@@ -1268,7 +1268,7 @@ void Foo::run() {
 | Policy | Methods (incl. `void`) | Ctor/dtor | Include |
 |---|---|---|---|
 | `throw` (default) | `throw std::logic_error("mirrortest: not implemented: <signature>")` | empty | `<stdexcept>` |
-| `abort` (`--no-exceptions`) | `std::abort();` | empty | `<cstdlib>` |
+| `abort` (`--no-exceptions`, `--no-stl`) | `std::abort();` | empty | `<cstdlib>` |
 | `default` | `return {};` · `void` → empty · return by reference or a type that `{}` cannot build → `std::abort()` + `mt-unsupported` warning | empty | `<cstdlib>` if needed |
 
 With `default`, `mt-stub-may-pass` is emitted once. Parameter names are always
@@ -1894,6 +1894,7 @@ warnings into errors.
 | `mt-merge-region` | error | malformed or duplicated regions |
 | `mt-merge-no-region`, `mt-merge-mismatch`, `mt-merge-broke` | warning | see §11 |
 | `mt-std` | warning | a type that requires a standard newer than `--std` |
+| `mt-no-stl` | warning | `no_stl`, and a generated header that has to include a header of the standard library for a type of the tests |
 
 ---
 
@@ -1904,7 +1905,7 @@ warnings into errors.
 ```
 mirrortest gen-impl  [--tests] FILE... --out DIR [--out-include DIR] [--out-src DIR]
                      [--framework auto|gtest|qtest] [--stub-policy throw|abort|default]
-                     [--no-exceptions] [--no-rtti] [--auto-policy error|todo] [COMMON]
+                     [--no-exceptions] [--no-rtti] [--no-stl] [--auto-policy error|todo] [COMMON]
 mirrortest gen-tests [--header] FILE... --out DIR [--framework gtest|qtest]
                      [--placeholder fail|skip] [--include-as PATH] [--qt 5|6]
                      [--qt-main appless|guiless|gui] [COMMON]
@@ -1971,7 +1972,7 @@ only builds the `Env` and calls `run`.
 - **Precedence** (D9): defaults → `--config` → command line, and **only an
   option actually passed** overrides the file (its default value never does:
   the default `--std` is c++17 and a file saying c++11 must win if `--std` is
-  absent). `--no-exceptions`/`--no-rtti` can only switch on. Relative paths
+  absent). `--no-exceptions`/`--no-rtti`/`--no-stl` can only switch on. Relative paths
   (config, inputs, templates, output) are resolved against `Env::cwd`, never
   with `chdir`, and are **shown as the user wrote them**.
 - **`--quiet`**: removes the notes and the summary; warnings and errors are
@@ -2018,6 +2019,7 @@ diagnostics); an error suppresses diffs and summary.
   "file_header": "",
   "stub_policy": "throw",
   "no_exceptions": false,
+  "no_stl": false,
   "no_rtti": false,
   "placeholder": "fail",
   "auto_policy": "error",
@@ -2064,6 +2066,18 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
   (`mt-unknown-type`). A type spelling; stored normalised. Has no effect with `no_exceptions`.
 - `no_exceptions` makes `stub_policy: throw` behave as `abort`
   (`effective_stub_policy`); an explicit `default` is respected.
+- `no_stl` (`--no-stl`, gen-impl; plan 8.2): the project does not use the standard
+  library. It does two things and only two, both about what the generator adds or
+  includes by itself: (1) `throw` behaves as `abort` too, because the stub would
+  throw a `std::logic_error` (`<stdexcept>`); the source then needs only `<cstdlib>`,
+  the C library's, and an explicit `default` is respected; (2) every generated header
+  that ends up including a header of the standard library proper — not `<cstddef>`,
+  `<cstdint>`, `<cstdio>`, `<cstdlib>` or Qt's — is reported with an `mt-no-stl`
+  warning naming the type that asked for it (`ir::is_standard_library_header`; once per
+  header and library header). The types themselves are the test's: the header is
+  written as the test has it and the warning says where the policy and the test
+  disagree, so the fix is in the test (or in `type_map`). It does nothing in
+  gen-tests: the tests are built with GoogleTest or Qt Test.
 - `file_header` must be a C++ comment (`//` or `/*`), because it is emitted
   verbatim at the top of every file; line breaks are normalised and trailing ones
   are trimmed.
@@ -2167,7 +2181,7 @@ Implemented in `core/templates.h` (`TemplateStore`) and
 3. **Round trip** (CTest + `cmake -P tests/roundtrip/run_case.cmake`):
    - gen-impl (`tests/roundtrip/run_case.cmake`, cases `basic_class`,
      `fixture_members`, `namespaces`, `multi_class_includes`, `no_exceptions`,
-     `mock_interface`, `mock_legacy_macros`, `mock_known_interface`,
+     `no_stl`, `no_stl_library_types`, `mock_interface`, `mock_legacy_macros`, `mock_known_interface`,
      `fake_interface`, whose test and arguments are those of the golden case):
      generate → compile the stubs with `-std=c++11 -Wall -Wextra -Wpedantic
      -Werror` (plus `-fno-exceptions -fno-rtti` for `abort`; the case's
