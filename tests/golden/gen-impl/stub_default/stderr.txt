@@ -1,0 +1,4 @@
+mirrortest: warning: stub_policy 'default' makes the stubs return empty values: a test that expects such a value passes without any implementation [mt-stub-may-pass]
+in/foo_test.cpp:8:18: warning: 'Foo::mystery()' cannot return an empty 'std::runtime_error' under stub_policy 'default'; its stub aborts instead (list the type in default_constructible_types if it can) [mt-unsupported]
+created out/foo.h
+created out/foo.cpp

@@ -1,0 +1,6 @@
+gen-tests
+${IN}/handle.h
+--out
+${OUT}
+--config
+${IN}/mt.json

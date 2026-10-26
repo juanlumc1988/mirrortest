@@ -1,0 +1,40 @@
+{% include "common/file_header.inja" %}
+
+{% for line in includes %}
+{{ line }}
+{% endfor %}
+{% for section in sections %}
+
+{% if length(section.open) > 0 %}
+{% for line in section.open %}
+{{ line }}
+{% endfor %}
+
+{% endif %}
+{% for class in section.classes %}
+{% for line in class.head %}
+{{ line }}
+{% endfor %}
+{% for test in class.tests %}
+
+{% for line in test.lines %}
+{{ line }}
+{% endfor %}
+{% endfor %}
+{% if not loop.is_last %}
+
+{% endif %}
+{% endfor %}
+{% if length(section.close) > 0 %}
+
+{% for line in section.close %}
+{{ line }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% if length(main) > 0 %}
+
+{% for line in main %}
+{{ line }}
+{% endfor %}
+{% endif %}

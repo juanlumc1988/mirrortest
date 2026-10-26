@@ -1,0 +1,1 @@
+in/secret.h:1:7: note: the class 'Secret' has nothing public to test; no tests are generated for it [mt-unsupported]

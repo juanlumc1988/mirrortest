@@ -1,0 +1,1 @@
+No default constructor: the fixture holds the arguments of the simplest constructor as members, declared before sut, and its own constructor passes them. The members' names are not used again by the bodies.

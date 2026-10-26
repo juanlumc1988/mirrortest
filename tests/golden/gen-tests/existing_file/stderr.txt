@@ -1,0 +1,1 @@
+wrote out/lamp_test.cpp.new (out/lamp_test.cpp exists and differs)

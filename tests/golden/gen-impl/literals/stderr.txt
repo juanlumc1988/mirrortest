@@ -1,0 +1,18 @@
+in/sensor_test.cpp:6:12: warning: the result of 'Sensor::set_int' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:7:12: warning: the result of 'Sensor::set_unsigned' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:8:12: warning: the result of 'Sensor::set_long' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:9:12: warning: the result of 'Sensor::set_unsigned_long' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:10:12: warning: the result of 'Sensor::set_long_long' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:11:12: warning: the result of 'Sensor::set_unsigned_long_long' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:12:12: warning: the result of 'Sensor::set_hex' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:13:12: warning: the result of 'Sensor::set_binary' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:14:12: warning: the result of 'Sensor::set_digits' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:15:12: warning: the result of 'Sensor::set_negative' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:16:12: warning: the result of 'Sensor::set_float' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:17:12: warning: the result of 'Sensor::set_double' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:18:12: warning: the result of 'Sensor::set_long_double' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:19:12: warning: the result of 'Sensor::set_char' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:20:12: warning: the result of 'Sensor::set_bool' is never used, so the method is assumed to return void [mt-unused-result]
+in/sensor_test.cpp:21:12: warning: the result of 'Sensor::set_text' is never used, so the method is assumed to return void [mt-unused-result]
+created out/sensor.h
+created out/sensor.cpp

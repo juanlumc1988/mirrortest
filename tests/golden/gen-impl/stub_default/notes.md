@@ -1,0 +1,1 @@
+--stub-policy default: stubs return `{}`, which can make a test pass by accident, so mt-stub-may-pass says so once; a type that `{}` cannot build (std::runtime_error has no default constructor) aborts instead, with its own warning.

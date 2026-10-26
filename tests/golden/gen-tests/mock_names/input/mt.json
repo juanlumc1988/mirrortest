@@ -1,0 +1,6 @@
+{
+  "gtest": {"mocks": true},
+  "guard": "pragma-once",
+  "file_header": "// Copyright ACME",
+  "naming": {"mock_file": "mocks/{stem}_mock.h", "mock_class": "{Class}Mock"}
+}

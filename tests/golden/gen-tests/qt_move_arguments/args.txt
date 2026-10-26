@@ -1,0 +1,6 @@
+gen-tests
+${IN}/inbox.h
+--out
+${OUT}
+--framework
+qtest

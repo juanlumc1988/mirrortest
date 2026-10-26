@@ -1,0 +1,4 @@
+gen-impl
+${IN}/names_test.cpp
+--out
+${OUT}

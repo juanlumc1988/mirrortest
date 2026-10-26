@@ -1,0 +1,5 @@
+gen-tests
+${IN}/one/foo.h
+${IN}/two/foo.h
+--out
+${OUT}

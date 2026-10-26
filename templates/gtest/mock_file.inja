@@ -1,0 +1,31 @@
+{% include "common/file_header.inja" %}
+{% if pragma_once %}
+#pragma once
+{% else %}
+#ifndef {{ guard }}
+#define {{ guard }}
+{% endif %}
+
+{% for line in includes %}
+{{ line }}
+{% endfor %}
+{% if length(open) > 0 %}
+
+{% for line in open %}
+{{ line }}
+{% endfor %}
+{% endif %}
+
+{% for line in lines %}
+{{ line }}
+{% endfor %}
+{% if length(close) > 0 %}
+
+{% for line in close %}
+{{ line }}
+{% endfor %}
+{% endif %}
+{% if not pragma_once %}
+
+#endif  // {{ guard }}
+{% endif %}

@@ -1,0 +1,3 @@
+in/stack_test.cpp:7:16: warning: the result of 'Stack::push' is never used, so the method is assumed to return void [mt-unused-result]
+created out/stack.h
+created out/stack.cpp

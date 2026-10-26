@@ -1,0 +1,4 @@
+gen-tests
+${IN}/lamp.h
+--out
+${OUT}

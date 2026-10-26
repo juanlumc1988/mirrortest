@@ -1,0 +1,1 @@
+--placeholder skip: GTEST_SKIP() instead of FAIL(), so generating over legacy code does not turn CI red.

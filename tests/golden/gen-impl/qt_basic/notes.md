@@ -1,0 +1,1 @@
+The README example as a Qt Test: slots outside the class, QCOMPARE with a literal and with a string literal (a QString), QVERIFY, a data function and QFETCH, QBENCHMARK, and the entry point and the moc include at the end.

@@ -1,0 +1,2 @@
+in/box.h:2:7: warning: the class template 'Box' is skipped: list the instantiations to test in template_instantiations ("Box": ["int"]) [mt-unsupported]
+created out/label_test.cpp

@@ -1,0 +1,2 @@
+created out/label.h
+created out/label.cpp

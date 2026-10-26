@@ -1,0 +1,6 @@
+gen-tests
+${IN}/model.h
+--out
+${OUT}
+--framework
+qtest

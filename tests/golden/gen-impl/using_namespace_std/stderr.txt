@@ -1,0 +1,4 @@
+in/names_test.cpp:12:11: warning: the result of 'Names::add' is never used, so the method is assumed to return void [mt-unused-result]
+in/names_test.cpp:13:11: warning: the result of 'Names::assign' is never used, so the method is assumed to return void [mt-unused-result]
+created out/names.h
+created out/names.cpp

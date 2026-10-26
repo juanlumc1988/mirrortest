@@ -1,0 +1,6 @@
+in/hierarchy.h:22:7: warning: the class template 'acme::Counted' is skipped: list the instantiations to test in template_instantiations ("acme::Counted": ["int"]) [mt-unsupported]
+created out/named_test.cpp
+created out/marker_test.cpp
+created out/leaf_test.cpp
+created out/tag_test.cpp
+created out/plain_test.cpp

@@ -1,0 +1,3 @@
+in/config_test.cpp:18:12: warning: the result of 'Config::set_level' is never used, so the method is assumed to return void [mt-unused-result]
+created out/config.h
+created out/config.cpp

@@ -1,0 +1,3 @@
+in/box.h:29:7: warning: the class template 'acme::Pair' is skipped: list the instantiations to test in template_instantiations ("acme::Pair": ["int"]) [mt-unsupported]
+created out/box_int_test.cpp
+created out/box_std_string_8_test.cpp

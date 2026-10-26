@@ -1,0 +1,5 @@
+in/device.h:16:7: note: the interface 'Channel' is a class template; no mock is generated for it [mt-unsupported]
+in/device.h:16:7: warning: the class template 'Channel' is skipped: list the instantiations to test in template_instantiations ("Channel": ["int"]) [mt-unsupported]
+created out/device_test.cpp
+created out/only_an_operator_test.cpp
+created out/mock_device.h

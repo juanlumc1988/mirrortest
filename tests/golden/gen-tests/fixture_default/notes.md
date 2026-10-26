@@ -1,0 +1,1 @@
+gtest.fixture: the fixture owns a default-constructed sut, the tests are TEST_F and have no sut of their own. The constructor case builds another object, called object, and the destructor case lets the fixture destroy sut.

@@ -1,0 +1,6 @@
+gen-tests
+${IN}/counter.h
+--out
+${OUT}
+--framework
+qtest

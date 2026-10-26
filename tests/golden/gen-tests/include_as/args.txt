@@ -1,0 +1,6 @@
+gen-tests
+${IN}/gear.h
+--out
+${OUT}
+--include-as
+vendor/gear/gear.h

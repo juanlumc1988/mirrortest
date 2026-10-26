@@ -1,0 +1,8 @@
+gen-tests
+${IN}/calc.h
+--out
+${OUT}
+--framework
+qtest
+--qt-main
+gui

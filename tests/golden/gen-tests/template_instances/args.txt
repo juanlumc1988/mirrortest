@@ -1,0 +1,6 @@
+gen-tests
+${IN}/box.h
+--out
+${OUT}
+--config
+${IN}/mt.json

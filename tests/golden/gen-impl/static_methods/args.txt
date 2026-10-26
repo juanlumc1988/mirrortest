@@ -1,0 +1,4 @@
+gen-impl
+${IN}/registry_test.cpp
+--out
+${OUT}

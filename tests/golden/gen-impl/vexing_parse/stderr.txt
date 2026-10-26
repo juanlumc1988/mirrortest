@@ -1,0 +1,4 @@
+in/lamp_test.cpp:5:5: warning: 'Lamp lamp();' declares a function, not an object (the most vexing parse); the constructor call is not seen [mt-vexing-parse]
+in/lamp_test.cpp:7:11: warning: the result of 'Lamp::on' is never used, so the method is assumed to return void [mt-unused-result]
+created out/lamp.h
+created out/lamp.cpp

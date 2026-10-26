@@ -1,0 +1,1 @@
+The user changed the return type of size() to `int` and made it const, and implemented it. The tests still say `3u`: mt-merge-mismatch warns, nothing is added or changed (no duplicate, no second definition), and the new member empty() is merged.

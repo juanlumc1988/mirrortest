@@ -1,0 +1,1 @@
+With `qtest.data_driven`, a method with arguments gets a `<name>_data()` slot with one column for each argument and a row of default values, and the test reads the row with `QFETCH`. A type with a comma (`std::map<int, int>`) cannot be an argument of `QFETCH`, so that test stays plain.

@@ -1,0 +1,1 @@
+--no-exceptions: stubs abort instead of throwing, and include <cstdlib>.

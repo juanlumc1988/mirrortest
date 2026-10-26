@@ -1,0 +1,3 @@
+out/foo.h: warning: 'Foo' has no region in out/foo.h; the new text goes to a .new file instead [mt-merge-no-region]
+wrote out/foo.h.new (out/foo.h exists and differs)
+created out/foo.cpp

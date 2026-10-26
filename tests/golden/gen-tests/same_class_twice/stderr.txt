@@ -1,0 +1,1 @@
+in/two/foo.h: error: 'in/one/foo.h' and 'in/two/foo.h' both generate 'out/foo_test.cpp' with different content; give the headers different output directories, or run them one at a time [mt-unsupported]

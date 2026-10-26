@@ -1,0 +1,4 @@
+gen-tests
+${IN}/util.h
+--out
+${OUT}

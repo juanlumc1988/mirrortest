@@ -1,0 +1,6 @@
+in/clock_test.cpp:4:5: warning: no #include in the test claims 'HighResClock'; generating it in 'high_res_clock.h', which the test needs to include [mt-no-include]
+in/clock_test.cpp:6:15: warning: no #include in the test claims 'now_ms'; generating it in 'now_ms.h', which the test needs to include [mt-no-include]
+created out/high_res_clock.h
+created out/high_res_clock.cpp
+created out/now_ms.h
+created out/now_ms.cpp

@@ -1,0 +1,4 @@
+in/controller_test.cpp:40:11: warning: the result of 'Controller::calibrate' is never used, so the method is assumed to return void [mt-unused-result]
+created out/controller.h
+created out/controller.cpp
+created out/sensor.h

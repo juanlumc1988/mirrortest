@@ -1,0 +1,3 @@
+in/engine_test.cpp:6:12: warning: the result of 'acme::core::Engine::start' is never used, so the method is assumed to return void [mt-unused-result]
+created out/acme/core/engine.h
+created out/acme/core/engine.cpp

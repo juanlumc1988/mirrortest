@@ -1,0 +1,125 @@
+# ---- Build directories ----
+build/
+build-*/
+/out/
+cmake-build-*/
+_deps/
+
+# ---- CMake artefacts ----
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+CMakeUserPresets.json
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+CPackConfig.cmake
+CPackSourceConfig.cmake
+
+# ---- Make / Ninja ----
+Makefile
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+
+# ---- Compiled object / intermediate files ----
+*.o
+*.obj
+*.lo
+*.slo
+*.ko
+*.gch
+*.pch
+*.d
+*.i
+*.ii
+*.s
+
+# ---- Libraries ----
+*.a
+*.la
+*.lai
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# ---- Executables ----
+*.exe
+*.out
+*.app
+*.elf
+*.bin
+*.hex
+*.map
+a.out
+
+# ---- Debug / profiling ----
+*.dSYM/
+*.su
+*.idb
+*.pdb
+*.gcno
+*.gcda
+*.gcov
+coverage/
+*.profraw
+*.profdata
+callgrind.out.*
+perf.data
+perf.data.old
+vgcore.*
+# Deliberately no bare `core` rule: it would silently swallow any directory
+# named core/ -- and include/mirrortest/core/ and src/core/ exist. core.1234
+# and vgcore.* still match; an unsuffixed ./core dump is the price.
+core.[0-9]*
+
+# ---- Sanitizer / analysis output ----
+*.asan
+*.tsan
+*.ubsan
+cppcheck-report.*
+scan-build-*/
+
+# ---- mirrortest: generator side outputs ----
+# The tool writes <file>.new next to a file it refuses to overwrite. In this
+# repository those only ever appear by accident (running the tool on its own
+# examples); the golden and round-trip tests write into the build tree.
+# Golden cases that pin the refuse-to-overwrite behaviour DO track them.
+*.new
+!tests/golden/**/*.new
+
+# ---- Editors / IDE ----
+.vscode/
+.vs/
+.idea/
+*.swp
+*.swo
+*~
+.cache/
+.clangd/
+*.kdev4
+.kdev4/
+*.user
+*.user.*
+*.autosave
+
+# ---- Qt (QTest round-trip projects) ----
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.moc
+.qmake.stash
+.qmake.cache
+*.pro.user
+*.pro.user.*
+
+# ---- OS noise ----
+.DS_Store
+Thumbs.db
+desktop.ini

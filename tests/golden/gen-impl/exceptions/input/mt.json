@@ -1,0 +1,4 @@
+{
+  // The base of the exception classes the tests expect to be thrown.
+  "exception_base": "std::runtime_error"
+}

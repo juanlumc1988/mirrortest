@@ -1,0 +1,6 @@
+in/meter_test.cpp:6:32: warning: the return type of 'Meter::reading' is inferred as 'unsigned int' (literal 3u, in/meter_test.cpp:6) but also as 'int' (literal 3, in/meter_test.cpp:7); using the first [mt-conflict]
+in/meter_test.cpp:8:11: warning: the result of 'Meter::calibrate' is never used, so the method is assumed to return void [mt-unused-result]
+in/meter_test.cpp:8:21: warning: parameter 1 of 'Meter::calibrate' is inferred as 'int' (literal 1, in/meter_test.cpp:8) but also as 'double' (literal 2.5, in/meter_test.cpp:9); using the first [mt-conflict]
+in/meter_test.cpp:10:5: warning: the return type of 'Meter::total' is inferred as 'long' (its use, in/meter_test.cpp:10) but also as 'unsigned int' (literal 5u, in/meter_test.cpp:11); using the first [mt-conflict]
+created out/meter.h
+created out/meter.cpp

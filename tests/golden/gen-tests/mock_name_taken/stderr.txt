@@ -1,0 +1,3 @@
+in/sensor.h:3:7: note: the header declares 'MockSensor' already; no mock is generated for 'Sensor' [mt-unsupported]
+created out/sensor_test.cpp
+created out/mock_sensor_test.cpp

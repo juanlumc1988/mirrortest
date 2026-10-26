@@ -1,0 +1,2 @@
+semi;colon [brackets] "quotes" \backslash ${NOT_EXPANDED} @AT@ {{ x }}
+second line

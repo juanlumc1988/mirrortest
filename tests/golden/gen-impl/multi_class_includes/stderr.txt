@@ -1,0 +1,5 @@
+in/shapes_test.cpp:10:12: warning: the result of 'Canvas::draw' is never used, so the method is assumed to return void [mt-unused-result]
+created out/geometry/point.h
+created out/geometry/point.cpp
+created out/geometry/line.h
+created out/geometry/line.cpp

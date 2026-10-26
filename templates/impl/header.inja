@@ -1,0 +1,65 @@
+{% include "common/file_header.inja" %}
+{% if pragma_once %}
+#pragma once
+{% else %}
+#ifndef {{ guard }}
+#define {{ guard }}
+{% endif %}
+
+{{ includes_begin }}
+{% for line in includes %}
+{{ line }}
+{% endfor %}
+{{ includes_end }}
+{% for section in sections %}
+
+{% if length(section.open) > 0 %}
+{% for line in section.open %}
+{{ line }}
+{% endfor %}
+
+{% endif %}
+{% for block in section.blocks %}
+{% if block.kind == "forward" %}
+{% for line in block.lines %}
+{{ line }}
+{% endfor %}
+{% else if block.kind == "class" %}
+{{ block.head }}
+{% if block.access != "" %}
+{{ block.access }}
+{% endif %}
+    {{ block.begin }}
+{% for member in block.members %}
+{% for note in member.notes %}
+    {{ note }}
+{% endfor %}
+    {{ member.line }}
+{% endfor %}
+    {{ block.end }}
+{{ block.tail }}
+{% else %}
+{{ block.begin }}
+{% for member in block.members %}
+{% for note in member.notes %}
+{{ note }}
+{% endfor %}
+{{ member.line }}
+{% endfor %}
+{{ block.end }}
+{% endif %}
+{% if not loop.is_last %}
+
+{% endif %}
+{% endfor %}
+{% if length(section.close) > 0 %}
+
+{% for line in section.close %}
+{{ line }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% if not pragma_once %}
+
+#endif  // {{ guard }}
+{% endif %}

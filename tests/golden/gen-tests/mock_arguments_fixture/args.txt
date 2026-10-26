@@ -1,0 +1,6 @@
+gen-tests
+${IN}/controller.h
+--out
+${OUT}
+--config
+${IN}/mt.json

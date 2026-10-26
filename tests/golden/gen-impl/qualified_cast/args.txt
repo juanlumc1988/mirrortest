@@ -1,0 +1,4 @@
+gen-impl
+${IN}/bar_test.cpp
+--out
+${OUT}

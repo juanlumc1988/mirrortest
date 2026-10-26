@@ -1,0 +1,3 @@
+in/bar_test.cpp:7:9: warning: the result of 'acme::Bar::put' is never used, so the method is assumed to return void [mt-unused-result]
+created out/acme/bar.h
+created out/acme/bar.cpp

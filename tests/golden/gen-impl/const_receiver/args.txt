@@ -1,0 +1,4 @@
+gen-impl
+${IN}/config_test.cpp
+--out
+${OUT}

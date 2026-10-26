@@ -1,0 +1,5 @@
+created out/sensor_test.cpp
+created out/logger_test.cpp
+created out/controller_test.cpp
+created out/mock_sensor.h
+created out/mock_logger.h

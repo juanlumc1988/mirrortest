@@ -1,0 +1,5 @@
+gen-impl
+${IN}/foo_test.cpp
+--out
+${OUT}
+--no-exceptions

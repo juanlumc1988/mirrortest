@@ -1,0 +1,6 @@
+gen-tests
+${IN}/account.h
+--out
+${OUT}
+--config
+${IN}/mt.json

@@ -1,0 +1,6 @@
+gen-tests
+${IN}/device.h
+--out
+${OUT}
+--framework
+qtest

@@ -1,0 +1,4 @@
+gen-impl
+${IN}/point_test.cpp
+--out
+${OUT}

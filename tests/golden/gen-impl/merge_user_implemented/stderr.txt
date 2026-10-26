@@ -1,0 +1,2 @@
+merged 2 members into out/foo.h
+merged 2 members into out/foo.cpp

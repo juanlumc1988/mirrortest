@@ -1,0 +1,1 @@
+The README example in miniature: a constructor, a const getter, two mutators. The object is built with the default constructor when there is one; here there is not, so the one with the fewest arguments is used.
