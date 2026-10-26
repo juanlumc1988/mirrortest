@@ -61,13 +61,24 @@ struct ImplViews {
     nlohmann::json source_view;    // for impl/source.inja; null when there is no source file
 };
 
+// What building the views found out beyond them.
+struct ImplBuild {
+    std::vector<ImplViews> views;
+    // Some stub calls mt_not_implemented() (stub_policy "hook"), so the header that
+    // declares it (backend/hook_header.h) has to be written as well.
+    bool uses_hook = false;
+};
+
 // Pure: no rendering, no file system. Reports through `diagnostics`:
 // mt-no-include (a class or function no #include claims), mt-stub-may-pass
 // (stub_policy "default"), mt-unsupported (a stub that cannot return an empty
 // value, a path outside the output directory, region labels that collide).
+ImplBuild build_impl(const ir::Model& model, const ImplOptions& options, core::Diagnostics& diagnostics);
+
+// The same, for the callers that only want the views.
 std::vector<ImplViews> build_impl_views(const ir::Model& model, const ImplOptions& options, core::Diagnostics& diagnostics);
 
-// Views rendered through the templates. A template that fails records an error
+// Views rendered through the templates, and the hook header when the stubs call it. A template that fails records an error
 // and the file is left out of the plan; the caller refuses to write anything
 // when `diagnostics` has errors.
 core::OutputPlan generate_impl(const ir::Model& model, const ImplOptions& options, const core::TemplateStore& templates,

@@ -36,7 +36,7 @@ const Choice<GuardStyle> kGuards[] = {
     {GuardStyle::Ifndef, "ifndef"}, {GuardStyle::PragmaOnce, "pragma-once"},
 };
 const Choice<StubPolicy> kStubPolicies[] = {
-    {StubPolicy::Throw, "throw"}, {StubPolicy::Abort, "abort"}, {StubPolicy::Default, "default"},
+    {StubPolicy::Throw, "throw"}, {StubPolicy::Abort, "abort"}, {StubPolicy::Default, "default"}, {StubPolicy::Hook, "hook"},
 };
 const Choice<Placeholder> kPlaceholders[] = {
     {Placeholder::Fail, "fail"}, {Placeholder::Skip, "skip"},

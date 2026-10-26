@@ -174,6 +174,10 @@ Stub make_stub(core::StubPolicy policy, const ir::Type& ret, bool trivial, bool 
             stub.body.push_back("std::abort();");
             stub.include = "cstdlib";
             break;
+        case core::StubPolicy::Hook:
+            stub.body.push_back("mt_not_implemented(\"" + escape_literal(signature) + "\");");
+            stub.local_include = "mt_not_implemented.h";
+            [[fallthrough]];   // the hook may return: the stub then gives what `default` gives
         case core::StubPolicy::Default:
             if (ret.is_void()) break;
             if (default_returnable && ret.ref == ir::RefKind::None) {

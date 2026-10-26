@@ -312,7 +312,7 @@ TEST(ConfigErrors, ValuesOutsideTheirSet) {
     EXPECT_EQ(only_error(apply(R"({"std":"c++98"})")),
               "configuration key 'std' must be one of: c++11, c++14, c++17, c++20, c++23 (got 'c++98')");
     EXPECT_EQ(only_error(apply(R"({"stub_policy":"hope"})")),
-              "configuration key 'stub_policy' must be one of: throw, abort, default (got 'hope')");
+              "configuration key 'stub_policy' must be one of: throw, abort, default, hook (got 'hope')");
     EXPECT_EQ(only_error(apply(R"({"guard":"pragma"})")),
               "configuration key 'guard' must be one of: ifndef, pragma-once (got 'pragma')");
     EXPECT_EQ(only_error(apply(R"({"qt":4})")), "configuration key 'qt' must be 5 or 6");
@@ -401,7 +401,7 @@ TEST(ConfigHelpers, StringsRoundTrip) {
     for (CxxStd s : {CxxStd::Cxx11, CxxStd::Cxx14, CxxStd::Cxx17, CxxStd::Cxx20, CxxStd::Cxx23}) {
         EXPECT_EQ(parse_std(to_string(s)), s);
     }
-    for (StubPolicy s : {StubPolicy::Throw, StubPolicy::Abort, StubPolicy::Default}) {
+    for (StubPolicy s : {StubPolicy::Throw, StubPolicy::Abort, StubPolicy::Default, StubPolicy::Hook}) {
         EXPECT_EQ(parse_stub_policy(to_string(s)), s);
     }
     for (Placeholder s : {Placeholder::Fail, Placeholder::Skip}) {
@@ -457,6 +457,15 @@ TEST(ConfigHelpers, NoStlTurnsThrowIntoAbortToo) {
     c.no_stl = false;
     c.stub_policy = StubPolicy::Throw;
     EXPECT_EQ(effective_stub_policy(c), StubPolicy::Throw) << "and only no_stl, no_exceptions or both change it";
+}
+
+TEST(ConfigHelpers, HookIsKeptWhateverTheOtherPoliciesSay) {
+    Config c;
+    c.stub_policy = StubPolicy::Hook;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Hook);
+    c.no_exceptions = true;
+    c.no_stl = true;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Hook) << "only the default handler of the hook header changes";
 }
 
 TEST(ConfigKeys, NoStlIsABoolean) {

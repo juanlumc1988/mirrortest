@@ -117,7 +117,7 @@ TEST(Cli, EachCommandHasItsOwnHelp) {
 TEST(Cli, HelpShowsTheValidChoicesFromTheConfiguration) {
     const Invocation r = invoke({"gen-impl", "--help"});
     EXPECT_TRUE(contains(r.out, "c++11|c++14|c++17|c++20|c++23"));
-    EXPECT_TRUE(contains(r.out, "throw|abort|default"));
+    EXPECT_TRUE(contains(r.out, "throw|abort|default|hook"));
     EXPECT_TRUE(contains(r.out, "error|todo"));
 }
 
@@ -264,6 +264,10 @@ TEST(CliParse, IncludeDirectoriesAccumulateAndDoNotEatTheInputs) {
     const Options o = opts({"gen-impl", "-I", "inc", "test.cpp", "-I", "other", "-Ilast", "--out", "o"});
     EXPECT_EQ(o.include_dirs, (std::vector<std::string>{"inc", "other", "last"}));
     EXPECT_EQ(o.inputs, std::vector<std::string>{"test.cpp"});
+}
+
+TEST(CliParse, TheHookStubPolicyIsAccepted) {
+    EXPECT_EQ(opts({"gen-impl", "t.cpp", "--out", "o", "--stub-policy", "hook"}).config.stub_policy, core::StubPolicy::Hook);
 }
 
 TEST(CliParse, CompileCommandsIsRememberedForBothCommandsAndNotReadYet) {

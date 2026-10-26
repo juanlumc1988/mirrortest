@@ -42,6 +42,8 @@
 #   MT_QT_LIBS     Qt's libraries (a list: QtTest, QtCore)
 #   MT_MOC         the moc executable
 #   MT_EXPECT      gen-tests: "fail" (default) or "skip"
+#   MT_HANDLER     gen-impl: a .cpp linked into the test's program, the handler of stub_policy hook:
+#                  the slots then all run, instead of ending at the first exception, and all must fail
 
 cmake_minimum_required(VERSION 3.20)
 
@@ -277,7 +279,17 @@ else()
     endif()
     # The test includes the headers that were generated; moc finds them with the same -I.
     set(include_dirs "-I${gen}" ${include_dirs})
-    build_and_check("${test_file}" die "${objects}" 99)
+    set(kind die)
+    if(DEFINED MT_HANDLER AND NOT "${MT_HANDLER}" STREQUAL "")
+        # stub_policy hook, and a handler that fails the slot and returns (tests/roundtrip/hook): no
+        # exception ends the program, so every slot runs, in one program, and every one must fail.
+        set(handler_object "${MT_WORK}/handler.o")
+        run("compiling ${MT_HANDLER}" 0 "${MT_CXX}" ${shared} ${qt_flags} -Wall -Wextra -Werror
+            ${prelude} "-I${gen}" ${qt_includes} -c "${MT_HANDLER}" -o "${handler_object}")
+        list(APPEND objects "${handler_object}")
+        set(kind fail)
+    endif()
+    build_and_check("${test_file}" ${kind} "${objects}" 99)
 endif()
 
 # ---- idempotence ------------------------------------------------------------------------------------------------

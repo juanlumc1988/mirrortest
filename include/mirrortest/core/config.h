@@ -32,7 +32,7 @@ namespace mt::core {
 
 enum class CxxStd { Cxx11, Cxx14, Cxx17, Cxx20, Cxx23 };
 enum class GuardStyle { Ifndef, PragmaOnce };
-enum class StubPolicy { Throw, Abort, Default };
+enum class StubPolicy { Throw, Abort, Default, Hook };
 enum class Placeholder { Fail, Skip };
 enum class AutoPolicy { Error, Todo };
 // How a generated Qt Test file starts its event loop: QTEST_APPLESS_MAIN (no

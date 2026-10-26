@@ -1,0 +1,6 @@
+gen-impl
+${IN}/tst_counter.cpp
+--out
+${OUT}
+--stub-policy
+hook

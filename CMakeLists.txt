@@ -46,6 +46,7 @@ mt_embed_templates("${MT_EMBEDDED_TEMPLATES}" "${CMAKE_CURRENT_SOURCE_DIR}/templ
 add_library(mt_core STATIC
     src/backend/cxx_format.cpp
     src/backend/gtest_backend.cpp
+    src/backend/hook_header.cpp
     src/backend/impl_backend.cpp
     src/backend/impl_merge.cpp
     src/backend/mock_planner.cpp
@@ -118,6 +119,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_gen_impl.cpp
         tests/unit/test_gen_tests.cpp
         tests/unit/test_gtest_backend.cpp
+        tests/unit/test_hook_header.cpp
         tests/unit/test_include_search.cpp
         tests/unit/test_impl_backend.cpp
         tests/unit/test_impl_merge.cpp
@@ -195,9 +197,9 @@ if(MT_BUILD_TESTS)
     # the cases are fast and need no network; GoogleTest is the main build's.
     if(NOT MSVC)
         foreach(case basic_class fixture_members namespaces multi_class_includes no_exceptions no_stl no_stl_library_types
-                     mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums exceptions)
+                     stub_hook stub_hook_abort mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums exceptions)
             set(mode throw)
-            if(case STREQUAL "no_exceptions" OR case STREQUAL "no_stl" OR case STREQUAL "no_stl_library_types")
+            if(case STREQUAL "no_exceptions" OR case STREQUAL "no_stl" OR case STREQUAL "no_stl_library_types" OR case STREQUAL "stub_hook_abort")
                 set(mode abort)
             endif()
             add_test(NAME roundtrip.${case}
@@ -317,15 +319,21 @@ if(MT_BUILD_TESTS)
         endforeach()
 
         # gen-impl: the golden cases whose test runs. qt_exceptions_new needs the macros of Qt 6.3.
-        set(mt_qt_impl_cases qt_basic qt_inline_slots qt_exceptions)
+        set(mt_qt_impl_cases qt_basic qt_inline_slots qt_exceptions qt_hook)
         if(MT_QT STREQUAL "Qt6" AND Qt6_VERSION VERSION_GREATER_EQUAL 6.3)
             list(APPEND mt_qt_impl_cases qt_exceptions_new)
         endif()
         foreach(case IN LISTS mt_qt_impl_cases)
+            # stub_policy hook: a handler that fails the slot and returns, so that all slots run.
+            set(handler "")
+            if(case STREQUAL "qt_hook")
+                set(handler "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/hook/qt_handler.cpp")
+            endif()
             add_test(NAME roundtrip.qt.gen_impl.${case}
                 COMMAND "${CMAKE_COMMAND}" ${mt_qt_args}
                     -DMT_DIRECTION=gen-impl
                     -DMT_CASE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl/${case}
+                    "-DMT_HANDLER=${handler}"
                     -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/roundtrip/qt/gen-impl/${case}
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/run_qt_case.cmake")
             set_tests_properties(roundtrip.qt.gen_impl.${case} PROPERTIES TIMEOUT 300)

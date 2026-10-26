@@ -96,8 +96,9 @@ std::string todo_comment(const std::string& note);
 struct Stub {
     std::vector<std::string> body;   // one statement per line, no braces or indentation; empty = `{}`
     std::string include;             // the system header the body needs ("stdexcept"), or ""
-    // The `default` policy wanted `return {};` and the return type cannot take
-    // it, so the body aborts instead.
+    std::string local_include;       // the generated header it needs ("mt_not_implemented.h"), or ""
+    // The `default` or `hook` policy wanted `return {};` and the return type cannot
+    // take it, so the body aborts instead (after the hook, if it returns).
     bool fell_back = false;
 };
 
@@ -108,6 +109,8 @@ struct Stub {
 //   abort    `std::abort();`
 //   default  `return {};`; nothing for void; abort for a return type that
 //            cannot be `{}` (`default_returnable` false, or a reference)
+//   hook     `mt_not_implemented("<signature>");` and then what `default` has
+//            for a value (`return {};`, or the abort): the hook may return
 //
 // `trivial` is for constructors and destructors: an empty body whatever the
 // policy. A constructor that threw would stop every test at its first line

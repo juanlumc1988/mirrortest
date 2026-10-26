@@ -44,7 +44,7 @@ README per version).
 | R23 | §2, §8 | Deterministic | Not made concrete. | No timestamps or absolute paths; stable order (vectors, never `unordered_*` in emission); LF; final newline; no trailing spaces. The goldens verify it (§16). |
 | R24 | §7 | Dependencies through `FetchContent` with tags | Tags can move. *Verified* in this environment: GitHub's `/archive/` tarballs are blocked by the proxy; `git clone` works. | Shallow git by tag **and** verification of the commit SHA after the download (configure fails on mismatch). Offline mode with `FETCHCONTENT_SOURCE_DIR_*` (§17). *Implemented and tested.* |
 | R25 | §6 | `GTEST_SKIP()`, `INSTANTIATE_TEST_SUITE_P` | They exist since GTest 1.10; before that, `INSTANTIATE_TEST_CASE_P`. | The frontend recognises both names; the backend assumes GTest ≥ 1.10. |
-| R26 | §4 | Stubs with `throw` give the *red* phase | *Verified* (GTest 1.16, Qt 6.4.2): GTest catches the exception **per test** and carries on (all red). QTest reports `FAIL! Caught unhandled exception` and **rethrows** → `std::terminate`: the following slots do not run. It is still red, but only the first failure is seen. | `throw` is kept (red guaranteed in both). Documented for QTest (one slot can be run on its own: `tst_foo slotName`). Future improvement: a `hook` policy (§8.3). The QTest round trip checks what really happens (§16). |
+| R26 | §4 | Stubs with `throw` give the *red* phase | *Verified* (GTest 1.16, Qt 6.4.2): GTest catches the exception **per test** and carries on (all red). QTest reports `FAIL! Caught unhandled exception` and **rethrows** → `std::terminate`: the following slots do not run. It is still red, but only the first failure is seen. | `throw` is kept (red guaranteed in both). Documented for QTest (one slot can be run on its own: `tst_foo slotName`). The `hook` policy (§8.3, plan 8.3) lets a handler fail the slot and return, so that QTest goes on. The QTest round trips check what really happens (§16). |
 | R27 | §8 | — | *Verified*: with Clang, `-std=c++14 -Wpedantic -Werror`, GTest 1.16's own `TEST` macro fails (`[[maybe_unused]]` is a C++17 extension). Without `-Wpedantic`, or in C++17, it compiles. | In the round trip, C++14 test TUs are compiled with `-Wall -Wextra -Werror` (without `-Wpedantic`); the stubs (without GTest) do get `-Wpedantic`. |
 
 ---
@@ -1270,6 +1270,7 @@ void Foo::run() {
 | `throw` (default) | `throw std::logic_error("mirrortest: not implemented: <signature>")` | empty | `<stdexcept>` |
 | `abort` (`--no-exceptions`, `--no-stl`) | `std::abort();` | empty | `<cstdlib>` |
 | `default` | `return {};` · `void` → empty · return by reference or a type that `{}` cannot build → `std::abort()` + `mt-unsupported` warning | empty | `<cstdlib>` if needed |
+| `hook` | `mt_not_implemented("<signature>");` and then what `default` has: nothing for `void`, `return {};` for a value, `std::abort();` + `mt-unsupported` where `{}` cannot build it (the hook returned and there is nothing to return) | empty | `"mt_not_implemented.h"`, and `<cstdlib>` if needed |
 
 With `default`, `mt-stub-may-pass` is emitted once. Parameter names are always
 commented out (R22). Constructors and destructors are empty under every policy:
@@ -1287,11 +1288,32 @@ unknown type included — gets the abort and the warning. `--no-rtti`: the gener
 the templates. The `includes` region is emitted even when empty, so that the
 merge can add includes.
 
-Future improvement (not MVP), because of R26: a `hook` policy — the stubs call
-`mt_not_implemented("<signature>")`, declared in a generated header, with a
-default definition that throws or aborts and that the test side can replace
-(e.g. by `QTest::qFail` + a default value) so that QTest goes on running the
-rest of the slots.
+**The `hook` policy** (plan 8.3) answers R26. With `throw`, QTest reports the first
+failure and ends the program, so the slots after it never show which stubs they
+need. A `hook` stub calls `mt_not_implemented("<signature>")` and, if that returns,
+gives an empty value like `default`. The function is declared in a header of its own,
+`mt_not_implemented.h` (`backend/hook_header.h`), that `generate_impl` writes beside
+the other headers (`--out-include`, else `--out`) whenever some stub calls it, and
+every source includes. It is plain text built in C++, not a template, and nothing to
+compile or link: every function is `inline` and the handler is a function-local static.
+
+- `typedef void (*mt_not_implemented_handler)(const char* signature);`,
+  `mt_set_not_implemented_handler(handler)` (returns the previous one; `nullptr` puts
+  the default back) and `mt_not_implemented(signature)`.
+- The default handler **throws** a `std::logic_error` with the same message as the
+  `throw` policy, or — under `no_exceptions` or `no_stl`, which have nothing to throw —
+  prints the signature with `<cstdio>` and aborts. The stubs are the same in both.
+  That is why `effective_stub_policy` leaves `hook` alone.
+- The test side installs a handler that makes the running test fail and *returns*
+  (`QTest::qFail(signature, __FILE__, __LINE__)`, `ADD_FAILURE()`), before the tests
+  run: a static object in a file of the test program is enough
+  (`tests/roundtrip/hook/qt_handler.cpp`). Every slot then runs and each reports the
+  signatures it is missing. A handler that returns without failing the test lets it
+  pass without the code it tests, like `default` — which is why `mt-stub-may-pass`
+  is not emitted: the policy does not return a value by itself, the handler decides.
+- The header is written like any other file: `.new` beside it if it exists and
+  differs (a run with `--no-exceptions` after one without), and left alone by
+  `--overwrite merge`, which has no regions to merge in it.
 
 ---
 
@@ -1904,7 +1926,7 @@ warnings into errors.
 
 ```
 mirrortest gen-impl  [--tests] FILE... --out DIR [--out-include DIR] [--out-src DIR]
-                     [--framework auto|gtest|qtest] [--stub-policy throw|abort|default]
+                     [--framework auto|gtest|qtest] [--stub-policy throw|abort|default|hook]
                      [--no-exceptions] [--no-rtti] [--no-stl] [--auto-policy error|todo] [COMMON]
 mirrortest gen-tests [--header] FILE... --out DIR [--framework gtest|qtest]
                      [--placeholder fail|skip] [--include-as PATH] [--qt 5|6]
@@ -2181,7 +2203,7 @@ Implemented in `core/templates.h` (`TemplateStore`) and
 3. **Round trip** (CTest + `cmake -P tests/roundtrip/run_case.cmake`):
    - gen-impl (`tests/roundtrip/run_case.cmake`, cases `basic_class`,
      `fixture_members`, `namespaces`, `multi_class_includes`, `no_exceptions`,
-     `no_stl`, `no_stl_library_types`, `mock_interface`, `mock_legacy_macros`, `mock_known_interface`,
+     `no_stl`, `no_stl_library_types`, `stub_hook`, `stub_hook_abort`, `mock_interface`, `mock_legacy_macros`, `mock_known_interface`,
      `fake_interface`, whose test and arguments are those of the golden case):
      generate → compile the stubs with `-std=c++11 -Wall -Wextra -Wpedantic
      -Werror` (plus `-fno-exceptions -fno-rtti` for `abort`; the case's
@@ -2235,7 +2257,9 @@ Implemented in `core/templates.h` (`TemplateStore`) and
        whole program must fail. `qt_fetch_types` has no round trip (a data
        function without rows runs no slot) and `qt_exceptions_new` needs Qt 6.3;
        the test of `qt_exceptions` uses a macro that Qt 6.3 deprecates, which is
-       allowed to warn.
+       allowed to warn. `qt_hook` (`--stub-policy hook`) links a handler that calls
+       `QTest::qFail` and returns (`MT_HANDLER`), so nothing ends the program: all the slots
+       run, in one program, and every one must have its `FAIL!` line.
      - Not covered: `QTEST_MAIN` (it needs QtWidgets), hence no round trip for
        `qt_gui_main`.
    - **Cross**: if `MT_CROSS_CXX` is defined (CI installs

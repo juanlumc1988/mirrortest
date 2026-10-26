@@ -699,6 +699,83 @@ TEST(ImplBackendStub, NoStlAbortsInsteadOfThrowingAndSoNeedsNoLibraryHeader) {
     EXPECT_EQ(definition_lines(build(model, o).views[0].source_view), (Strings{"int Foo::f() {", "    return {};", "}", "void Foo::g() {}"}));
 }
 
+// ---- stub_policy hook --------------------------------------------------------------------------------------------
+
+backend::ImplOptions hook_options(Strings headers) {
+    backend::ImplOptions o = with_headers(std::move(headers));
+    o.config.stub_policy = core::StubPolicy::Hook;
+    return o;
+}
+
+TEST(ImplBackendHook, AStubCallsTheHookAndThenReturnsWhatDefaultWould) {
+    ir::Model model;
+    model.classes = {klass("Foo", {"acme"}, {ctor("Foo", {param("int", "arg1")}), method("size", "unsigned int", {}, true), method("run", "void")})};
+    const Generated g = build(model, hook_options({"foo.h"}));
+    EXPECT_EQ(definition_lines(g.views[0].source_view),
+              (Strings{"Foo::Foo(int /*arg1*/) {}", "unsigned int Foo::size() const {",
+                       "    mt_not_implemented(\"acme::Foo::size() const\");", "    return {};", "}", "void Foo::run() {",
+                       "    mt_not_implemented(\"acme::Foo::run()\");", "}"}));
+    EXPECT_EQ(includes_of(g.views[0].source_view), Strings{"#include \"mt_not_implemented.h\""});
+    EXPECT_TRUE(g.diagnostics.empty()) << "the hook is what fails the test: nothing may pass by accident, so no mt-stub-may-pass";
+}
+
+TEST(ImplBackendHook, FreeFunctionsToo) {
+    ir::Model model;
+    model.functions = {function("twice", "int", {param("int", "x")})};
+    const Generated g = build(model, hook_options({"util.h"}));
+    EXPECT_EQ(definition_lines(g.views[0].source_view), (Strings{"int twice(int /*x*/) {", "    mt_not_implemented(\"twice(int)\");", "    return {};", "}"}));
+    EXPECT_EQ(includes_of(g.views[0].source_view), Strings{"#include \"mt_not_implemented.h\""});
+}
+
+TEST(ImplBackendHook, WhereThereIsNoEmptyValueTheStubAbortsWhenTheHookReturnsAndSaysSo) {
+    ir::Model model;
+    model.classes = {klass("Foo", {}, {method("mystery", "Mystery"), method("name", "const std::string&")})};
+    const Generated g = build(model, hook_options({"foo.h"}));
+    EXPECT_EQ(definition_lines(g.views[0].source_view),
+              (Strings{"Mystery Foo::mystery() {", "    mt_not_implemented(\"Foo::mystery()\");", "    std::abort();", "}",
+                       "const std::string& Foo::name() {", "    mt_not_implemented(\"Foo::name()\");", "    std::abort();", "}"}));
+    EXPECT_EQ(includes_of(g.views[0].source_view), (Strings{"#include <cstdlib>", "#include \"mt_not_implemented.h\""}));
+    const std::vector<core::Diagnostic> all = g.diagnostics.sorted();
+    ASSERT_EQ(all.size(), 2u);
+    EXPECT_EQ(all[0].code, "mt-unsupported");
+    EXPECT_EQ(all[0].message,
+              "'Foo::mystery()' cannot return an empty 'Mystery' under stub_policy 'hook'; its stub aborts when the hook returns "
+              "(list the type in default_constructible_types if it can)");
+}
+
+TEST(ImplBackendHook, TheHeaderIsAskedForOnlyWhenSomeStubCallsIt) {
+    ir::Model constructors;
+    constructors.classes = {klass("Foo", {}, {ctor("Foo")})};
+    core::Diagnostics quiet;
+    const backend::ImplBuild none = backend::build_impl(constructors, hook_options({"foo.h"}), quiet);
+    EXPECT_FALSE(none.uses_hook) << "a constructor is empty under every policy";
+    EXPECT_TRUE(includes_of(none.views[0].source_view).empty());
+
+    ir::Model methods;
+    methods.classes = {klass("Foo", {}, {method("f", "int")})};
+    core::Diagnostics d;
+    EXPECT_TRUE(backend::build_impl(methods, hook_options({"foo.h"}), d).uses_hook);
+
+    for (core::StubPolicy p : {core::StubPolicy::Throw, core::StubPolicy::Abort, core::StubPolicy::Default}) {
+        backend::ImplOptions o = with_headers({"foo.h"});
+        o.config.stub_policy = p;
+        core::Diagnostics other;
+        EXPECT_FALSE(backend::build_impl(methods, o, other).uses_hook);
+    }
+}
+
+TEST(ImplBackendHook, NoExceptionsAndNoStlDoNotChangeTheStubsOnlyWhatTheDefaultHandlerDoes) {
+    ir::Model model;
+    model.classes = {klass("Foo", {}, {method("f", "int")})};
+    for (int variant = 0; variant < 2; ++variant) {
+        backend::ImplOptions o = hook_options({"foo.h"});
+        (variant == 0 ? o.config.no_exceptions : o.config.no_stl) = true;
+        EXPECT_EQ(definition_lines(build(model, o).views[0].source_view),
+                  (Strings{"int Foo::f() {", "    mt_not_implemented(\"Foo::f()\");", "    return {};", "}"}))
+            << variant;
+    }
+}
+
 // ---- no_stl: the library headers a header has to include ---------------------------------------------------------
 
 backend::ImplOptions no_stl_options(Strings headers) {

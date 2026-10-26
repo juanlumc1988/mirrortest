@@ -457,6 +457,7 @@ unsigned int Foo::size() const {
 | `throw` (default) | `throw std::logic_error("mirrortest: not implemented: ...");` | `<stdexcept>` |
 | `abort` | `std::abort();` | `<cstdlib>` |
 | `default` | `return {};` (nothing for `void`) | — |
+| `hook` | `mt_not_implemented("...");`, then `return {};` (nothing for `void`) | `"mt_not_implemented.h"`, written for you |
 
 `--no-exceptions` makes `throw` behave as `abort`, for projects that build with
 `-fno-exceptions` (and `--no-rtti` is a promise that no `typeid` or
@@ -469,6 +470,32 @@ that returns `0` satisfies `EXPECT_EQ(x.f(), 0)` — so it says
 `mt-stub-may-pass`; a return type that `{}` cannot build (a reference, a class
 without a default constructor) falls back to `abort` with a warning. List types
 you know are default-constructible in `default_constructible_types`.
+
+### `hook`: let every test run
+
+Qt Test ends the program at the first exception, so with `throw` the slots after
+the first one never say which stubs they are missing. With `--stub-policy hook`
+each stub calls `mt_not_implemented("<signature>")` from a header the tool writes
+for you, `mt_not_implemented.h`, next to the others. By default that **throws** (or,
+with `--no-exceptions` or `--no-stl`, prints the signature and aborts), so nothing
+changes until you install a handler that makes the running test fail and returns:
+
+```cpp
+#include <QtTest>
+#include "mt_not_implemented.h"
+
+namespace {
+void fail_the_slot(const char* signature) { QTest::qFail(signature, __FILE__, __LINE__); }
+struct Install { Install() { mt_set_not_implemented_handler(&fail_the_slot); } } install;
+}
+```
+
+With that in the program, every slot runs and each reports the signatures it needs
+(`FAIL!  : TestCounter::incrementsByOne(zero) acme::Counter::increment()`). In GoogleTest
+use `ADD_FAILURE() << signature`. After the hook returns, the stub gives an empty
+value as `default` does; a type that `{}` cannot build aborts, with a warning. A
+handler that returns *without* failing the test lets it pass without the code it
+tests, so make it fail.
 
 Constructors and destructors are always empty, so a test runs on to the first
 stub that fails instead of stopping at its first line. Parameter names are

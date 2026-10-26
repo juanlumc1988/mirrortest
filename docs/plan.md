@@ -281,6 +281,8 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 - [x] **8.2** `--no-stl` (§8.3): stubs abort instead of throwing a `std::logic_error`, and a generated
   header that includes a library header for a type of the tests is reported (`mt-no-stl`;
   `no_stl` and `no_stl_library_types` golden cases and round trips).
-- [ ] **8.3** `hook` stub policy (R26).
+- [x] **8.3** `hook` stub policy (R26): `--stub-policy hook` calls `mt_not_implemented()` from a generated
+  header whose handler the test side can replace (design 8.3; `stub_hook`, `stub_hook_abort` and `qt_hook`
+  golden cases and round trips).
 - [ ] **8.4** (Optional) YAML loader if confirmed (R18).
 - [ ] **8.5** (Optional) libclang frontend behind `MT_WITH_LIBCLANG` (D1).
