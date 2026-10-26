@@ -39,10 +39,7 @@ std::string outside(const std::string& spelling, const std::vector<Around>& arou
 }
 
 ir::Type outside(const ir::Type& t, const std::vector<Around>& around, const ir::Class& nested) {
-    if (t.empty()) return t;
-    const std::string spelling = outside(t.spelling, around, nested);
-    if (spelling == t.spelling) return t;
-    ir::Type out = ir::type_from_spelling(spelling);
+    ir::Type out = ir::type_from_spelling(outside(t.spelling, around, nested));
     out.origin = t.origin;
     out.reason = t.reason;
     out.where = t.where;

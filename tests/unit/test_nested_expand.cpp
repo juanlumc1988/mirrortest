@@ -131,6 +131,35 @@ TEST(NestedExpand, TypesInsideTemplateArgumentsAreQualified) {
     EXPECT_EQ(signatures(the_class(m, "Tree::Leaf")), Lines{"std::map<int, Tree::Node> nodes()"});
 }
 
+TEST(NestedExpand, WhatOneNestedClassDeclaresIsNotVisibleToItsSibling) {
+    // X is B's: C cannot name it, so it stays as written (and means something else, or nothing).
+    const ir::Model m = flat("class A { public: struct B { struct X {}; B make(); }; struct C { X leak(); B other(); }; };\n");
+    EXPECT_EQ(signatures(the_class(m, "A::C")), (Lines{"X leak()", "A::B other()"}));
+}
+
+TEST(NestedExpand, ATypeQualifiedKeepsWhereItCameFromAndWhy) {
+    core::Diagnostics d;
+    ir::Model model = frontend::read_header({"tree.h", "class Tree {\npublic:\n    struct Node {};\n    struct Leaf {\n        Node first(Node n);\n    };\n};\n"}, "tree.h", {}, d);
+    ir::Method& first = model.classes[0].nested_classes[1].methods[0];
+    first.ret.reason = "because I said so";
+    first.params[0].type.reason = "and so";
+    const ir::Model flattened = backend::flatten_nested_classes(model);
+    const ir::Method& m = the_class(flattened, "Tree::Leaf").methods[0];
+    EXPECT_EQ(m.ret.spelling, "Tree::Node");
+    EXPECT_EQ(m.ret.origin, first.ret.origin);
+    EXPECT_EQ(m.ret.reason, "because I said so");
+    EXPECT_EQ(m.ret.where.line, 5u);
+    EXPECT_EQ(m.params[0].type.reason, "and so");
+    EXPECT_EQ(m.params[0].type.where.line, 5u);
+}
+
+TEST(NestedExpand, AMemberThatMentionsNothingOfTheOuterClassIsTheSame) {
+    const ir::Model m = flat("class Tree { public: struct Node { Node(); int key() const; }; };\n");
+    const ir::Class& node = the_class(m, "Tree::Node");
+    EXPECT_EQ(node.methods[0].ret.spelling, "");
+    EXPECT_EQ(node.methods[1].ret.spelling, "int");
+}
+
 TEST(NestedExpand, TheOriginalClassesAreAsTheyWere) {
     const ir::Model m = flat("class Tree { public: struct Node { int key() const; }; };\n");
     const ir::Class& tree = the_class(m, "Tree");

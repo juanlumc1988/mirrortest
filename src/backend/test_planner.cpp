@@ -698,16 +698,45 @@ private:
         return tc;
     }
 
-    ir::TestCase inherits_case(const ir::Class& c) const {
+    // A base that is a nested class of another that its own class cannot be seen to derive from from the
+    // namespace, because it is not public: `Outer::Impl` is no name for a test to write.
+    bool nameable_base(const std::string& base) const {
+        std::vector<std::string> path;
+        for (std::size_t at = 0;;) {
+            const std::size_t sep = base.find("::", at);
+            path.push_back(base.substr(at, sep == std::string::npos ? std::string::npos : sep - at));
+            if (sep == std::string::npos) break;
+            at = sep + 2;
+        }
+        if (!path.empty() && path.front().empty()) path.erase(path.begin());
+        for (const ir::Class& top : model_.classes) {
+            if (!top.enclosing.empty() || path.empty() || top.name != path.front()) continue;
+            const ir::Class* current = &top;
+            for (std::size_t i = 1; i < path.size() && current != nullptr; ++i) {
+                const ir::Class* next = nullptr;
+                for (const ir::Class& n : current->nested_classes) {
+                    if (n.name == path[i]) next = &n;
+                }
+                if (next != nullptr && next->nested_access != ir::Access::Public) return false;
+                current = next;
+            }
+        }
+        return true;
+    }
+
+    // Empty if no base can be named, and then there is no case.
+    std::vector<ir::TestCase> inherits_case(const ir::Class& c) const {
         const std::string qualified_class = ir::qualified_name(c.ns, c.name);
         ir::TestCase tc = structural_case(c, "Inherits");
         std::string listed;
         for (const ir::BaseSpec& b : c.bases) {
+            if (!nameable_base(b.name)) continue;
             tc.body.push_back(static_assertion("std::is_base_of<" + b.name + ", " + c.name + ">::value", qualified_class + " must derive from " + b.name));
             listed += (listed.empty() ? "" : ", ") + b.name;
         }
+        if (listed.empty()) return {};
         tc.body.push_back(comment("The members inherited from " + listed + " are tested with the class that declares them, not here"));
-        return tc;
+        return {tc};
     }
 
     ir::TestCase refused_case(const ir::Class& c, const char* name, const std::vector<std::pair<const char*, const char*>>& refused) const {
@@ -722,7 +751,7 @@ private:
 
     std::vector<ir::TestCase> structural_cases(const ir::Class& c) const {
         std::vector<ir::TestCase> out;
-        if (!c.bases.empty()) out.push_back(inherits_case(c));
+        for (ir::TestCase& tc : inherits_case(c)) out.push_back(std::move(tc));
         const DeletedSpecials deleted = deleted_specials(c);
         std::vector<std::pair<const char*, const char*>> copies;
         if (deleted.copy_constructor) copies.emplace_back("copy_constructible", "copy constructible");

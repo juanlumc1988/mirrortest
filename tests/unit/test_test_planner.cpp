@@ -1653,6 +1653,27 @@ TEST(TestPlannerNested, ANestedClassThatDerivesAssertsItsBaseByItsPath) {
               "static_assert(std::is_base_of<Tree::Node, Tree::Leaf>::value, \"Tree::Leaf must derive from Tree::Node\")");
 }
 
+TEST(TestPlannerNested, ABaseThatIsAPrivateNestedClassIsNotNamedInTheAssertion) {
+    const Planned p = plan("class Tree { class Impl {}; protected: class Guts {}; public: class Pub : public Impl, public Guts { public: void run(); }; };\n");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(case_names(p), Lines{"run"}) << "no base left to assert, so no case";
+}
+
+TEST(TestPlannerNested, OnlyThePublicBasesAreAsserted) {
+    const Planned p = plan("class Tree { class Impl {}; public: struct Node {}; class Pub : public Impl, public Node, public Elsewhere { public: void run(); }; };\n");
+    EXPECT_EQ(body(p, "Inherits"), (Lines{
+        "// Assert", "static_assert(std::is_base_of<Tree::Node, Tree::Pub>::value, \"Tree::Pub must derive from Tree::Node\")",
+        "static_assert(std::is_base_of<Elsewhere, Tree::Pub>::value, \"Tree::Pub must derive from Elsewhere\")",
+        "// The members inherited from Tree::Node, Elsewhere are tested with the class that declares them, not here"}));
+}
+
+TEST(TestPlannerNested, ABaseThatIsNotNestedIsAlwaysNamed) {
+    const Planned p = plan("class Base {};\nclass Tree { class Impl {}; public: class Pub : public ::Base { public: void run(); }; };\n");
+    ASSERT_EQ(p.plans.size(), 1u) << "Base and Tree have nothing public to test";
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "run"}));
+    EXPECT_EQ(body(p, "Inherits")[1], "static_assert(std::is_base_of<::Base, Tree::Pub>::value, \"Tree::Pub must derive from ::Base\")");
+}
+
 TEST(TestPlannerNested, QtTestNamesTheClassAndTheFileFromThePath) {
     const Planned p = plan_qt("class Tree { public: struct Node { int key() const; }; };\n");
     ASSERT_EQ(p.plans.size(), 1u);

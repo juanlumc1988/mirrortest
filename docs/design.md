@@ -1304,8 +1304,9 @@ rest of the slots.
 - One case per public constructor (`Constructs`, and if there are several
   `Constructs_<types>`), per public method that is not deleted, and per
   destructor, and per Qt signal (QTest: a `QSignalSpy` skeleton). A deleted
-  member, a member template (it needs instantiations, phase 7) and, until phase
-  5, a signal get no case.
+  member (its refusal is asserted, below), a member template (only class templates
+  are instantiated, so there are no arguments to call it with) and, under GoogleTest,
+  a signal get no case.
 - **A class template is tested through the instantiations the configuration
   lists** (`template_instantiations`, plan 7.1; `backend/template_expand`).
   Each entry is the text between the `<>` of one instantiation:
@@ -1357,6 +1358,9 @@ rest of the slots.
     `Inherits_2`.
   - A class with bases and nothing public of its own (`struct Tag : Named {}`) is
     planned for this case alone; it is no longer a class with nothing to test.
+  - A base that is a protected or private class nested in another (`Outer::Impl`) is
+    no name for a test to write, so it is left out of the assertions (and of the
+    comment); with none left there is no case.
   - The bases of an instantiation of a class template are the template's with the
     arguments substituted (`Holder<int>`).
 - **A class that deletes its copies or moves has them asserted** (plan 7.5), in cases
