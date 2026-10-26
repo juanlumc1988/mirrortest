@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
@@ -663,4 +664,84 @@ TEST(GtestBackendMocks, ThePlannersMocksRenderAsWrittenByHand) {
               "}  // namespace acme\n"
               "\n"
               "#endif  // MOCK_SENSOR_H\n");
+}
+
+// ---- cases over a table ----------------------------------------------------------------------------------------
+
+namespace {
+
+ir::TestCase table_case(std::string name, std::vector<std::pair<const char*, const char*>> columns) {
+    ir::TestCase c = test_case(name, {stmt(Stmt::Kind::Placeholder, "TODO(mt): " + name), stmt(Stmt::Kind::Blank),
+                                      stmt(Stmt::Kind::Comment, "Arrange"), stmt(Stmt::Kind::Data), stmt(Stmt::Kind::Comment, "Act"),
+                                      stmt(Stmt::Kind::Code, "sut.set(n)")});
+    ir::DataTable table;
+    for (const auto& k : columns) table.columns.push_back({ir::type_from_spelling(k.first), k.second});
+    c.data = table;
+    return c;
+}
+
+}  // namespace
+
+TEST(GtestBackendTable, AStructAClassATestPAndTheInstantiation) {
+    const Built b = build({plan_of({table_case("set", {{"int", "n"}, {"const char*", "unit"}, {"std::map<int, int>", "m"}})})});
+    EXPECT_EQ(body_lines(b), (Lines{
+        "struct FooTest_set_Params {",
+        "    int n;",
+        "    const char* unit;",
+        "    std::map<int, int> m;",
+        "};",
+        "",
+        "class FooTest_set : public ::testing::TestWithParam<FooTest_set_Params> {};",
+        "",
+        "TEST_P(FooTest_set, set) {",
+        "    FAIL() << \"TODO(mt): set\";",
+        "",
+        "    // Arrange",
+        "    const FooTest_set_Params& param = GetParam();",
+        "    int n = param.n;",
+        "    const char* unit = param.unit;",
+        "    std::map<int, int> m = param.m;",
+        "    // Act",
+        "    sut.set(n);",
+        "}",
+        "",
+        "// TODO(mt): one FooTest_set_Params{...} for each case to run",
+        "INSTANTIATE_TEST_SUITE_P(Cases, FooTest_set, ::testing::Values(FooTest_set_Params{}));"}));
+}
+
+TEST(GtestBackendTable, AFunctionPointerColumnHasItsNameInside) {
+    const Built b = build({plan_of({table_case("run", {{"void(*)(int)", "cb"}})})});
+    const Lines lines = body_lines(b);
+    EXPECT_EQ(lines[1], "    void(*cb)(int);");
+    EXPECT_NE(std::find(lines.begin(), lines.end(), "    void(*cb)(int) = param.cb;"), lines.end());
+}
+
+TEST(GtestBackendTable, WithAFixtureTheClassDerivesFromItAndFromTheParameterInterface) {
+    ir::TestPlan plan = plan_of({table_case("set", {{"int", "n"}})});
+    ir::Fixture f = fixture_of("FooTest");
+    f.members = {stmt(Stmt::Kind::Code, "Foo sut")};
+    plan.suites[0].fixture = f;
+    const Built b = build({plan});
+    const Lines lines = body_lines(b);
+    EXPECT_EQ(lines[4], "class FooTest_set : public FooTest, public ::testing::WithParamInterface<FooTest_set_Params> {};");
+    EXPECT_EQ(lines[6], "TEST_P(FooTest_set, set) {") << "not TEST_F: the fixture is a base";
+}
+
+TEST(GtestBackendTable, ThePlaceholderIsStillTheSkipOneWhenAskedFor) {
+    backend::GtestOptions options;
+    options.config.placeholder = core::Placeholder::Skip;
+    const Lines lines = body_lines(build({plan_of({table_case("set", {{"int", "n"}})})}, options));
+    EXPECT_EQ(lines[7], "    GTEST_SKIP() << \"TODO(mt): set\";");
+}
+
+TEST(GtestBackendTable, ACaseWithoutOneIsAnOrdinaryTest) {
+    const Built b = build({plan_of({test_case("plain", {stmt(Stmt::Kind::Code, "int x")})})});
+    EXPECT_EQ(body_lines(b), (Lines{"TEST(FooTest, plain) {", "    int x;", "}"}));
+}
+
+TEST(GtestBackendTable, ASecondCaseFollowsAfterABlankLine) {
+    const Rendered r = render({plan_of({table_case("a", {{"int", "n"}}), test_case("b", {})})});
+    ASSERT_EQ(r.plan.files.size(), 1u);
+    EXPECT_NE(r.plan.files[0].content.find("::testing::Values(FooTest_a_Params{}));\n\nTEST(FooTest, b) {\n}\n"), std::string::npos)
+        << r.plan.files[0].content;
 }

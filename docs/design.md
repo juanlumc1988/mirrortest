@@ -1468,6 +1468,36 @@ TEST(FooTest, size) {
   - Round trip (§16.3): `tests/roundtrip/gen-tests/<case>.mocks.cpp` is one more
     translation unit that includes the generated mock headers and proves, at
     compile time, that each mock is not abstract and is its interface.
+  - **Cases over a table of arguments** (`gtest.parameterised`, plan 6.4;
+    GoogleTest 1.10 or later for `INSTANTIATE_TEST_SUITE_P`). A method that
+    takes arguments is a `TEST_P`: the arguments are the columns of a
+    `ir::DataTable`, the body has a `Stmt::Kind::Data` where it would declare
+    them, and the backend writes, in this order and with a blank line between,
+    ```cpp
+    struct CalcTest_add_Params { int a; int b; };
+    class CalcTest_add : public ::testing::TestWithParam<CalcTest_add_Params> {};
+    TEST_P(CalcTest_add, add) { ...   // const CalcTest_add_Params& param = GetParam();
+                                      // int a = param.a; int b = param.b; ...
+    // TODO(mt): one CalcTest_add_Params{...} for each case to run
+    INSTANTIATE_TEST_SUITE_P(Cases, CalcTest_add, ::testing::Values(CalcTest_add_Params{}));
+    ```
+    The names are the suite's and the case's (`{suite}_{case}`,
+    `{suite}_{case}_Params`). The single row is value-initialised, so the test
+    is as red as a plain one: its placeholder is still the first statement. With
+    `gtest.fixture` the class derives from the fixture and from
+    `WithParamInterface<Params>` instead of `TestWithParam`, and `sut` is the
+    fixture's. The locals the body uses after `Data` are copies of the row's
+    fields, named as the arguments, so the rest of the body is the same as the
+    plain case's. A name `param` is kept for the row (`param` as an argument
+    becomes `param2`) only when the option is on.
+    - Which cases: methods (static ones too) with at least one argument
+      passed, whose `sut` and arguments can be built. Not constructors, the
+      destructor or signals; not a call with an argument that is a mock
+      (6.3b), an rvalue reference or a type that cannot be copied (a
+      `unique_ptr`, a lock, a class in the header that deletes its copy
+      constructor): those keep their locals. (A by-value argument that cannot
+      be copied is moved from its local, `std::move(p)`, with or without the
+      option.) Default arguments are left out of the table as of the call.
   Entry point: `gtest_main`, no extra code.
 
 ### 9.5 QTest
@@ -1525,6 +1555,17 @@ spelling it shares with the GoogleTest backend in `backend/test_render`.
   other test.
 - Includes: `<QtTest>` (which has `QSignalSpy`), the header, `<utility>` if
   needed.
+- **Data-driven slots** (`qtest.data_driven`, plan 6.4): the same cases as for
+  `gtest.parameterised` (the same `ir::DataTable`) are written as a
+  `<name>_data()` slot, declared and defined before the slot, with a column for
+  each argument (`QTest::addColumn<int>("a");`), the locals the row is made of
+  and `QTest::newRow("default") << a << b;` after a `TODO(mt)`; the slot itself
+  reads them with `QFETCH(int, a);` where the body has `Data`. Two types that
+  Qt Test cannot take in a column keep the plain slot: one with a comma
+  (`QFETCH(std::map<int, int>, m)` is three macro arguments) and `const char*`
+  (a `static_assert` of `QTest::addColumn`; `QString` or `QByteArray` are the
+  types for it). `QTest::addColumn<std::string>` needs the type to be known to
+  `QMetaType`, which Qt 6 does for any complete type and Qt 5 does not.
 
 ### 9.6 Qt 5 / Qt 6 differences (`--qt 5|6`, default 6)
 
@@ -1761,7 +1802,8 @@ diagnostics); an error suppresses diffs and summary.
               "gtest_file": "{stem}_test.cpp", "qtest_file": "tst_{stem}.cpp",
               "suite": "{Class}Test", "qtest_class": "Test{Class}",
               "mock_file": "mock_{stem}.h", "mock_class": "Mock{Class}" },
-  "gtest": { "fixture": false, "mocks": false },
+  "gtest": { "fixture": false, "mocks": false, "parameterised": false },
+  "qtest": { "data_driven": false },
   "guard": "ifndef",
   "file_header": "",
   "stub_policy": "throw",
@@ -1800,6 +1842,9 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
 - `gtest.mocks` (default `false`): gen-tests also writes a gmock mock for every
   interface of the header (§9.4). `naming.mock_file` (`{stem}`) and
   `naming.mock_class` (`{Class}`) name them. Only the GoogleTest side reads them.
+- `gtest.parameterised` (default `false`): a method with arguments is a `TEST_P`
+  over a struct of them (§9.4). `qtest.data_driven` (default `false`): the same
+  as a `<name>_data()` slot and `QFETCH` (§9.5). Each framework reads its own.
 - `naming.*`: each pattern accepts a single placeholder and must contain it
   (`{stem}` in the file ones, `{Class}` in the name ones); otherwise all the
   classes would go to the same file or suite.
@@ -1949,8 +1994,9 @@ Implemented in `core/templates.h` (`TemplateStore`) and
      `.moc` where the test's own `#include` finds it. Each generated test file is
      its own program; everything is compiled as C++17 with `-fPIC` (Qt 6's
      requirement), the test files with `-Wall -Wextra -Werror`.
-     - gen-tests → every slot (`-functions` lists them) has a `FAIL!  : …::slot()`
-       line and no `PASS   : …::slot()` one, and the program fails; with
+     - gen-tests → every slot (`-functions` lists them, but for the `…_data` ones,
+       which are not tests) has a `FAIL!  : …::slot()` line —`slot(row)` for a
+       data-driven one— and no `PASS   : …::slot()` one, and the program fails; with
        `--placeholder skip`, a `SKIP   :` line each and exit 0. (`Totals:` also
        counts `initTestCase`/`cleanupTestCase` as *passed*, so it cannot be used as
        it is.) The case `qt_special_names` is the proof that a method called

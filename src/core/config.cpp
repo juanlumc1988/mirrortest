@@ -204,6 +204,7 @@ private:
                       std::string& out);
     void read_naming(const json& v, Naming& naming);
     void read_gtest(const json& v, GtestConfig& gtest);
+    void read_qtest(const json& v, QtestConfig& qtest);
     void read_type_map(const json& v, std::map<std::string, std::string>& out);
     void read_overrides(const json& v, std::map<std::string, MemberOverride>& out);
     void read_member_override(const json& v, const std::string& path, MemberOverride& out);
@@ -282,9 +283,22 @@ void Reader::read_gtest(const json& v, GtestConfig& gtest) {
     }
     for (auto it = v.begin(); it != v.end(); ++it) {
         const std::string& key = it.key();
-        if (key == "fixture")    read_bool(it.value(), "gtest.fixture", gtest.fixture);
-        else if (key == "mocks") read_bool(it.value(), "gtest.mocks", gtest.mocks);
-        else                     unknown_key("gtest." + key);
+        if (key == "fixture")           read_bool(it.value(), "gtest.fixture", gtest.fixture);
+        else if (key == "mocks")        read_bool(it.value(), "gtest.mocks", gtest.mocks);
+        else if (key == "parameterised") read_bool(it.value(), "gtest.parameterised", gtest.parameterised);
+        else                            unknown_key("gtest." + key);
+    }
+}
+
+void Reader::read_qtest(const json& v, QtestConfig& qtest) {
+    if (!v.is_object()) {
+        bad_type("qtest", "an object");
+        return;
+    }
+    for (auto it = v.begin(); it != v.end(); ++it) {
+        const std::string& key = it.key();
+        if (key == "data_driven") read_bool(it.value(), "qtest.data_driven", qtest.data_driven);
+        else                      unknown_key("qtest." + key);
     }
 }
 
@@ -473,6 +487,7 @@ void Reader::read_root(const json& root, Config& c) {
         else if (key == "default_namespace")           read_default_namespace(v, c.default_namespace);
         else if (key == "naming")                      read_naming(v, c.naming);
         else if (key == "gtest")                       read_gtest(v, c.gtest);
+        else if (key == "qtest")                       read_qtest(v, c.qtest);
         else if (key == "guard")                       read_choice(v, key, kGuards, c.guard);
         else if (key == "file_header")                 read_file_header(v, c.file_header);
         else if (key == "stub_policy")                 read_choice(v, key, kStubPolicies, c.stub_policy);

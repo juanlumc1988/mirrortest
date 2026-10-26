@@ -102,6 +102,18 @@ struct GtestConfig {
     // virtual functions) the header declares. Opt-in because it writes files nobody
     // asked for (design 9.4).
     bool mocks = false;
+
+    // A method that takes arguments is a TEST_P over a struct of them with one row of
+    // default values, to be given the rows that matter (design 9.4). Opt-in because it
+    // changes the shape of the file, and it needs GoogleTest 1.10 or later.
+    bool parameterised = false;
+};
+
+// What a configuration file may say about the Qt Test skeletons of gen-tests.
+struct QtestConfig {
+    // A method that takes arguments gets a `<name>_data()` slot with one column for each
+    // argument and one row of default values, and the test reads them with QFETCH (design 9.5).
+    bool data_driven = false;
 };
 
 struct Config {
@@ -109,6 +121,7 @@ struct Config {
     std::string default_namespace;                  // "" = global, else "a::b"
     Naming      naming;
     GtestConfig gtest;
+    QtestConfig qtest;
     GuardStyle  guard             = GuardStyle::Ifndef;
     std::string file_header;                        // comment text, "" = none
 

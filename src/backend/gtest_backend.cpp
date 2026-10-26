@@ -59,11 +59,45 @@ json fixture_view(const ir::Fixture& fixture, core::Placeholder placeholder) {
     return view;
 }
 
+// A case that runs over a table of arguments (design 9.4): a struct of the arguments, the class
+// TestWithParam<struct> (or the fixture with WithParamInterface<struct>), the TEST_P and the
+// instantiation, in that order, each of the four separated from the next by a blank line.
+json parameterised_view(const ir::TestSuite& suite, const ir::TestCase& test, core::Placeholder placeholder) {
+    const std::string params = suite.name + "_" + test.name + "_Params";
+    const std::string klass = suite.name + "_" + test.name;
+
+    json lines = json::array();
+    lines.push_back("struct " + params + " {");
+    for (const ir::Column& k : test.data->columns) lines.push_back("    " + declare(k.type, k.name) + ";");
+    lines.push_back("};");
+    lines.push_back("");
+    if (suite.fixture) {
+        lines.push_back("class " + klass + " : public " + suite.fixture->name + ", public ::testing::WithParamInterface<" + params + "> {};");
+    } else {
+        lines.push_back("class " + klass + " : public ::testing::TestWithParam<" + params + "> {};");
+    }
+    lines.push_back("");
+    lines.push_back("TEST_P(" + klass + ", " + test.name + ") {");
+
+    std::vector<std::string> data = {"    const " + params + "& param = GetParam();"};
+    for (const ir::Column& k : test.data->columns) data.push_back("    " + declare(k.type, k.name) + " = param." + k.name + ";");
+    for (const std::string& line : body_lines(test.body, placeholder_style(placeholder), data)) lines.push_back(line);
+    lines.push_back("}");
+    lines.push_back("");
+    lines.push_back("// TODO(mt): one " + params + "{...} for each case to run");
+    lines.push_back("INSTANTIATE_TEST_SUITE_P(Cases, " + klass + ", ::testing::Values(" + params + "{}));");
+    return lines;
+}
+
 json test_view(const ir::TestSuite& suite, const ir::TestCase& test, core::Placeholder placeholder) {
     json lines = json::array();
-    lines.push_back(std::string(suite.fixture ? "TEST_F(" : "TEST(") + suite.name + ", " + test.name + ") {");
-    for (const ir::Stmt& s : test.body) lines.push_back(statement_line(s, placeholder_style(placeholder)));
-    lines.push_back("}");
+    if (test.data) {
+        lines = parameterised_view(suite, test, placeholder);
+    } else {
+        lines.push_back(std::string(suite.fixture ? "TEST_F(" : "TEST(") + suite.name + ", " + test.name + ") {");
+        for (const std::string& line : body_lines(test.body, placeholder_style(placeholder), {})) lines.push_back(line);
+        lines.push_back("}");
+    }
 
     json view;
     view["suite"] = suite.name;

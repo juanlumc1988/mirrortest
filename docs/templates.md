@@ -146,6 +146,11 @@ not be built as a comment, a `static_assert` -- is decided in C++ and tested
 there. `suite` and `name` are for a template that wants to lay tests out
 differently (a header comment per test, say).
 
+A case that runs over a table (`gtest.parameterised`) has in its `lines` the
+parameter struct, the class, the `TEST_P` and the instantiation, with blank lines
+between: they are one block to the template, which puts a blank line after it
+like any other test.
+
 The default puts a blank line after the file header, none between the
 includes, one around the namespace braces, one after each fixture and one between
 tests; nothing inside the namespace is indented. With a fixture, `lines` begins
@@ -196,3 +201,7 @@ one around the namespace braces, between the class and each slot, and before
 the entry point; nothing inside a namespace is indented. A project that puts
 its slots in the class body instead overrides this template and builds them from
 `tests[].lines`.
+
+With `qtest.data_driven`, a case that runs over a table is two entries of `tests`
+(`name` is `<case>_data` for the first), and the class has a `void <case>_data();`
+line before the slot's in `head`.

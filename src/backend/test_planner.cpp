@@ -56,6 +56,12 @@ Stmt blank() {
     return s;
 }
 
+Stmt data_marker() {
+    Stmt s;
+    s.kind = Stmt::Kind::Data;
+    return s;
+}
+
 Stmt placeholder(std::string text) {
     Stmt s;
     s.kind = Stmt::Kind::Placeholder;
@@ -149,6 +155,8 @@ struct Args {
     std::string              left_out;   // what the call does not pass, for a TODO: "the arguments that have default values"
     std::string              why;       // when !ok: the first argument that cannot be built
     std::vector<std::string> mock_headers;   // of the mocks that stand in for interfaces here (gtest.mocks)
+    std::vector<ir::Column>  columns;        // the locals, as a table's columns, when every one of them can be a column
+    bool                     tabular = true; // false once an argument is not a plain local (a mock, an rvalue reference)
 };
 
 // The object under test. A constructor that takes `T&&` is moved into here
@@ -302,6 +310,7 @@ private:
             const ir::Type type = qualified(p.type, c);
             if (const std::optional<MockUse> mock = mock_for(type, c)) {
                 args.mock_headers.push_back(mock->header);
+                args.tabular = false;
                 if (mock->kind == MockUse::Kind::Owned) {
                     args.expressions.push_back("std::unique_ptr<" + mock->interface + ">(new " + mock->type + ")");
                 } else if (mock->kind == MockUse::Kind::Shared) {
@@ -321,9 +330,12 @@ private:
             const std::string name = names.reserve(p.name.empty() ? "arg" + std::to_string(i + 1) : p.name);
             args.locals.push_back(code(local_type(type) + " " + name + "{}"));
             args.names.push_back(name);
-            if (type.ref == ir::RefKind::RValue) {
+            args.columns.push_back({ir::type_from_spelling(local_type(type)), name});
+            // `&&` is moved from the local; so is a by-value argument that cannot be copied.
+            if (type.ref == ir::RefKind::RValue || (type.ref == ir::RefKind::None && type.pointer_depth == 0 && !copyable(type))) {
                 args.expressions.push_back("std::move(" + name + ")");
                 args.uses_move = true;
+                args.tabular = false;
             } else {
                 args.expressions.push_back(name);
             }
@@ -348,7 +360,6 @@ private:
         }
 
         const ir::Method* best = nullptr;
-        Args best_args;
         std::size_t best_count = 0;
         for (const ir::Method& m : c.methods) {
             if (m.kind != ir::MethodKind::Constructor || m.access != ir::Access::Public || m.is_deleted) continue;
@@ -358,7 +369,6 @@ private:
             const std::size_t count = args.expressions.size();
             if (best == nullptr || count < best_count) {
                 best = &m;
-                best_args = args;
                 best_count = count;
             }
         }
@@ -402,7 +412,10 @@ private:
             names.reserve("object");
             for (const std::string& member : fixture_sut_->names) names.reserve(member);
         }
+        // GoogleTest reads a row into a local called param before the locals of the arguments.
+        if (tabulating() && !qtest()) names.reserve("param");
         uses_move_ = false;
+        data_.reset();
 
         tc.body.push_back(placeholder("TODO(mt): write the test for " + tc.target));
         tc.body.push_back(blank());
@@ -417,10 +430,45 @@ private:
         } else {
             plan_call(c, m, names, tc.body, tc.target);
         }
+        tc.data = std::move(data_);
+        data_.reset();
         return tc;
     }
 
     void use_mocks(const std::vector<std::string>& headers) { mock_headers_.insert(headers.begin(), headers.end()); }
+
+    // ---- cases over a table of arguments --------------------------------------------------------------------------
+
+    // gtest.parameterised, or qtest.data_driven.
+    bool tabulating() const { return qtest() ? options_.config.qtest.data_driven : options_.config.gtest.parameterised; }
+
+    // A row is copied out of the table into the test (GoogleTest copies the parameter, Qt Test the
+    // QVariant): what cannot be copied cannot be in one. A class that deletes its copy constructor is
+    // known from the header; a smart pointer or a lock, by name.
+    bool copyable(const ir::Type& t) const {
+        for (const char* no : {"unique_ptr", "std::atomic", "std::mutex", "std::thread", "std::condition_variable"}) {
+            if (t.base.find(no) != std::string::npos) return false;
+        }
+        for (const ir::Class& k : model_.classes) {
+            if (k.name != without_scope(t.base)) continue;
+            for (const ir::Method& m : k.methods) {
+                if (m.kind == ir::MethodKind::Constructor && m.is_deleted && m.params.size() == 1 && m.params[0].type.ref == ir::RefKind::LValue &&
+                    without_scope(m.params[0].type.base) == k.name) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // What a column can be: a type that can be copied and, for Qt Test, one that QFETCH(type, name)
+    // can spell -- a comma would end its first argument -- and that QTest::addColumn accepts, which
+    // is not `const char*` (a static_assert: a column is a QVariant, use QString or QByteArray).
+    // (Arrays and function pointers are not arguments the skeleton can build in the first place.)
+    bool column_ok(const ir::Type& t) const {
+        if (!copyable(t)) return false;
+        return !(qtest() && (t.spelling.find(',') != std::string::npos || t.spelling == "const char*"));
+    }
 
     void plan_constructor(const ir::Class& c, const ir::Method& m, Names& names, std::vector<Stmt>& body) {
         const Args args = make_args(c, m.params, names);
@@ -505,7 +553,14 @@ private:
             body.push_back(code(sut.available ? sut.declaration : c.name + " sut", !buildable));
         }
         if (!args.ok) body.push_back(comment("TODO(mt): " + args.why));
-        add_locals(body, args.locals, !buildable);
+        const bool tabulate = tabulating() && buildable && args.tabular && !args.columns.empty() &&
+                              std::all_of(args.columns.begin(), args.columns.end(), [&](const ir::Column& k) { return column_ok(k.type); });
+        if (tabulate) {
+            body.push_back(data_marker());
+            data_ = ir::DataTable{args.columns};
+        } else {
+            add_locals(body, args.locals, !buildable);
+        }
         uses_move_ = uses_move_ || (buildable && args.uses_move);
         if (!args.left_out.empty()) body.push_back(comment("TODO(mt): " + args.left_out));
 
@@ -616,6 +671,7 @@ private:
     core::Diagnostics&            diag_;
     std::vector<const ir::Model*> models_;
     bool                          uses_move_ = false;
+    std::optional<ir::DataTable>  data_;           // of the case being planned, if it runs over a table
     std::vector<ir::MockClass>    mocks_;          // gtest.mocks: what an interface argument is built with
     std::set<std::string>         mock_headers_;   // of the mocks the class being planned uses
     std::optional<Sut>            fixture_sut_;   // set by plan_fixture() for each class; read only when fixture() is on

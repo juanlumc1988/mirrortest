@@ -4,6 +4,8 @@
 #include "mirrortest/backend/test_render.h"
 
 #include <set>
+#include <string>
+#include <vector>
 
 #include "mirrortest/backend/cxx_format.h"
 
@@ -29,8 +31,23 @@ std::string statement_line(const ir::Stmt& s, const PlaceholderStyle& placeholde
         case ir::Stmt::Kind::Placeholder:
             // Both frameworks return from the test: what follows is compiled, never run.
             return std::string(kIndent) + placeholder.before + escape_literal(s.text) + placeholder.after;
+        case ir::Stmt::Kind::Data:
+            return {};   // not one line: body_lines() spells it
     }
     return {};
+}
+
+std::vector<std::string> body_lines(const std::vector<ir::Stmt>& body, const PlaceholderStyle& placeholder,
+                                    const std::vector<std::string>& data_lines) {
+    std::vector<std::string> out;
+    for (const ir::Stmt& s : body) {
+        if (s.kind == ir::Stmt::Kind::Data) {
+            out.insert(out.end(), data_lines.begin(), data_lines.end());
+        } else {
+            out.push_back(statement_line(s, placeholder));
+        }
+    }
+    return out;
 }
 
 nlohmann::json include_lines(const std::vector<ir::Include>& includes) {

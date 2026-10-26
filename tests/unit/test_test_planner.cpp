@@ -72,6 +72,7 @@ std::string show(const Stmt& s) {
         case Stmt::Kind::Code: return (s.commented_out ? "// " : "") + s.text + ";";
         case Stmt::Kind::StaticAssert: return std::string(s.commented_out ? "// " : "") + "static_assert(" + s.text + ", \"" + s.message + "\")";
         case Stmt::Kind::Placeholder: return "placeholder: " + s.text;
+        case Stmt::Kind::Data: return "data";
     }
     return {};
 }
@@ -1127,6 +1128,184 @@ TEST(TestPlannerMockArgs, PlanningTheTestsSaysNothingTheMocksDoNot) {
     // The mocks are planned to know what an argument is built with; their notes are said once, by whoever writes them.
     const Planned p = plan_mocks_on("template <typename T> class Sensor { public: virtual T read() = 0; };\nclass User { public: User(); };\n");
     for (const core::Diagnostic& d : p.diagnostics.all()) EXPECT_EQ(d.message.find("no mock is generated"), std::string::npos) << d.message;
+}
+
+// ---- cases over a table of arguments (gtest.parameterised, qtest.data_driven) ---------------------------------------------
+
+namespace {
+
+Planned plan_table(const std::string& header, core::Config config = {}, ir::Framework framework = ir::Framework::GTest) {
+    config.gtest.parameterised = true;
+    config.qtest.data_driven = true;
+    return plan(header, std::move(config), "foo.h", framework);
+}
+
+// The case of the method called `method` (its name is made of its parameter types, which these tests do not care about).
+const ir::TestCase& by(const Planned& p, const char* method, std::size_t plan_index = 0) {
+    static const ir::TestCase none;
+    for (const ir::TestCase& c : suite(p, plan_index).cases) {
+        if (c.target.find(std::string("::") + method + "(") != std::string::npos) return c;
+    }
+    ADD_FAILURE() << "no case for " << method;
+    return none;
+}
+
+Lines body_by(const Planned& p, const char* method, std::size_t plan_index = 0) {
+    Lines out;
+    for (const Stmt& st : by(p, method, plan_index).body) out.push_back(show(st));
+    return out;
+}
+
+std::vector<std::string> column_names(const ir::TestCase& c) {
+    std::vector<std::string> out;
+    if (c.data) {
+        for (const ir::Column& k : c.data->columns) out.push_back(k.type.spelling + " " + k.name);
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(TestPlannerArguments, AnArgumentThatCannotBeCopiedIsMoved) {
+    const Planned p = plan(
+        "class Handle { public: Handle(); Handle(const Handle&) = delete; };\n"
+        "class Foo { public: void own(std::unique_ptr<int> p); void use(Handle h); void copy(std::string s); void borrow(const std::unique_ptr<int>& p); };\n");
+    EXPECT_EQ(body_by(p, "own", 1)[4], "std::unique_ptr<int> p{};");
+    EXPECT_EQ(body_by(p, "own", 1)[6], "sut.own(std::move(p));");
+    EXPECT_EQ(body_by(p, "use", 1)[6], "sut.use(std::move(h));");
+    EXPECT_EQ(body_by(p, "copy", 1)[6], "sut.copy(s);") << "a string is copied";
+    EXPECT_EQ(body_by(p, "borrow", 1)[6], "sut.borrow(p);") << "a reference is not a copy";
+    EXPECT_EQ(p.plans[1].includes.size(), 3u) << "std::move needs <utility>";
+}
+
+TEST(TestPlannerTable, NotUnlessAskedFor) {
+    const Planned p = plan("class Foo { public: int add(int a, int b); };");
+    EXPECT_FALSE(by(p, "add").data.has_value());
+    EXPECT_EQ(body_by(p, "add")[3], "Foo sut;");
+    EXPECT_EQ(body_by(p, "add")[4], "int a{};");
+}
+
+TEST(TestPlannerTable, AMethodWithArgumentsRunsOverAnyTable) {
+    const Planned p = plan_table("class Foo { public: int add(int a, int b) const; };");
+    const ir::TestCase& c = by(p, "add");
+    ASSERT_TRUE(c.data.has_value());
+    EXPECT_EQ(column_names(c), (Lines{"int a", "int b"}));
+    EXPECT_EQ(body_by(p, "add"), (Lines{
+        "placeholder: TODO(mt): write the test for Foo::add(int, int) const", "blank", "// Arrange", "Foo sut;", "data", "// Act",
+        "const Foo& const_sut = sut;", "const int result = const_sut.add(a, b);", "(void)result;", "// Assert",
+        "// TODO(mt): compare result with the expected value"}));
+}
+
+TEST(TestPlannerTable, TheColumnsAreTheLocalsWithoutReferenceOrConst) {
+    const Planned p = plan_table("class Foo { public: void set(const std::string& name, const char* unit, int& out, double* p); };");
+    EXPECT_EQ(column_names(by(p, "set")),
+              (Lines{"std::string name", "const char* unit", "int out", "double* p"}));
+}
+
+TEST(TestPlannerTable, WhatTakesNoArgumentsOrIsNotACallIsAsBefore) {
+    const Planned p = plan_table("class Foo { public: Foo(int a); ~Foo(); int size() const; static int twice(int x); };");
+    EXPECT_FALSE(by(p, "Foo").data.has_value());
+    EXPECT_FALSE(by(p, "~Foo").data.has_value());
+    EXPECT_FALSE(by(p, "size").data.has_value());
+    EXPECT_TRUE(by(p, "twice").data.has_value()) << "a static method too";
+}
+
+TEST(TestPlannerTable, ArgumentsThatCannotBeColumnsKeepTheirLocals) {
+    const Planned p = plan_table(
+        "#include <memory>\n"
+        "class Foo { public:\n"
+        "    void take(std::string&& s);\n"
+        "    void own(std::unique_ptr<int> p);\n"
+        "    void fill(int values[3]);\n"
+        "};\n");
+    EXPECT_FALSE(by(p, "take").data.has_value()) << "an rvalue reference is moved from a local";
+    EXPECT_FALSE(by(p, "own").data.has_value()) << "a row is copied";
+    EXPECT_EQ(body_by(p, "take")[4], "std::string s{};");
+}
+
+TEST(TestPlannerTable, ATypeThatDeletesItsCopyIsNotAColumn) {
+    const Planned p = plan_table(
+        "class Handle { public: Handle(); Handle(const Handle&) = delete; };\n"
+        "class Foo { public: void use(Handle h); void ok(int a); };\n");
+    EXPECT_FALSE(by(p, "use", 1).data.has_value());
+    EXPECT_TRUE(by(p, "ok", 1).data.has_value());
+}
+
+TEST(TestPlannerTable, AnArgumentThatCannotBeBuiltKeepsTheCommentedCall) {
+    const Planned p = plan_table("class Foo { public: void run(Mystery m); };");
+    EXPECT_FALSE(by(p, "run").data.has_value());
+    const Lines b = body_by(p, "run");
+    EXPECT_NE(std::find(b.begin(), b.end(), "// TODO(mt): an argument of type 'Mystery' cannot be built here"), b.end());
+    EXPECT_NE(std::find(b.begin(), b.end(), "// Mystery m{};"), b.end());
+}
+
+TEST(TestPlannerTable, AMockArgumentIsNotAColumn) {
+    core::Config config;
+    config.gtest.mocks = true;
+    const Planned p = plan_table("class Sensor { public: virtual int read() = 0; };\nclass Foo { public: void attach(Sensor& s, int n); };\n", config);
+    EXPECT_FALSE(by(p, "attach", 1).data.has_value()) << "a mock cannot be copied out of a table";
+}
+
+TEST(TestPlannerTable, AFixtureKeepsItsSutAndTheTableIsTheArguments) {
+    core::Config config;
+    config.gtest.fixture = true;
+    const Planned p = plan_table("class Foo { public: void set(int n); };", config);
+    EXPECT_TRUE(by(p, "set").data.has_value());
+    EXPECT_EQ(body_by(p, "set"), (Lines{
+        "placeholder: TODO(mt): write the test for Foo::set(int)", "blank", "// Arrange", "data", "// Act", "sut.set(n);", "// Assert",
+        "// TODO(mt): check the effect of the call"}));
+    EXPECT_TRUE(suite(p).fixture.has_value());
+}
+
+TEST(TestPlannerTable, GoogleTestKeepsTheNameParamForItself) {
+    const Planned p = plan_table("class Foo { public: void set(int param, int sut, int result); };");
+    EXPECT_EQ(column_names(by(p, "set")), (Lines{"int param2", "int sut2", "int result2"}));
+}
+
+TEST(TestPlannerTable, QtTestHasNoSuchNameToKeep) {
+    const Planned p = plan_table("class Foo { public: void set(int param); };", {}, ir::Framework::QTest);
+    EXPECT_EQ(column_names(by(p, "set")), Lines{"int param"});
+}
+
+TEST(TestPlannerTable, TheFrameworkReadsItsOwnOption) {
+    core::Config only_gtest;
+    only_gtest.gtest.parameterised = true;
+    EXPECT_TRUE(by(plan("class Foo { public: void f(int a); };", only_gtest), "f").data.has_value());
+    EXPECT_FALSE(by(plan_qt("class Foo { public: void f(int a); };", only_gtest), "f").data.has_value());
+
+    core::Config only_qtest;
+    only_qtest.qtest.data_driven = true;
+    EXPECT_FALSE(by(plan("class Foo { public: void f(int a); };", only_qtest), "f").data.has_value());
+    EXPECT_TRUE(by(plan_qt("class Foo { public: void f(int a); };", only_qtest), "f").data.has_value());
+}
+
+TEST(TestPlannerTable, QtTestCannotSpellEveryTypeInQFetch) {
+    const Planned p = plan_table(
+        "class Foo { public:\n"
+        "    void map(std::map<int, int> m);\n"
+        "    void fine(std::vector<int> v);\n"
+        "};\n", {}, ir::Framework::QTest);
+    EXPECT_FALSE(by(p, "map").data.has_value()) << "the comma ends the macro's first argument";
+    EXPECT_TRUE(by(p, "fine").data.has_value());
+}
+
+TEST(TestPlannerTable, QtTestDoesNotTakeConstCharPointerAsAColumn) {
+    const Planned qt = plan_table("class Foo { public: void a(const char* s); void b(char* s); void c(int n, const char* s); };", {}, ir::Framework::QTest);
+    EXPECT_FALSE(by(qt, "a").data.has_value()) << "QTest::addColumn<const char*> is a static_assert";
+    EXPECT_TRUE(by(qt, "b").data.has_value());
+    EXPECT_FALSE(by(qt, "c").data.has_value()) << "one column that cannot be one keeps all the locals";
+    const Planned gt = plan_table("class Foo { public: void a(const char* s); };");
+    EXPECT_TRUE(by(gt, "a").data.has_value());
+}
+
+TEST(TestPlannerTable, GoogleTestCanSpellAComma) {
+    const Planned p = plan_table("class Foo { public: void map(std::map<int, int> m); };");
+    EXPECT_TRUE(by(p, "map").data.has_value());
+}
+
+TEST(TestPlannerTable, DefaultedArgumentsAreLeftOutOfTheTable) {
+    const Planned p = plan_table("class Foo { public: void f(int a, int b = 3); };");
+    EXPECT_EQ(column_names(by(p, "f")), Lines{"int a"});
 }
 
 }  // namespace

@@ -255,8 +255,9 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
   `NiceMock<MockSensor>` for a `Sensor&`, `Sensor*` or smart-pointer argument of
   the constructor under `sut` and of a method call — so a class that needs a
   collaborator is built instead of commented out.
-- [ ] **6.4** `TEST_P` + `INSTANTIATE_TEST_SUITE_P` in gen-tests (opt-in) and
-  QTest `_data`.
+- [x] **6.4** `TEST_P` + `INSTANTIATE_TEST_SUITE_P` in gen-tests (opt-in) and
+  QTest `_data`. `gtest.parameterised` and `qtest.data_driven`; a by-value
+  argument that cannot be copied is moved (design 9.4, 9.5).
 
 ## Phase 7 — Templates, inheritance, nested namespaces, operators
 

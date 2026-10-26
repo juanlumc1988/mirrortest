@@ -447,6 +447,28 @@ fixture builds `sut` before the test body, so the class's constructor runs even
 though the test is still red, which the plain skeleton never does. Use it for
 classes whose construction is safe.
 
+### Cases over a table of arguments
+
+By default a method with arguments is one test with a local for each. With
+`{"gtest": {"parameterised": true}}` it is a `TEST_P`: a struct of the arguments
+(`CalcTest_add_Params`), the test reading one row into locals of the same names, and
+
+```cpp
+// TODO(mt): one CalcTest_add_Params{...} for each case to run
+INSTANTIATE_TEST_SUITE_P(Cases, CalcTest_add, ::testing::Values(CalcTest_add_Params{}));
+```
+
+with a single row of default values, so the test is as red as before; add the
+rows that matter. It combines with `fixture` (the class derives from the
+fixture) and needs GoogleTest 1.10 or later. With `{"qtest": {"data_driven":
+true}}` Qt Test gets a `<name>_data()` slot with one column for each argument and
+a `default` row, and `QFETCH` in the test.
+
+Constructors, the destructor, signals, methods without arguments, and calls with
+an argument that is a mock, an rvalue reference or cannot be copied (a
+`unique_ptr`) stay as they were. For Qt Test also a type with a comma, and
+`const char*`, which `QTest::addColumn` refuses.
+
 ### Mocks of interfaces
 
 With `{"gtest": {"mocks": true}}` in the configuration, every **interface** of the

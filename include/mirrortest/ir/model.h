@@ -228,6 +228,7 @@ struct Stmt {
         Code,           // text = one C++ statement, without the trailing ';'
         StaticAssert,   // text = condition, message = diagnostic
         Placeholder,    // text = message; FAIL()/GTEST_SKIP() or QFAIL()/QSKIP()
+        Data,           // the case's arguments, read from its data table into locals named as its columns
     };
 
     Kind        kind = Kind::Code;
@@ -239,10 +240,25 @@ struct Stmt {
     bool        commented_out = false;
 };
 
+// One argument of a case that runs over rows of them: a local of this type and name wherever
+// the body says Stmt::Kind::Data.
+struct Column {
+    Type        type;                // no reference, no top-level const: what a local is declared with
+    std::string name;
+};
+
+// A case that runs over a table of arguments: a TEST_P over a struct of them (GoogleTest), a
+// `<name>_data()` slot and QFETCH (Qt Test). The plan has the columns and one row of default
+// values; the rows that matter are for the person writing the test.
+struct DataTable {
+    std::vector<Column> columns;
+};
+
 struct TestCase {
-    std::string       name;          // a valid identifier
-    std::string       target;        // "acme::Foo::size() const": for messages only
-    std::vector<Stmt> body;
+    std::string                name;          // a valid identifier
+    std::string                target;        // "acme::Foo::size() const": for messages only
+    std::vector<Stmt>          body;
+    std::optional<DataTable>   data;
 };
 
 // The class a TEST_F test runs in: it owns the object under test and whatever

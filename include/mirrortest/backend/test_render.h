@@ -30,6 +30,12 @@ struct PlaceholderStyle {
 // escaped as a string literal.
 std::string statement_line(const ir::Stmt& statement, const PlaceholderStyle& placeholder);
 
+// The lines of a body, one per statement. A Data statement is replaced by `data_lines` (already
+// indented): how the arguments of a case that runs over a table are read into locals is the
+// framework's -- GetParam() for GoogleTest, QFETCH for Qt Test.
+std::vector<std::string> body_lines(const std::vector<ir::Stmt>& body, const PlaceholderStyle& placeholder,
+                                    const std::vector<std::string>& data_lines);
+
 // `#include <...>` lines, then `#include "..."`, each sorted and once.
 nlohmann::json include_lines(const std::vector<ir::Include>& includes);
 

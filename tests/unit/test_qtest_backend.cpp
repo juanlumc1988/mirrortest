@@ -13,6 +13,7 @@
 #include "mirrortest/backend/qtest_backend.h"
 #include "mirrortest/backend/test_planner.h"
 #include "mirrortest/frontend/code_frontend.h"
+#include "mirrortest/ir/type.h"
 
 using namespace mt;
 using ir::Stmt;
@@ -364,3 +365,63 @@ TEST(QtestBackendFile, EveryGeneratedFileIsCleanText) {
 }
 
 }  // namespace
+
+// ---- cases over a table ------------------------------------------------------------------------------------------
+
+namespace {
+
+ir::TestCase table_case(std::string name, std::vector<std::pair<const char*, const char*>> columns) {
+    ir::TestCase c = test_case(name, {stmt(Stmt::Kind::Placeholder, "TODO(mt): " + name), stmt(Stmt::Kind::Blank),
+                                      stmt(Stmt::Kind::Comment, "Arrange"), stmt(Stmt::Kind::Data), stmt(Stmt::Kind::Comment, "Act")});
+    ir::DataTable table;
+    for (const auto& k : columns) table.columns.push_back({ir::type_from_spelling(k.first), k.second});
+    c.data = table;
+    return c;
+}
+
+}  // namespace
+
+TEST(QtestBackendTable, ADataSlotBeforeTheSlotAndQFetchInIt) {
+    const Built b = build({plan_of({table_case("set", {{"int", "n"}, {"const char*", "unit"}}), test_case("plain", {})})});
+    EXPECT_EQ(strings(first_class(b)["head"]), (Lines{
+        "class TestFoo : public QObject {", "    Q_OBJECT", "private slots:", "    void set_data();", "    void set();", "    void plain();", "};"}));
+    ASSERT_EQ(first_class(b)["tests"].size(), 3u);
+    EXPECT_EQ(test_lines(b, 0), (Lines{
+        "void TestFoo::set_data() {",
+        "    QTest::addColumn<int>(\"n\");",
+        "    QTest::addColumn<const char*>(\"unit\");",
+        "",
+        "    // TODO(mt): one row for each case to run",
+        "    int n{};",
+        "    const char* unit{};",
+        "    QTest::newRow(\"default\") << n << unit;",
+        "}"}));
+    EXPECT_EQ(test_lines(b, 1), (Lines{
+        "void TestFoo::set() {",
+        "    QFAIL(\"TODO(mt): set\");",
+        "",
+        "    // Arrange",
+        "    QFETCH(int, n);",
+        "    QFETCH(const char*, unit);",
+        "    // Act",
+        "}"}));
+    EXPECT_EQ(test_lines(b, 2), (Lines{"void TestFoo::plain() {", "}"}));
+}
+
+TEST(QtestBackendTable, TheDataFunctionIsNamedAfterTheCase) {
+    const Built b = build({plan_of({table_case("set_int", {{"int", "n"}})})});
+    EXPECT_EQ(first_class(b)["tests"][0]["name"], "set_int_data");
+    EXPECT_EQ(first_class(b)["tests"][1]["name"], "set_int");
+}
+
+TEST(QtestBackendTable, TheWholeFile) {
+    backend::QtestOptions options;
+    options.source = "foo.h";
+    const Rendered r = render({plan_of({table_case("set", {{"int", "n"}})})}, options);
+    ASSERT_EQ(r.plan.files.size(), 1u);
+    EXPECT_NE(r.plan.files[0].content.find(
+                  "private slots:\n    void set_data();\n    void set();\n};\n\n"
+                  "void TestFoo::set_data() {\n"),
+              std::string::npos)
+        << r.plan.files[0].content;
+}

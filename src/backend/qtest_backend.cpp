@@ -40,19 +40,51 @@ std::string moc_name(const std::string& file) {
     return name + ".moc";
 }
 
+// The `<name>_data()` slot of a case that runs over a table (design 9.5): one column for each
+// argument and one row of default values, held in locals because a pointer or a class has no
+// brace-initialised temporary that spells the same for all of them.
+json data_view(const ir::TestSuite& suite, const ir::TestCase& test) {
+    json lines = json::array();
+    lines.push_back("void " + suite.name + "::" + test.name + "_data() {");
+    for (const ir::Column& k : test.data->columns) lines.push_back("    QTest::addColumn<" + k.type.spelling + ">(\"" + k.name + "\");");
+    lines.push_back("");
+    lines.push_back("    // TODO(mt): one row for each case to run");
+    std::string row;
+    for (const ir::Column& k : test.data->columns) {
+        lines.push_back("    " + declare(k.type, k.name) + "{};");
+        row += " << " + k.name;
+    }
+    lines.push_back("    QTest::newRow(\"default\")" + row + ";");
+    lines.push_back("}");
+
+    json view;
+    view["name"] = test.name + "_data";
+    view["lines"] = lines;
+    return view;
+}
+
 json class_view(const ir::TestSuite& suite, core::Placeholder placeholder) {
     json head = json::array();
     head.push_back("class " + suite.name + " : public QObject {");
     head.push_back("    Q_OBJECT");
     head.push_back("private slots:");
-    for (const ir::TestCase& test : suite.cases) head.push_back("    void " + test.name + "();");
+    for (const ir::TestCase& test : suite.cases) {
+        if (test.data) head.push_back("    void " + test.name + "_data();");
+        head.push_back("    void " + test.name + "();");
+    }
     head.push_back("};");
 
     json tests = json::array();
     for (const ir::TestCase& test : suite.cases) {
+        if (test.data) tests.push_back(data_view(suite, test));
+
         json lines = json::array();
         lines.push_back("void " + suite.name + "::" + test.name + "() {");
-        for (const ir::Stmt& s : test.body) lines.push_back(statement_line(s, placeholder_style(placeholder)));
+        std::vector<std::string> fetch;
+        if (test.data) {
+            for (const ir::Column& k : test.data->columns) fetch.push_back("    QFETCH(" + k.type.spelling + ", " + k.name + ");");
+        }
+        for (const std::string& line : body_lines(test.body, placeholder_style(placeholder), fetch)) lines.push_back(line);
         lines.push_back("}");
 
         json view;
