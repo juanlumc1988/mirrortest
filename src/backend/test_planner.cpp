@@ -213,7 +213,7 @@ public:
                 continue;
             }
             std::vector<const ir::Method*> testable = testable_methods(c);
-            if (testable.empty()) {
+            if (testable.empty() && c.bases.empty()) {
                 core::Diagnostic d;
                 d.severity = core::Severity::Note;
                 d.code = core::code::unsupported;
@@ -646,8 +646,31 @@ private:
         return fixture;
     }
 
+    // What a derived class has of its own that a test can check without running anything: it
+    // derives from what the header says. What it inherits is not repeated (design 9.1).
+    ir::TestCase plan_inherits(const ir::Class& c, const std::string& name) {
+        const std::string qualified_class = ir::qualified_name(c.ns, c.name);
+        ir::TestCase tc;
+        tc.name = name;
+        tc.target = qualified_class;
+        tc.body.push_back(comment("Assert"));
+        std::string listed;
+        for (const ir::BaseSpec& b : c.bases) {
+            tc.body.push_back(static_assertion("std::is_base_of<" + b.name + ", " + c.name + ">::value", qualified_class + " must derive from " + b.name));
+            listed += (listed.empty() ? "" : ", ") + b.name;
+        }
+        tc.body.push_back(comment("The members inherited from " + listed + " are tested with the class that declares them, not here"));
+        return tc;
+    }
+
     ir::TestPlan plan_class(const ir::Class& c, const std::vector<const ir::Method*>& testable) {
         std::vector<core::TestNameInput> inputs;
+        const bool inherits = !c.bases.empty();
+        if (inherits) {
+            core::TestNameInput in;
+            in.base = "Inherits";
+            inputs.push_back(std::move(in));
+        }
         for (const ir::Method* m : testable) {
             core::TestNameInput in;
             in.base = m->kind == ir::MethodKind::Constructor ? "Constructs"
@@ -667,8 +690,10 @@ private:
         bool moves = false;
         mock_headers_.clear();
         if (fixture()) suite.fixture = plan_fixture(c, suite.name);
+        const std::size_t first_method = inherits ? 1 : 0;
+        if (inherits) suite.cases.push_back(plan_inherits(c, names[0]));
         for (std::size_t i = 0; i < testable.size(); ++i) {
-            suite.cases.push_back(plan_case(c, *testable[i], names[i]));
+            suite.cases.push_back(plan_case(c, *testable[i], names[first_method + i]));
             moves = moves || uses_move_;
         }
 
@@ -678,6 +703,7 @@ private:
         plan.includes.push_back({qtest() ? "QtTest" : "gtest/gtest.h", true, {}});
         plan.includes.push_back({options_.header_include, false, {}});
         if (moves) plan.includes.push_back({"utility", true, {}});
+        if (inherits) plan.includes.push_back({"type_traits", true, {}});
         for (const std::string& header : mock_headers_) plan.includes.push_back({header, false, {}});
         plan.suites.push_back(std::move(suite));
         return plan;

@@ -469,6 +469,16 @@ an argument that is a mock, an rvalue reference or cannot be copied (a
 `unique_ptr`) stay as they were. For Qt Test also a type with a comma, and
 `const char*`, which `QTest::addColumn` refuses.
 
+### Inheritance
+
+A class that derives from others starts its suite with an `Inherits` test: a
+`static_assert(std::is_base_of<Base, Derived>::value, …)` for each base, whatever
+its access, so a refactoring that moves the class in the hierarchy breaks the
+build of the test. It is the one generated test that is not red: there is nothing
+left to write, and it passes when the file compiles. What the class inherits is
+not tested again in its suite; test it with the base. An overriding function is
+the class's own and has its test.
+
 ### Class templates
 
 A class template is tested for the instantiations you list in the
@@ -538,7 +548,7 @@ and a `TODO(mt)` to make it emit and to look at the spy. A method called `init`,
 be a function Qt Test calls by itself, so its test is a slot with `_call` after
 the name (`init_call`).
 
-Not tested, and why: signals; deleted, protected and private members; member
+Not tested, and why: signals; deleted, protected and private members; inherited members (see Inheritance); member
 templates, and class templates you do not list in `template_instantiations`; free functions (the
 run prints a note). A member declared under `#if` is tested as if it always
 existed, so the test builds only in a configuration that declares it. Existing

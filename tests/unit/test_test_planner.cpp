@@ -142,7 +142,7 @@ TEST(TestPlannerPlan, CasesFollowTheDeclarationsAndOnlyThePublicOnesCount) {
 
 TEST(TestPlannerPlan, SignalsAreNotTested) {
     const Planned p = plan("class W : public QObject { Q_OBJECT\npublic:\n  void run();\nsignals:\n  void changed();\npublic slots:\n  void apply();\n};\n");
-    EXPECT_EQ(case_names(p), (Lines{"run", "apply"}));
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "run", "apply"}));
 }
 
 TEST(TestPlannerPlan, AStructIsAsTestableAsAClass) {
@@ -494,6 +494,8 @@ TEST(TestPlannerWhole, EveryPrefixOfAHeaderIsPlannedWithoutIncident) {
             for (const ir::TestSuite& s : tp.suites) {
                 for (const ir::TestCase& c : s.cases) {
                     ASSERT_FALSE(c.body.empty()) << "cut at " << n;
+                    // Inherits has nothing left to write: its assertions are the test.
+                    if (c.name == "Inherits") continue;
                     EXPECT_EQ(c.body.front().kind, Stmt::Kind::Placeholder) << "cut at " << n;
                 }
             }
@@ -706,7 +708,7 @@ TEST(TestPlannerQt, TheBodyOfAMethodIsTheSameAsForGoogleTest) {
 
 TEST(TestPlannerQt, ASignalIsListenedToWithAQSignalSpy) {
     const Planned p = plan_qt("class W : public QObject { Q_OBJECT\npublic:\n  void run();\nsignals:\n  void changed(int value);\n};\n");
-    EXPECT_EQ(case_names(p), (Lines{"run", "changed"}));
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "run", "changed"}));
     EXPECT_EQ(body(p, "changed"), (Lines{
         "placeholder: TODO(mt): write the test for W::changed(int)", "blank", "// Arrange", "W sut;",
         "QSignalSpy spy(&sut, &W::changed);", "(void)spy;", "// Act", "// TODO(mt): make sut emit the signal",
@@ -717,7 +719,7 @@ TEST(TestPlannerQt, AnOverloadedSignalNeedsTheSignatureToTakeItsAddress) {
     const Planned p = plan_qt(
         "class W : public QObject { Q_OBJECT\npublic:\n  struct Item { int x; };\nsignals:\n"
         "  void changed(int value);\n  void changed(const Item& item, const QString& why);\n  void other();\n};\n");
-    EXPECT_EQ(case_names(p), (Lines{"changed_int", "changed_item_q_string", "other"}));
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "changed_int", "changed_item_q_string", "other"}));
     EXPECT_EQ(body(p, "changed_int")[4], "QSignalSpy spy(&sut, static_cast<void (W::*)(int)>(&W::changed));");
     EXPECT_EQ(body(p, "changed_item_q_string")[4],
               "QSignalSpy spy(&sut, static_cast<void (W::*)(const W::Item&, const QString&)>(&W::changed));");
@@ -726,7 +728,7 @@ TEST(TestPlannerQt, AnOverloadedSignalNeedsTheSignatureToTakeItsAddress) {
 
 TEST(TestPlannerQt, ASlotOfTheSameNameMakesTheSignalAmbiguousToo) {
     const Planned p = plan_qt("class W : public QObject { Q_OBJECT\npublic slots:\n  void changed(int value);\nsignals:\n  void changed(const QString& text);\n};\n");
-    EXPECT_EQ(case_names(p), (Lines{"changed_int", "changed_q_string"}));
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "changed_int", "changed_q_string"}));
     EXPECT_EQ(body(p, "changed_q_string")[4], "QSignalSpy spy(&sut, static_cast<void (W::*)(const QString&)>(&W::changed));");
 }
 
@@ -753,7 +755,7 @@ TEST(TestPlannerQt, TheSpyDoesNotTakeTheNameOfAnArgument) {
 
 TEST(TestPlannerQt, GoogleTestStillHasNothingToSayAboutASignal) {
     const Planned p = plan("class W : public QObject { Q_OBJECT\npublic:\n  void run();\nsignals:\n  void changed();\n};\n");
-    EXPECT_EQ(case_names(p), Lines{"run"});
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "run"}));
 }
 
 TEST(TestPlannerQt, ASlotIsAnOrdinaryMethod) {
@@ -1470,6 +1472,106 @@ TEST(TestPlannerTemplates, NoMockIsMadeOfAnInstantiation) {
     ASSERT_EQ(instantiated.classes.size(), 1u);
     EXPECT_EQ(instantiated.classes[0].name, "Sensor<int>");
     EXPECT_TRUE(backend::plan_mocks(instantiated, options, d).empty());
+}
+
+
+// ---- inheritance (the Inherits case) ------------------------------------------------------------------------------------------
+
+std::vector<std::string> include_paths(const Planned& p, std::size_t plan_index = 0) {
+    std::vector<std::string> out;
+    for (const ir::Include& i : p.plans[plan_index].includes) out.push_back(i.path);
+    return out;
+}
+
+TEST(TestPlannerInheritance, ADerivedClassAssertsThatItDerives) {
+    const Planned p = plan("class Foo : public Base { public: void run(); };\n");
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "run"})) << "the structure first, then what the class does";
+    EXPECT_EQ(body(p, "Inherits"), (Lines{
+        "// Assert", "static_assert(std::is_base_of<Base, Foo>::value, \"Foo must derive from Base\")",
+        "// The members inherited from Base are tested with the class that declares them, not here"}));
+    EXPECT_EQ(the_case(p, "Inherits").target, "Foo");
+    EXPECT_TRUE(p.diagnostics.empty());
+}
+
+TEST(TestPlannerInheritance, EveryDirectBaseIsAssertedWhateverItsAccess) {
+    // std::is_base_of ignores access and virtual-ness, which are the class's business.
+    const Planned p = plan("class Foo : public A, protected B, private virtual C { public: void run(); };\nstruct Bar : D { void go(); };\n");
+    EXPECT_EQ(body(p, "Inherits"), (Lines{
+        "// Assert", "static_assert(std::is_base_of<A, Foo>::value, \"Foo must derive from A\")",
+        "static_assert(std::is_base_of<B, Foo>::value, \"Foo must derive from B\")",
+        "static_assert(std::is_base_of<C, Foo>::value, \"Foo must derive from C\")",
+        "// The members inherited from A, B, C are tested with the class that declares them, not here"}));
+    EXPECT_EQ(body(p, "Inherits", 1)[1], "static_assert(std::is_base_of<D, Bar>::value, \"Bar must derive from D\")");
+}
+
+TEST(TestPlannerInheritance, TheMessageNamesTheClassWithItsNamespaceAndTheBaseAsWritten) {
+    const Planned p = plan("namespace acme { namespace io { class Foo : public ::acme::Base<int, 3> { public: void run(); }; } }\n");
+    EXPECT_EQ(body(p, "Inherits")[1],
+              "static_assert(std::is_base_of<::acme::Base<int, 3>, Foo>::value, \"acme::io::Foo must derive from ::acme::Base<int, 3>\")");
+    EXPECT_EQ(suite(p).ns, (std::vector<std::string>{"acme", "io"})) << "the test is in the class's namespace, where the base is found as written";
+}
+
+TEST(TestPlannerInheritance, AClassWithoutBasesHasNoInheritsCaseAndNoTypeTraits) {
+    const Planned p = plan("class Foo { public: void run(); };\n");
+    EXPECT_EQ(case_names(p), Lines{"run"});
+    EXPECT_EQ(include_paths(p), (std::vector<std::string>{"gtest/gtest.h", "foo.h"}));
+}
+
+TEST(TestPlannerInheritance, TheTraitsHeaderIsIncludedForTheAssertion) {
+    const Planned p = plan("class Foo : public Base { public: void run(); };\n");
+    EXPECT_EQ(include_paths(p), (std::vector<std::string>{"gtest/gtest.h", "foo.h", "type_traits"}));
+    EXPECT_TRUE(p.plans[0].includes[2].is_system);
+}
+
+TEST(TestPlannerInheritance, TheInheritsCaseIsATestInItself) {
+    // Nothing is left to write: unlike the others, no placeholder keeps it red.
+    const Planned p = plan("class Foo : public Base { public: void run(); };\n");
+    for (const Stmt& s : the_case(p, "Inherits").body) EXPECT_NE(s.kind, Stmt::Kind::Placeholder);
+    EXPECT_FALSE(the_case(p, "Inherits").data.has_value());
+    for (const Stmt& s : the_case(p, "Inherits").body) EXPECT_FALSE(s.commented_out);
+}
+
+TEST(TestPlannerInheritance, ADerivedClassWithNothingElsePublicIsStillPlanned) {
+    const Planned p = plan("class Foo : public Base { void hidden(); };\n");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(case_names(p), Lines{"Inherits"});
+    EXPECT_TRUE(p.diagnostics.empty()) << "it has something to say, so it is not a class with nothing to test";
+}
+
+TEST(TestPlannerInheritance, AClassWithNeitherIsStillANote) {
+    const Planned p = plan("class Foo { void hidden(); };\n");
+    EXPECT_TRUE(p.plans.empty());
+    EXPECT_EQ(p.diagnostics.all().size(), 1u);
+}
+
+TEST(TestPlannerInheritance, AMethodCalledInheritsTakesTheNextName) {
+    const Planned p = plan("class Foo : public Base { public: void Inherits(); };\n");
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "Inherits_2"}));
+    EXPECT_EQ(the_case(p, "Inherits_2").body.front().kind, Stmt::Kind::Placeholder) << "the method kept its own case";
+}
+
+TEST(TestPlannerInheritance, QtTestHasTheSameCase) {
+    const std::string header = "class Foo : public QObject { Q_OBJECT\npublic:\n  void run();\n};\n";
+    const Planned qt = plan_qt(header);
+    const Planned gt = plan(header);
+    EXPECT_EQ(case_names(qt), (Lines{"Inherits", "run"}));
+    EXPECT_EQ(body(qt, "Inherits"), body(gt, "Inherits"));
+    EXPECT_EQ(include_paths(qt), (std::vector<std::string>{"QtTest", "foo.h", "type_traits"}));
+}
+
+TEST(TestPlannerInheritance, AFixtureDoesNotChangeTheCase) {
+    core::Config config;
+    config.gtest.fixture = true;
+    const Planned p = plan("class Foo : public Base { public: void run(); };\n", config);
+    EXPECT_EQ(case_names(p), (Lines{"Inherits", "run"})) << "TEST_F: a suite cannot mix TEST and TEST_F";
+    EXPECT_EQ(body(p, "Inherits").size(), 3u);
+    ASSERT_TRUE(suite(p).fixture.has_value());
+}
+
+TEST(TestPlannerInheritance, AnInstantiationAssertsTheBaseWithItsArgumentsSubstituted) {
+    const Planned p = plan_instances("namespace acme { template <typename T> class Box : public Holder<T> { public: T get() const; }; }\n", {{"acme::Box", {"int"}}});
+    EXPECT_EQ(body(p, "Inherits")[1],
+              "static_assert(std::is_base_of<Holder<int>, Box<int>>::value, \"acme::Box<int> must derive from Holder<int>\")");
 }
 
 }  // namespace

@@ -1255,8 +1255,32 @@ rest of the slots.
   - The test includes the header only; a template has no definitions to link, so
     its members must be in the header. Member templates are skipped as for any
     class.
-- A class with nothing public to test gets an `mt-unsupported` note and no plan.
-  Those and the template warnings are the only diagnostics the planner emits: what
+- **A derived class gets an `Inherits` case** (plan 7.2), the first of its suite:
+  one `static_assert(std::is_base_of<Base, Derived>::value, "…")` for each direct
+  base, in the order of the base clause, with the base as written (`Counted<int>`,
+  `::acme::Base`) and the class by its name (the test is in its namespace), and
+  the message naming the class with its namespace. `std::is_base_of` ignores the
+  access and virtual-ness of the base, so a `private` or `virtual` base is asserted
+  like a public one: the case says *that* the class derives, which is what a
+  refactoring of the hierarchy would change. After the assertions a comment says
+  that the members the class inherits are tested with the class that declares them:
+  the planner lists a class's own declarations only, and repeating a base's members
+  in every derived suite would test the same code once for each of them. An
+  overriding function is declared in the class and is tested there as any other.
+  - It is all `static_assert`: nothing is left to write, so unlike every other case
+    it has **no placeholder** and, run, it passes (the compiling is the test). The
+    round-trip scripts expect exactly that of a case called `Inherits`.
+  - `<type_traits>` is included only when a case needs it. In a fixture suite the
+    case is a `TEST_F` like the rest (GoogleTest does not allow a suite to mix
+    `TEST` and `TEST_F`), and under `gtest.parameterised` or `qtest.data_driven` it
+    has no table. If a method is called `Inherits`, the method takes
+    `Inherits_2`.
+  - A class with bases and nothing public of its own (`struct Tag : Named {}`) is
+    planned for this case alone; it is no longer a class with nothing to test.
+  - The bases of an instantiation of a class template are the template's with the
+    arguments substituted (`Holder<int>`).
+- A class with nothing public to test, and no bases, gets an `mt-unsupported` note
+  and no plan. Those and the template warnings are the only diagnostics the planner emits: what
   a header cannot give the skeleton is said in the skeleton itself, as a
   `TODO(mt)`.
 - **Members under `#if`** (§6.5) are all tested, as if each existed: the
