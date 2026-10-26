@@ -185,6 +185,42 @@ TEST(GenTestsInclude, ADirectoryThatDoesNotContainTheHeaderIsNoHelp) {
     EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "include/acme/missing"}), "#include \"foo.h\"");
 }
 
+TEST(GenTestsInclude, TheIncludeDirectoriesOfACompilationDatabaseCountAsIfGivenWithI) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "build/compile_commands.json", R"([{"directory":"build","command":"c++ -I../include -c x.cpp"}])");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "--compile-commands", "build/compile_commands.json"}), "#include \"acme/foo.h\"");
+}
+
+TEST(GenTestsInclude, TheOnesGivenOnTheCommandLineAreSearchedBeforeThoseOfTheDatabase) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "cc.json", R"([{"command":"c++ -Iinclude"}])");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "include/acme", "--compile-commands", "cc.json"}), "#include \"foo.h\"");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "--compile-commands", "cc.json", "-I", "include/acme"}), "#include \"foo.h\"")
+        << "wherever the options are written";
+}
+
+TEST(GenTestsInclude, InsideTheDatabaseTheOrderOfTheCompilerCommandHolds) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "a.json", R"([{"command":"c++ -Iinclude/acme -Iinclude"}])");
+    write_file(dir.path() / "b.json", R"([{"command":"c++ -Iinclude -Iinclude/acme"}])");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "--compile-commands", "a.json"}), "#include \"foo.h\"");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "--compile-commands", "b.json"}), "#include \"acme/foo.h\"");
+}
+
+TEST(GenTestsInclude, ADatabaseThatCannotBeUsedStopsTheRun) {
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome missing = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--compile-commands", "nope.json"});
+    EXPECT_EQ(missing.code, 3) << missing.err;
+    write_file(dir.path() / "cc.json", "[3]x");
+    const Outcome broken = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--compile-commands", "cc.json"});
+    EXPECT_EQ(broken.code, 1) << broken.err;
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
 TEST(GenTestsInclude, ASpellingOfTheDirectoryWithDotsOrASlashIsTheSameDirectory) {
     const TempDir dir;
     write_foo(dir);

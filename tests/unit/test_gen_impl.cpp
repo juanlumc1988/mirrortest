@@ -325,6 +325,94 @@ TEST(GenImpl, YourOwnOutputOnTheIncludePathIsNotMistakenForTheApi) {
     EXPECT_EQ(again.err, "unchanged src/acme/foo.h\nunchanged src/acme/foo.cpp\n") << "found in the output directory: still a target";
 }
 
+// ---- --compile-commands ------------------------------------------------------------------------------------
+
+// The compiler ran in build/, so '-I../inc' is the inc/ next to it.
+const char* kDatabase = R"([{"directory":"build","command":"c++ -I../inc -c ../tests/foo_test.cpp","file":"../tests/foo_test.cpp"}])";
+
+void write_existing_foo(const TempDir& dir) {
+    write_file(dir.path() / "inc/acme/foo.h", "namespace acme { class Foo { public: explicit Foo(int); unsigned size() const; }; }\n");
+}
+
+TEST(GenImplCompileCommands, TheIncludeDirectoriesOfTheDatabaseFindTheHeadersThatExist) {
+    const TempDir dir;
+    write_existing_foo(dir);
+    write_foo_test(dir);
+    write_file(dir.path() / "build/compile_commands.json", kDatabase);
+
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "without"}).code, 0);
+    EXPECT_TRUE(exists(dir, "without/acme/foo.h")) << "nothing says where the header is: it is generated";
+
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "with", "--compile-commands", "build/compile_commands.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(exists(dir, "with/acme/foo.h")) << "found on the database's -I: it is the API";
+    EXPECT_FALSE(exists(dir, "with/acme/foo.cpp"));
+}
+
+TEST(GenImplCompileCommands, AnIncludeDirectoryGivenOnTheCommandLineStillWorksBesideIt) {
+    const TempDir dir;
+    write_existing_foo(dir);
+    write_foo_test(dir);
+    write_file(dir.path() / "build/compile_commands.json", R"([{"command":"c++ -Inowhere"}])");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "-I", "inc", "--compile-commands", "build/compile_commands.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(exists(dir, "src/acme/foo.h"));
+}
+
+TEST(GenImplCompileCommands, AFileThatIsNotThereIsAnIoError) {
+    const TempDir dir;
+    write_foo_test(dir);
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--compile-commands", "build/missing.json"});
+    EXPECT_EQ(r.code, 3) << r.err;
+    EXPECT_TRUE(contains(r.err, "build/missing.json")) << r.err;
+    EXPECT_TRUE(contains(r.err, "[mt-io]")) << r.err;
+    EXPECT_FALSE(exists(dir, "src"));
+}
+
+TEST(GenImplCompileCommands, AFileThatIsNotADatabaseIsAnErrorAndNothingIsWritten) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "cc.json", "{}");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--compile-commands", "cc.json"});
+    EXPECT_EQ(r.code, 1) << r.err;
+    EXPECT_TRUE(contains(r.err, "cc.json: error: not a compilation database: a JSON array of entries is expected [mt-config]")) << r.err;
+    EXPECT_FALSE(exists(dir, "src"));
+
+    write_file(dir.path() / "cc.json", "[{");
+    const Outcome broken = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--compile-commands", "cc.json"});
+    EXPECT_EQ(broken.code, 1) << broken.err;
+    EXPECT_TRUE(contains(broken.err, "cc.json: error: invalid JSON: ")) << broken.err;
+}
+
+TEST(GenImplCompileCommands, AnEntryItCannotReadIsAWarningAndStrictMakesItAnError) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "cc.json", R"([{"directory":"."}])");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--compile-commands", "cc.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(r.err, "cc.json: warning: entry 1 of the compilation database has neither 'arguments' nor 'command'; it is skipped [mt-config]")) << r.err;
+    EXPECT_TRUE(exists(dir, "src/acme/foo.h"));
+
+    const Outcome strict = gen_impl(dir, {"tests/foo_test.cpp", "--out", "strict", "--strict", "--compile-commands", "cc.json"});
+    EXPECT_EQ(strict.code, 1) << strict.err;
+    EXPECT_FALSE(exists(dir, "strict"));
+}
+
+TEST(GenImplCompileCommands, VerboseSaysWhichDirectoriesCameFromTheFile) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "build/compile_commands.json", kDatabase);
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--verbose", "--compile-commands", "build/compile_commands.json"});
+    EXPECT_TRUE(contains(r.err, "mirrortest: -I from 'build/compile_commands.json': inc\n")) << r.err;
+
+    write_file(dir.path() / "empty.json", "[]");
+    const Outcome none = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src2", "--verbose", "--compile-commands", "empty.json"});
+    EXPECT_TRUE(contains(none.err, "mirrortest: -I from 'empty.json': none\n")) << none.err;
+
+    const Outcome quiet = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src3", "--compile-commands", "build/compile_commands.json"});
+    EXPECT_FALSE(contains(quiet.err, "-I from")) << "only with --verbose";
+}
+
 TEST(GenImpl, FrameworkHeadersAreNeverGenerated) {
     const TempDir dir;
     write_file(dir.path() / "t.cpp", "#include \"gtest/gtest.h\"\n#include \"foo.h\"\nTEST(S, N) { Foo foo(1); EXPECT_EQ(foo.size(), 2u); }\n");

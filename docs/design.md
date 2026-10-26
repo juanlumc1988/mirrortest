@@ -1873,7 +1873,7 @@ warnings into errors.
 | Code | Severity | When |
 |---|---|---|
 | `mt-io` | error | cannot read/write |
-| `mt-config` | error | invalid configuration or unknown key |
+| `mt-config` | error · warning | invalid configuration or unknown key · a compilation database that is not one (error), an entry of it that cannot be read (warning) |
 | `mt-framework` | error | framework not detectable or ambiguous |
 | `mt-parse` | warning | the parser marked regions as `ERROR` (not counting known shapes handled by text, such as `QFETCH(int, v)`) |
 | `mt-auto` | error (policy) | `auto` receives a result of the API |
@@ -1911,13 +1911,11 @@ mirrortest gen-tests [--header] FILE... --out DIR [--framework gtest|qtest]
 COMMON:  -I DIR ... | --std c++11|c++14|c++17|c++20|c++23 (default c++17)
          --overwrite never|merge|force (default never) | --dry-run | --check
          --config FILE.json | --templates DIR | --strict | --quiet | --verbose
-         --compile-commands FILE (phase 8: only to extract -I)
+         --compile-commands FILE  (adds its -I, -isystem and -iquote directories)
 ```
 
 Implemented in `cli/run.h` (`parse_options`, `finish_run`, `run`); `main.cpp`
-only builds the `Env` and calls `run`. `--compile-commands` is **not
-registered** until task 8.1: passing it today is a usage error, not an accepted
-and ignored option.
+only builds the `Env` and calls `run`.
 
 - **Inputs**: positional or with `--tests`/`--header` (AT §10); the positional
   ones first and then those of the option, each group in the order written.
@@ -1936,6 +1934,34 @@ and ignored option.
   the command without inputs); `expected(1)`, `allow_extra_args(false)` and
   `multi_option_policy(TakeAll)` are all needed at once (none is enough on its
   own, checked against this version). A glued `-Idir` works too.
+- **`--compile-commands FILE`** (both commands; `core/compile_commands.h`): a
+  compilation database, the `compile_commands.json` CMake writes with
+  `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`. Only the include directories are taken,
+  because mirrortest compiles nothing: it needs to know where the headers a test
+  includes are. They behave exactly as if they had been given with `-I`, and come
+  **after** the ones given on the command line, so that those are searched first
+  (and, for `gen-tests`, the first directory that contains the header decides how
+  the test includes it). Parsing the options only stores the path; the file is
+  read when the command runs (`with_compile_commands`), so that its problems are
+  ordinary diagnostics and `--strict` applies to them.
+  - Per entry: `arguments` if present, else `command`, split the way a POSIX shell
+    would (`split_command_line`: quotes and backslashes, no expansion; Windows
+    quoting is not understood). `-I dir`, `-Idir`, `-isystem dir` and `-iquote dir`
+    are read, nothing else (a `-DX=-Iy` is a definition). A relative directory is
+    joined to the entry's `directory` and normalised lexically (`..`, `.`, no
+    trailing slash); an entry without an absolute `directory` leaves it relative to
+    the working directory of the run, which is where `-I` is relative to as well.
+  - **Every entry counts**, not only those whose `file` is one of the inputs: a
+    header is never in the database, and the test being written is usually not
+    either. The union is deduplicated and keeps the order of first appearance. If
+    several targets disagree on a directory, give a database filtered to the one
+    that matters, or the `-I` yourself.
+  - A file that cannot be read is `mt-io` (exit 3); a text that is not JSON, or not
+    an array, is an `mt-config` error (exit 1); an entry that cannot be read (not an
+    object, no `arguments` or `command`, a `directory` or `command` that is not a
+    string, an argument that is not a string) is an `mt-config` warning naming its
+    position and is skipped. Nothing is written after an error. `--verbose` prints
+    the directories taken (`mirrortest: -I from 'cc.json': a b`).
 - **Validation**: values outside their set (`--std c++98`, `--qt 4`,
   `--framework auto` in `gen-tests`, …) are a usage error that says what is
   valid; the sets come from `core/config.h` (`std_names()`, …), a single source

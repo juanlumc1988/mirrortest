@@ -1,0 +1,6 @@
+gen-impl
+${IN}/logger_test.cpp
+--out
+${OUT}
+--compile-commands
+${IN}/database.json

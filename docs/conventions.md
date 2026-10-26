@@ -328,6 +328,14 @@ the standard library are never generated.
 $ mirrortest gen-impl tests/foo_test.cpp --out src -I include
 ```
 
+If the project is built with CMake you do not have to repeat its include
+directories: `--compile-commands build/compile_commands.json` (written by
+`-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`) adds the `-I`, `-isystem` and `-iquote`
+directories of every compilation in the file, after the `-I` you give. It works in
+`gen-tests` too. Every entry counts, whether or not it is the test you are
+generating; if two targets of the project use different directories under the same
+name, give a database with only the one that matters, or the `-I` yourself.
+
 - A class goes to **the header whose name matches** (`FooBar` → `foo_bar.h`,
   ignoring case, `_` and `-`), else to the first header the test asks for. With
   no header to generate at all, each class and function gets a file named from
@@ -503,7 +511,8 @@ it can call. Say that a type can be built with `default_constructible_types` in
 the configuration.
 
 How the test includes the header: `--include-as PATH`, else the path below the
-first `-I` directory that contains it, else the file name.
+first `-I` directory that contains it (those of `--compile-commands` come after the
+ones given with `-I`), else the file name.
 
 By default the object under test is built inside each test. With `{"gtest":
 {"fixture": true}}` in the configuration the file has one fixture class that owns

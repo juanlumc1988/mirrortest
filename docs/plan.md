@@ -276,7 +276,8 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 
 ## Phase 8 — Advanced configuration
 
-- [ ] **8.1** `--compile-commands`: extract `-I` from the file.
+- [x] **8.1** `--compile-commands`: extract `-I` from the file (design 13.1; `core/compile_commands.h`;
+  `compile_commands` golden cases for both commands).
 - [ ] **8.2** `--no-stl` (§8.3).
 - [ ] **8.3** `hook` stub policy (R26).
 - [ ] **8.4** (Optional) YAML loader if confirmed (R18).

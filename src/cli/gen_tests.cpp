@@ -100,8 +100,9 @@ std::vector<core::OutputFile> process_input(const Options& options, const Env& e
 
 }  // namespace
 
-int run_gen_tests(const Options& options, const Env& env) {
+int run_gen_tests(const Options& given, const Env& env) {
     core::Diagnostics diagnostics;
+    const Options options = with_compile_commands(given, env, diagnostics);
 
     std::optional<fs::path> template_dir;
     if (options.templates_dir) template_dir = resolve(env, *options.templates_dir);

@@ -266,6 +266,68 @@ TEST(CliParse, IncludeDirectoriesAccumulateAndDoNotEatTheInputs) {
     EXPECT_EQ(o.inputs, std::vector<std::string>{"test.cpp"});
 }
 
+TEST(CliParse, CompileCommandsIsRememberedForBothCommandsAndNotReadYet) {
+    const Options impl = opts({"gen-impl", "t.cpp", "--out", "o", "--compile-commands", "build/compile_commands.json", "-I", "inc"});
+    EXPECT_EQ(impl.compile_commands, std::optional<std::string>("build/compile_commands.json"));
+    EXPECT_EQ(impl.include_dirs, std::vector<std::string>{"inc"}) << "what the file names is added when the command runs, not here";
+    const Options tests = opts({"gen-tests", "h.h", "--out", "o", "--compile-commands", "cc.json"});
+    EXPECT_EQ(tests.compile_commands, std::optional<std::string>("cc.json"));
+    EXPECT_FALSE(opts({"gen-impl", "t.cpp", "--out", "o"}).compile_commands);
+    EXPECT_FALSE(opts({"gen-tests", "h.h", "--out", "o"}).compile_commands);
+}
+
+TEST(CliParse, CompileCommandsNeedsAFile) {
+    const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--compile-commands"});
+    EXPECT_FALSE(p.options);
+    EXPECT_EQ(p.exit_code, 2);
+}
+
+TEST(CliParse, CompileCommandsIsInTheHelpOfBothCommands) {
+    for (const char* command : {"gen-impl", "gen-tests"}) {
+        const Parsed p = parse({command, "--help"});
+        EXPECT_TRUE(contains(p.out, "--compile-commands")) << command;
+    }
+}
+
+TEST(CliCompileCommands, TheDirectoriesOfTheFileFollowTheOnesGiven) {
+    TempDir dir;
+    write_file(dir.path() / "cc.json", R"([{"directory":"/p","command":"c++ -I/p/inc -Ishared -I/p/inc"}])");
+    std::ostringstream err;
+    cli::Env env;
+    env.cwd = dir.path();
+    env.err = &err;
+    Options given = opts({"gen-impl", "t.cpp", "--out", "o", "-I", "mine", "--compile-commands", "cc.json"});
+    core::Diagnostics diagnostics;
+    const Options run = cli::with_compile_commands(given, env, diagnostics);
+    EXPECT_TRUE(diagnostics.empty());
+    EXPECT_EQ(run.include_dirs, (std::vector<std::string>{"mine", "/p/inc", "/p/shared"}));
+    EXPECT_EQ(given.include_dirs, std::vector<std::string>{"mine"}) << "the options it was given are not changed";
+    EXPECT_EQ(run.inputs, given.inputs);
+}
+
+TEST(CliCompileCommands, WithoutTheOptionOrWithAFileThatFailsTheOptionsAreAsTheyWere) {
+    TempDir dir;
+    std::ostringstream err;
+    cli::Env env;
+    env.cwd = dir.path();
+    env.err = &err;
+    Options given = opts({"gen-impl", "t.cpp", "--out", "o", "-I", "mine"});
+    core::Diagnostics none;
+    EXPECT_EQ(cli::with_compile_commands(given, env, none).include_dirs, std::vector<std::string>{"mine"});
+    EXPECT_TRUE(none.empty());
+
+    given.compile_commands = "missing.json";
+    core::Diagnostics missing;
+    EXPECT_EQ(cli::with_compile_commands(given, env, missing).include_dirs, std::vector<std::string>{"mine"});
+    EXPECT_TRUE(missing.has_errors());
+
+    write_file(dir.path() / "bad.json", "{}");
+    given.compile_commands = "bad.json";
+    core::Diagnostics bad;
+    EXPECT_EQ(cli::with_compile_commands(given, env, bad).include_dirs, std::vector<std::string>{"mine"});
+    EXPECT_TRUE(bad.has_errors());
+}
+
 TEST(CliParse, TheTestsOptionDoesNotEatFollowingPositionals) {
     const Options o = opts({"gen-impl", "--tests", "a.cpp", "b.cpp", "--out", "o"});
     EXPECT_EQ(o.inputs, (std::vector<std::string>{"b.cpp", "a.cpp"}));

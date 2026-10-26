@@ -1,0 +1,3 @@
+in/logger_test.cpp:8:12: warning: the result of 'Logger::log' is never used, so the method is assumed to return void [mt-unused-result]
+created out/logger.h
+created out/logger.cpp

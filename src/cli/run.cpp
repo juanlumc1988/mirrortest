@@ -8,6 +8,9 @@
 
 #include <CLI/CLI.hpp>
 
+#include "mirrortest/core/compile_commands.h"
+#include "mirrortest/core/source.h"
+
 #ifndef MT_VERSION
 #define MT_VERSION "0.0.0-unknown"
 #endif
@@ -29,7 +32,7 @@ struct Raw {
 
     std::string out, out_include, out_src;
     std::string framework, include_as, qt_main = "guiless";
-    std::string cxx_std, overwrite = "never", config_file, templates_dir;
+    std::string cxx_std, overwrite = "never", config_file, templates_dir, compile_commands;
     std::string stub_policy, placeholder, auto_policy;
     int         qt = 0;
 
@@ -92,6 +95,9 @@ CommonOptions add_common(CLI::App& cmd, Raw& raw) {
     given.templates_dir = cmd.add_option("--templates", raw.templates_dir,
                                          "Directory with templates that replace the built-in ones")
                               ->type_name("DIR");
+    cmd.add_option("--compile-commands", raw.compile_commands,
+                   "compile_commands.json; its -I, -isystem and -iquote directories are added after the -I given")
+        ->type_name("FILE");
     cmd.add_flag("--strict", raw.strict, "Treat warnings as errors");
     CLI::Option* quiet = cmd.add_flag("--quiet", raw.quiet, "Print only errors and warnings");
     CLI::Option* verbose = cmd.add_flag("--verbose", raw.verbose, "Print more about what is being done");
@@ -297,6 +303,7 @@ std::optional<Options> parse_options(const std::vector<std::string>& args, const
     options.verbose = raw.verbose;
     if (!raw.config_file.empty()) options.config_file = raw.config_file;
     if (!raw.templates_dir.empty()) options.templates_dir = raw.templates_dir;
+    if (!raw.compile_commands.empty()) options.compile_commands = raw.compile_commands;
 
     // ---- configuration: defaults < file < command line --------------------------
     if (options.config_file) {
@@ -320,6 +327,24 @@ std::optional<Options> parse_options(const std::vector<std::string>& args, const
         if (tests_qt->count() > 0) options.config.qt = raw.qt;
     }
     return options;
+}
+
+Options with_compile_commands(const Options& options, const Env& env, core::Diagnostics& diagnostics) {
+    if (!options.compile_commands) return options;
+    const std::optional<core::SourceFile> file = core::read_source(*options.compile_commands, diagnostics, env.cwd);
+    if (!file) return options;
+    const std::optional<std::vector<std::string>> dirs =
+        core::include_dirs_of_compile_commands(file->text, *options.compile_commands, diagnostics);
+    if (!dirs) return options;
+
+    Options out = options;
+    out.include_dirs.insert(out.include_dirs.end(), dirs->begin(), dirs->end());
+    if (options.verbose) {
+        *env.err << "mirrortest: -I from '" << *options.compile_commands << "':";
+        for (const std::string& dir : *dirs) *env.err << ' ' << dir;
+        *env.err << (dirs->empty() ? " none\n" : "\n");
+    }
+    return out;
 }
 
 int run(const std::vector<std::string>& args, const Env& env) {

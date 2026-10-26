@@ -1,0 +1,12 @@
+[
+  {
+    "directory": ".",
+    "command": "c++ -I in/include -std=c++17 -c in/logger_test.cpp -o logger_test.o",
+    "file": "in/logger_test.cpp"
+  },
+  {
+    "directory": ".",
+    "arguments": ["c++", "-isystem", "in/include", "-I", "in/other", "-c", "in/other_test.cpp"],
+    "file": "in/other_test.cpp"
+  }
+]

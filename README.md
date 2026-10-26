@@ -130,6 +130,7 @@ the API under test, literal suffixes where the type matters, optional
 |---|---|
 | `--out DIR` | where to write; or `--out-include DIR` and `--out-src DIR` separately |
 | `-I DIR` | a directory with headers that already exist: they are your API, not something to generate |
+| `--compile-commands FILE` | the same, taken from a `compile_commands.json` (its `-I`, `-isystem` and `-iquote`), after the `-I` given |
 | `--stub-policy throw\|abort\|default` | what the stubs do (default `throw`); `--no-exceptions` makes `throw` behave as `abort` |
 | `--auto-policy error\|todo` | what to do when a type cannot be inferred (default: an error, nothing written) |
 | `--std c++11\|...\|c++23` | the standard the generated code must be valid in (default `c++17`) |

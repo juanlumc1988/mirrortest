@@ -58,6 +58,7 @@ add_library(mt_core STATIC
     src/cli/gen_tests.cpp
     src/cli/plan_collector.cpp
     src/cli/run.cpp
+    src/core/compile_commands.cpp
     src/core/config.cpp
     src/core/diagnostics.cpp
     src/core/diff.cpp
@@ -109,6 +110,7 @@ if(MT_BUILD_TESTS)
         tests/unit/test_classify.cpp
         tests/unit/test_cli.cpp
         tests/unit/test_code_frontend.cpp
+        tests/unit/test_compile_commands.cpp
         tests/unit/test_config.cpp
         tests/unit/test_cxx_format.cpp
         tests/unit/test_dependencies.cpp
