@@ -11,6 +11,7 @@
 
 #include "mirrortest/backend/test_planner.h"
 #include "mirrortest/frontend/code_frontend.h"
+#include "mirrortest/ir/type.h"
 
 using namespace mt;
 
@@ -91,6 +92,35 @@ TEST(MockPlannerWhen, OneMockForEveryInterfaceAndNoneForTheRest) {
 
 TEST(MockPlannerWhen, AClassWithOnlyAPureVirtualDestructorIsNotAnInterfaceToMock) {
     EXPECT_TRUE(plan("class A { public: virtual ~A() = 0; };").mocks.empty());
+}
+
+TEST(MockPlannerWhen, AConstructorOrADestructorIsNeverMocked) {
+    // However a model says it: the header reader does not mark a destructor `= 0` as pure, but a model
+    // built another way might, and `MOCK_METHOD(void, ~A, ...)` would not compile.
+    ir::Model model;
+    ir::Class c;
+    c.name = "A";
+    for (const char* name : {"~A", "A"}) {
+        ir::Method m;
+        m.name = name;
+        m.kind = name[0] == '~' ? ir::MethodKind::Destructor : ir::MethodKind::Constructor;
+        m.is_pure = true;
+        c.methods.push_back(m);
+    }
+    ir::Method f;
+    f.name = "f";
+    f.ret = ir::type_from_spelling("void");
+    f.is_pure = true;
+    c.methods.push_back(f);
+    model.classes.push_back(c);
+
+    core::Diagnostics d;
+    backend::PlannerOptions options;
+    options.config = with_mocks();
+    const std::vector<ir::MockClass> mocks = backend::plan_mocks(model, options, d);
+    ASSERT_EQ(mocks.size(), 1u);
+    ASSERT_EQ(mocks[0].methods.size(), 1u);
+    EXPECT_EQ(mocks[0].methods[0].name, "f");
 }
 
 TEST(MockPlannerWhen, NothingInTheHeaderIsFine) {

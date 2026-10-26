@@ -357,3 +357,51 @@ TEST(CxxFormatText, NamespacesOpenOutsideInAndCloseInsideOut) {
 }
 
 }  // namespace
+
+// ---- nested types ---------------------------------------------------------------------------------------------
+
+namespace {
+
+ir::Class class_with_nested(std::vector<std::string> nested) {
+    ir::Class c;
+    c.name = "Foo";
+    c.nested_types = std::move(nested);
+    return c;
+}
+
+}  // namespace
+
+TEST(CxxFormatNested, ANestedTypeIsNamedThroughItsClass) {
+    const ir::Class c = class_with_nested({"Item", "Mode"});
+    EXPECT_EQ(backend::qualify_nested("Item", c), "Foo::Item");
+    EXPECT_EQ(backend::qualify_nested("const Item&", c), "const Foo::Item&");
+    EXPECT_EQ(backend::qualify_nested("std::vector<Item>", c), "std::vector<Foo::Item>");
+    EXPECT_EQ(backend::qualify_nested("std::map<Mode, Item*>", c), "std::map<Foo::Mode, Foo::Item*>");
+}
+
+TEST(CxxFormatNested, WhatIsAlreadyQualifiedOrOnlyLooksAlikeIsLeftAlone) {
+    const ir::Class c = class_with_nested({"Item"});
+    EXPECT_EQ(backend::qualify_nested("Foo::Item", c), "Foo::Item");
+    EXPECT_EQ(backend::qualify_nested("other::Item", c), "other::Item");
+    EXPECT_EQ(backend::qualify_nested("Items", c), "Items");
+    EXPECT_EQ(backend::qualify_nested("MyItem", c), "MyItem");
+    EXPECT_EQ(backend::qualify_nested("Item2", c), "Item2");
+    EXPECT_EQ(backend::qualify_nested("int", class_with_nested({})), "int");
+    EXPECT_EQ(backend::qualify_nested("", c), "");
+}
+
+TEST(CxxFormatNested, ANumberIsOneTokenAndNoName) {
+    const ir::Class c = class_with_nested({"u", "f", "x1F"});
+    EXPECT_EQ(backend::qualify_nested("std::array<Item, 3u>", c), "std::array<Item, 3u>");
+    EXPECT_EQ(backend::qualify_nested("Box<0x1F>", c), "Box<0x1F>");
+    EXPECT_EQ(backend::qualify_nested("Box<1.5f>", c), "Box<1.5f>");
+    EXPECT_EQ(backend::qualify_nested("Box<1'000>", c), "Box<1'000>");
+    EXPECT_EQ(backend::qualify_nested("3", c), "3") << "a number at the very end";
+    EXPECT_EQ(backend::qualify_nested("7u", c), "7u");
+}
+
+TEST(CxxFormatNested, AnIdentifierAtTheVeryEnd) {
+    const ir::Class c = class_with_nested({"Item"});
+    EXPECT_EQ(backend::qualify_nested("const Item", c), "const Foo::Item");
+    EXPECT_EQ(backend::qualify_nested("_Item", c), "_Item");
+}

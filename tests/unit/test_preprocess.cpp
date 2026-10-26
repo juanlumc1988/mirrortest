@@ -571,6 +571,10 @@ void expect_expansion(const std::string& in, const std::string& macro, const std
     EXPECT_EQ(out.text.substr(0, begin), in.substr(0, begin));
     EXPECT_EQ(out.text.substr(begin + macro.size()), in.substr(begin + macro.size()));
 
+    ASSERT_EQ(out.blanked.size(), 1u);
+    EXPECT_EQ(out.blanked[0].begin, begin);
+    EXPECT_EQ(out.blanked[0].end, begin + macro.size());
+
     std::string span = out.text.substr(begin, macro.size());
     const std::size_t breaks = static_cast<std::size_t>(std::count(macro.begin(), macro.end(), '\n'));
     EXPECT_EQ(std::count(span.begin(), span.end(), '\n'), static_cast<std::ptrdiff_t>(breaks));
@@ -652,6 +656,23 @@ TEST(PreprocessMocks, AMacroItDoesNotUnderstandIsBlanked) {
     const std::string macro = "MOCK_METHOD(int)";
     const Preprocessed out = preprocess("class M : public S { " + macro + "; };", with_mocks());
     EXPECT_EQ(out.text, "class M : public S { " + std::string(macro.size(), ' ') + "; };");
+}
+
+TEST(PreprocessMocks, AMacroItDoesNotUnderstandKeepsItsLineBreaksWhereTheyWere) {
+    // Erased like any other macro, not rewritten: nothing moves.
+    const std::string in = "class M : public S {\n    MOCK_METHOD(int,\n        junk)\n    int after;\n};\n";
+    const Preprocessed out = run(in, with_mocks());
+    EXPECT_EQ(out.text.find("MOCK_METHOD"), std::string::npos);
+    EXPECT_EQ(out.text.find("junk"), std::string::npos);
+    ASSERT_EQ(out.blanked.size(), 1u);
+}
+
+TEST(PreprocessMocks, TheSemicolonItAddsIsAMemberBoundaryForWhatFollows) {
+    // The token before the macro is no boundary, so only the ';' the expansion supplied can make `signals:` a section label.
+    const Preprocessed out = preprocess("class M { int a MOCK_METHOD0(f, void())\nsignals:\n void s(); };", with_mocks());
+    EXPECT_EQ(out.text.find("signals"), std::string::npos);
+    ASSERT_EQ(out.markers.size(), 1u);
+    EXPECT_EQ(out.markers[0].kind, Kind::SignalsSection);
 }
 
 TEST(PreprocessMocks, ACommentOrALiteralInTheArgumentsBlanksTheMacro) {
