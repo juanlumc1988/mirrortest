@@ -45,6 +45,13 @@ TEST(CompileCommandsSplit, OutsideQuotesABackslashEscapesAnyCharacter) {
     EXPECT_EQ(core::split_command_line(R"(a\\b)"), Words{"a\\b"});
 }
 
+TEST(CompileCommandsSplit, AnEscapedCharacterAloneIsAWord) {
+    EXPECT_EQ(core::split_command_line(R"(a \  b)"), (Words{"a", " ", "b"}));
+    EXPECT_EQ(core::split_command_line(R"(\\)"), Words{"\\"});
+    EXPECT_EQ(core::split_command_line(R"(\  \ )"), (Words{" ", " "})) << "an escaped blank, a blank, an escaped blank";
+    EXPECT_EQ(core::split_command_line(R"(\ \ )"), Words{"  "}) << "two escaped blanks are one word";
+}
+
 TEST(CompileCommandsSplit, QuotedPartsJoinTheWordTheyAreIn) {
     EXPECT_EQ(core::split_command_line(R"(a"b c"d'e f'g)"), Words{"ab cde fg"});
     EXPECT_EQ(core::split_command_line(R"(-I"my dir"/inc)"), Words{"-Imy dir/inc"});
@@ -106,6 +113,11 @@ TEST(CompileCommandsDirs, WithoutAnAbsoluteDirectoryTheResultStaysRelativeForThe
     EXPECT_EQ(*read(R"([{"command":"c++ -Iinc -I./other/"}])").dirs, (Words{"inc", "other"}));
     EXPECT_EQ(*read(R"([{"directory":".","command":"c++ -I in/include"}])").dirs, Words{"in/include"});
     EXPECT_EQ(*read(R"([{"directory":"build","command":"c++ -I../inc"}])").dirs, Words{"inc"});
+}
+
+TEST(CompileCommandsDirs, TheRootDirectoryKeepsItsSlash) {
+    EXPECT_EQ(*read(R"([{"command":"c++ -I/"}])").dirs, Words{"/"});
+    EXPECT_EQ(*read(R"([{"directory":"/p","command":"c++ -I/ -I../.."}])").dirs, (Words{"/"})) << "and so does what normalises to it";
 }
 
 TEST(CompileCommandsDirs, EachDirectoryOnceInTheOrderItFirstAppears) {

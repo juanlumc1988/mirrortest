@@ -122,8 +122,10 @@ std::vector<std::string> split_command_line(std::string_view command) {
             word += command[++i];
             in_word = true;
         } else if (is_blank(c)) {
-            if (in_word) words.push_back(std::move(word));
-            word.clear();
+            if (in_word) {
+                words.push_back(word);
+                word.clear();
+            }
             in_word = false;
         } else {
             word += c;

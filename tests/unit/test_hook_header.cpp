@@ -79,6 +79,15 @@ TEST(HookHeader, WhatTheStubsAndTheTestSideUse) {
     }
 }
 
+TEST(HookHeader, BlankLinesSeparateTheGuardTheIncludesAndTheCode) {
+    const std::string throwing = backend::hook_header(core::Config(), "t.cpp");
+    EXPECT_TRUE(contains(throwing, "#define MT_NOT_IMPLEMENTED_H\n\n#include <stdexcept>\n#include <string>\n\n// What a stub does"));
+    core::Config once;
+    once.guard = core::GuardStyle::PragmaOnce;
+    once.no_stl = true;
+    EXPECT_TRUE(contains(backend::hook_header(once, "t.cpp"), "\n#pragma once\n\n#include <cstdio>\n#include <cstdlib>\n\n// What a stub does"));
+}
+
 TEST(HookHeader, TheGuardFollowsTheConfiguration) {
     const std::string guarded = backend::hook_header(core::Config(), "t.cpp");
     EXPECT_TRUE(contains(guarded, "#ifndef MT_NOT_IMPLEMENTED_H\n#define MT_NOT_IMPLEMENTED_H\n"));
