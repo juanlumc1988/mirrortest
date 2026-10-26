@@ -1042,6 +1042,42 @@ TEST(TestPlannerMockArgs, ADestructorCaseBuildsItsSutWithMocksToo) {
     EXPECT_EQ(body(p, "Destructs", plan_of(p, "Controller"))[4], "Controller sut(s);");
 }
 
+TEST(TestPlannerMockArgs, ASmartPointerThatCannotTakeATemporaryIsNotAMock) {
+    // `std::shared_ptr<Sensor>&` cannot bind the temporary the mock would be.
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class User { public: explicit User(std::shared_ptr<Sensor>& s); };\n");
+    const Lines b = constructs(p, plan_of(p, "User"));
+    EXPECT_EQ(std::count_if(b.begin(), b.end(), [](const std::string& l) { return l.find("NiceMock") != std::string::npos; }), 0);
+}
+
+TEST(TestPlannerMockArgs, ABodyDoesNotTakeTheNameOfAMockTheFixtureOwns) {
+    core::Config config;
+    config.gtest.fixture = true;
+    const Planned p = plan_mocks_on(
+        std::string(kSensorAndLogger) + "class Controller { public: explicit Controller(Sensor& s); void set(int s); };", config);
+    EXPECT_EQ(fixture_members(fixture_of_suite(p, plan_of(p, "Controller"))), (Lines{"testing::NiceMock<MockSensor> s;", "Controller sut;"}));
+    Lines set;
+    for (const ir::TestCase& c : suite(p, plan_of(p, "Controller")).cases) {
+        if (c.target.find("::set(") != std::string::npos) {
+            for (const Stmt& st : c.body) set.push_back(show(st));
+        }
+    }
+    EXPECT_NE(std::find(set.begin(), set.end(), "int s2{};"), set.end()) << "a local called s would shadow the member";
+}
+
+TEST(TestPlannerMockArgs, TheMockHeaderIsALocalInclude) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class User { public: explicit User(Sensor& s); };\n");
+    for (const ir::Include& i : p.plans.at(plan_of(p, "User")).includes) {
+        EXPECT_EQ(i.is_system, i.path == "gtest/gtest.h") << i.path;
+    }
+}
+
+TEST(TestPlannerMockArgs, TheMocksOfOneClassAreNotIncludedByTheNext) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) +
+                                    "class First { public: explicit First(Sensor& s); };\nclass Second { public: Second(); void run(); };\n");
+    EXPECT_EQ(include_paths(p, plan_of(p, "First")), (Lines{"gtest/gtest.h", "foo.h", "mock_sensor.h"}));
+    EXPECT_EQ(include_paths(p, plan_of(p, "Second")), (Lines{"gtest/gtest.h", "foo.h"}));
+}
+
 TEST(TestPlannerMockArgs, AFixtureOwnsTheMocksItsSutNeeds) {
     core::Config config;
     config.gtest.fixture = true;
@@ -1183,6 +1219,22 @@ TEST(TestPlannerTable, NotUnlessAskedFor) {
     EXPECT_FALSE(by(p, "add").data.has_value());
     EXPECT_EQ(body_by(p, "add")[3], "Foo sut;");
     EXPECT_EQ(body_by(p, "add")[4], "int a{};");
+}
+
+TEST(TestPlannerTable, ATableDoesNotLeakIntoTheNextCase) {
+    const Planned p = plan_table("class Foo { public: int add(int a, int b); int none(); void set(int n); };");
+    EXPECT_TRUE(by(p, "add").data.has_value());
+    EXPECT_FALSE(by(p, "none").data.has_value()) << "the table was moved to add's case";
+    EXPECT_TRUE(by(p, "set").data.has_value());
+}
+
+TEST(TestPlannerTable, AReferenceToSomethingThatCannotBeCopiedIsNotAColumnEither) {
+    const Planned p = plan_table(
+        "class Handle { public: Handle(); Handle(const Handle&) = delete; };\n"
+        "class Foo { public: void borrow(const std::unique_ptr<int>& p); void lend(Handle& h); void ok(int n); };\n");
+    EXPECT_FALSE(by(p, "borrow", 1).data.has_value()) << "the column would be a unique_ptr";
+    EXPECT_FALSE(by(p, "lend", 1).data.has_value());
+    EXPECT_TRUE(by(p, "ok", 1).data.has_value());
 }
 
 TEST(TestPlannerTable, AMethodWithArgumentsRunsOverAnyTable) {

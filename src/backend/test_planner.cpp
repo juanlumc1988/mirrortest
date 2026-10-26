@@ -272,7 +272,6 @@ private:
     }
 
     std::optional<MockUse> mock_for(const ir::Type& t, const ir::Class& c) const {
-        if (mocks_.empty() || is_exotic(t)) return std::nullopt;
         std::string interface = t.base;
         MockUse use;
         if (t.pointer_depth == 0 && (t.ref == ir::RefKind::None || (t.ref == ir::RefKind::LValue && t.is_const)) &&
@@ -415,7 +414,6 @@ private:
         // GoogleTest reads a row into a local called param before the locals of the arguments.
         if (tabulating() && !qtest()) names.reserve("param");
         uses_move_ = false;
-        data_.reset();
 
         tc.body.push_back(placeholder("TODO(mt): write the test for " + tc.target));
         tc.body.push_back(blank());
@@ -431,7 +429,7 @@ private:
             plan_call(c, m, names, tc.body, tc.target);
         }
         tc.data = std::move(data_);
-        data_.reset();
+        data_.reset();   // moved from is not empty: the next case must not inherit the table
         return tc;
     }
 
