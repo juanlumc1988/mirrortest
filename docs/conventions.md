@@ -155,6 +155,28 @@ methods on. `Limits::kMax` with a capital and nothing else looks like an enum an
 taken for one: the first enumerator's note says why, so you can fix it by hand. Enums
 are always `enum class`: a test that writes `Red` without the qualifier needs it edited.
 
+### Exceptions
+
+`EXPECT_THROW(parser.parse("x"), ParseError)` names an exception class but not what it
+derives from, and a class that does not derive from anything cannot be thrown. So a
+`ParseError` that no header provides is reported (`mt-unknown-type`), and you declare
+it. To have it generated, say what such classes derive from in the configuration:
+
+```json
+{ "exception_base": "std::runtime_error" }
+```
+
+```cpp
+class ParseError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;   // throw ParseError("why") works
+};
+```
+
+in the header that matches (`parse_error.h`) or the first the test includes. Standard
+exceptions (`std::runtime_error`), the file's own and your headers' are not generated.
+With `no_exceptions` the option does nothing.
+
 ### Constructors
 
 One constructor is generated per **arity** used. A single parameter is
@@ -292,7 +314,8 @@ more with `external_types` and `external_functions`.
 
 Exception types in `EXPECT_THROW(stmt, MyError)` are not generated either — an
 exception class needs a base the test does not state. Declare it in a header
-the test includes, or you get `mt-unknown-type`.
+the test includes, or you get `mt-unknown-type`, or say what such classes derive
+from with `exception_base` (see Exceptions above).
 
 ## Which files it writes, and where
 
@@ -630,6 +653,7 @@ the ones people reach for first:
   "external_types": ["LegacyDriver"],
   "external_functions": ["board_reset"],
   "ignore_macros": ["MY_CHECK"],
+  "exception_base": "std::runtime_error",
   "overrides": { "acme::Repo::count": { "returns": "std::size_t" } }
 }
 ```
@@ -658,7 +682,7 @@ differences.
 | `mt-vexing-parse` | `Foo f();` declares a function | write `Foo f;` |
 | `mt-ambiguous-scope` | `X::m()` could be a class or a namespace; several `using namespace` | qualify the name, or `default_namespace`, or `// @mt: class X namespace N` |
 | `mt-unknown-receiver`, `mt-unknown-fixture` | a receiver or fixture could not be located | declare it in the test |
-| `mt-unknown-type` | an exception type is neither known nor generated | include its header |
+| `mt-unknown-type` | an exception type is neither known nor generated | include its header, or set `exception_base` |
 | `mt-no-include` | no `#include` of the test claims a class or function | add it to the test, or `// @mt: class X header "x.h"` |
 | `mt-annotation` | a malformed annotation, or one that does not hit exactly one call | fix the comment; use the file-level form for several calls |
 | `mt-unsupported` | a construct outside the supported subset (see [Limits](#limits)), a QTest file, or two test files that write the same file differently | see the message |

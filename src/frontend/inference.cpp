@@ -824,6 +824,15 @@ private:
                           target.first_use);
         }
 
+        if (target.thrown) {
+            ir::BaseSpec base;
+            base.name = config_.exception_base;
+            cls.bases.push_back(base);
+            cls.inherited_constructors.push_back(base.name);   // throw BadInput("why") needs one that takes the text
+            cls.notes.push_back("derives from '" + base.name + "' because the test expects it to be thrown (" + where_text(target.thrown_at) +
+                                "); exception_base says which base");
+        }
+
         build_constructors(target, cls);
         build_methods(plan, cls);
         build_fields(plan, cls);

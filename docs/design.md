@@ -758,6 +758,13 @@ class through some other route; otherwise `mt-unknown-type` (warning).
 *Reason*: inventing `class BadInput {}` without `std::exception` would make
 `EXPECT_THROW` fail to compile.
 
+**Opt-in** (plan 7.4c): with `exception_base` in the configuration (`"std::runtime_error"`)
+the base is said, and `E` is a class to generate after all (`ClassTarget::thrown`,
+`thrown_at` the first such assertion; the namespace as for any class): the same
+`E` that the test also builds or calls is the same class, which is also thrown. The
+option does nothing under `no_exceptions`: there is nothing to throw, and the warning
+stays. What is external, in a header or in the file is as before not generated.
+
 ### 7.9 Inference (facts → model)
 
 - **Unification**: the uses of a method are grouped by (class, name, arity). A
@@ -852,6 +859,11 @@ diagnostics)`, a pure function). Details settled while implementing it:
   arity. `ignore`d calls contribute nothing. `Operator` for names starting with
   `operator`. A non-const method with no parameters whose result is compared gets
   the note "consider making this const" unless `const` was stated.
+- **Exception classes** (plan 7.4c): a `thrown` class has `config.exception_base` as its
+  only base (`BaseSpec`, public), inherits its constructors (`Class::inherited_constructors`:
+  `throw BadInput("why")` needs one that takes the text), and one note on the class
+  (`Class::notes`) saying why it has the base it has and where the test expects it thrown.
+  The rest is a class like another: members the test uses are inferred as usual.
 - **Enums** (plan 7.4b): an `EnumTarget` becomes an `ir::Enum`: `enum class`, no
   underlying type, one enumerator per name, and for each its notes in
   `enumerator_notes` (the first also says why the name is taken for an enum). The
@@ -1206,6 +1218,13 @@ public:
   be forward declared: if that is what keeps a cycle alive, `mt-unsupported`
   warning naming the headers (put the classes in one header). Includes of
   existing headers are never replaced.
+- A class with bases has them in its head (`class ParseError : public std::runtime_error {`,
+  each with its access and `virtual`), and what it inherits the constructors of as the first
+  line of its region, `using std::runtime_error::runtime_error;` (the constructor is named
+  by the last name of the base without its template arguments). The header includes the
+  headers of the bases (the standard ones from the table above, the generated ones' own):
+  a base is held by value. Notes of the class (`Class::notes`) go above its first member.
+  A header of classes without definitions has no source.
 - An enum (plan 7.4b) is `enum class Color {`, a region labelled by its qualified name
   (`Color`, `acme::Color`) with one enumerator a line (`Red,`, the trailing comma is
   C++11), each below its notes, and `};`. It has no definitions: a header of enums
@@ -1956,6 +1975,7 @@ diagnostics); an error suppresses diffs and summary.
   "auto_policy": "error",
   "placeholder_type": "int",
   "string_literal_param": "const char*",
+  "exception_base": "",
   "qt": 6,
   "type_map": { "unsigned int": "std::uint32_t" },
   "by_value_types": [],
@@ -1991,6 +2011,9 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
 - `naming.*`: each pattern accepts a single placeholder and must contain it
   (`{stem}` in the file ones, `{Class}` in the name ones); otherwise all the
   classes would go to the same file or suite.
+- `exception_base` (default empty): the base of the classes gen-impl generates for the
+  types that only appear in `EXPECT_THROW(stmt, E)` (§7.7); empty, they are reported
+  (`mt-unknown-type`). A type spelling; stored normalised. Has no effect with `no_exceptions`.
 - `no_exceptions` makes `stub_policy: throw` behave as `abort`
   (`effective_stub_policy`); an explicit `default` is respected.
 - `file_header` must be a C++ comment (`//` or `/*`), because it is emitted

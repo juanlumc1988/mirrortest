@@ -60,6 +60,7 @@ TEST(ConfigDefaults, MatchTheDesignDocument) {
     EXPECT_EQ(c.auto_policy, AutoPolicy::Error);
     EXPECT_EQ(c.placeholder_type, "int");
     EXPECT_EQ(c.string_literal_param, "const char*");
+    EXPECT_EQ(c.exception_base, "") << "no exception class is generated unless asked";
     EXPECT_EQ(c.qt, 6);
     EXPECT_FALSE(c.gtest.fixture);
     EXPECT_FALSE(c.gtest.mocks);
@@ -208,6 +209,14 @@ TEST(ConfigKeys, TypesAreStoredNormalised) {
     EXPECT_EQ(a.config.template_instantiations.at("Box")[0], "std::map<int, int>");
 }
 
+TEST(ConfigKeys, ExceptionBaseIsAType) {
+    EXPECT_EQ(apply(R"({"exception_base": "std :: runtime_error"})").config.exception_base, "std::runtime_error");
+    Config start;
+    start.exception_base = "std::exception";
+    EXPECT_EQ(apply(R"({"exception_base": ""})", start).config.exception_base, "") << "empty says the default aloud";
+    EXPECT_EQ(apply(R"({})", start).config.exception_base, "std::exception") << "and absent leaves it as it was";
+}
+
 TEST(ConfigKeys, AllMemberOverrideFields) {
     const Applied a = apply(R"({"overrides": {"ns::Foo::run": {
         "returns": "bool", "params": {"1": "int", "3": "double"},
@@ -289,6 +298,11 @@ TEST(ConfigErrors, WrongTypes) {
               "configuration key 'type_map.a' must be a string");
     EXPECT_EQ(only_error(apply(R"({"overrides":{"A::f":{"const":"yes"}}})")),
               "configuration key 'overrides.A::f.const' must be true or false");
+}
+
+TEST(ConfigErrors, ExceptionBaseNeedsAString) {
+    EXPECT_EQ(only_error(apply(R"({"exception_base": 3})")), "configuration key 'exception_base' must be a string");
+    EXPECT_EQ(only_error(apply(R"({"exception_base": ["std::exception"]})")), "configuration key 'exception_base' must be a string");
 }
 
 TEST(ConfigErrors, ValuesOutsideTheirSet) {

@@ -756,11 +756,21 @@ private:
     // ---- exception types -------------------------------------------------------------------------------------------------
 
     // EXPECT_THROW(stmt, E): E is not a class to generate by itself -- it would
-    // need a base class the test does not state -- so it must come from somewhere.
+    // need a base class the test does not state -- so it must come from somewhere,
+    // unless the configuration says what the base of such a class is.
     void check_exception_types() {
+        const bool generate = !options_.config.exception_base.empty() && !options_.config.no_exceptions;
         for (const TypeUse& u : facts_.type_uses) {
             if (!u.from_throw_assertion || is_external_type(u.type)) continue;
-            if (find_class(u.type.name, u.type.scope, !u.type.scope.empty()) != kNone) continue;
+            const std::size_t found = find_class(u.type.name, u.type.scope, !u.type.scope.empty());
+            if (generate) {
+                const std::size_t ci = found != kNone ? found : class_for(u.type, u.ns, u.where);
+                note_first_use(classes_[ci].first_use, u.where);
+                if (!classes_[ci].thrown) classes_[ci].thrown_at = u.where;
+                classes_[ci].thrown = true;
+                continue;
+            }
+            if (found != kNone) continue;
             diag_.warning(core::code::unknown_type,
                           "the exception type '" + u.type.qualified() + "' is neither known nor generated; "
                           "declare it in a header the test includes (an exception class needs a base the test does not say)",

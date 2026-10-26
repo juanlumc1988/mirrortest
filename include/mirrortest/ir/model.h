@@ -144,6 +144,10 @@ struct Class {
     std::vector<std::string> ns;     // enclosing namespaces, outermost first
     bool                     is_struct = false;
     std::vector<BaseSpec>    bases;
+    // The bases whose constructors the class takes as its own (`using Base::Base;`), spelled as in `bases`.
+    std::vector<std::string> inherited_constructors;
+    // What concerns the class as a whole (why it has the base it has), as the TODO(mt) lines above its first member.
+    std::vector<std::string> notes;
     std::vector<Method>      methods;   // declaration order
     std::vector<Field>       fields;
     // Names of member types (nested class/struct/enum, typedef, using). Out

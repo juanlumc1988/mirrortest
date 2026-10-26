@@ -497,6 +497,11 @@ void Reader::read_root(const json& root, Config& c) {
         else if (key == "auto_policy")                 read_choice(v, key, kAutoPolicies, c.auto_policy);
         else if (key == "placeholder_type")            read_type(v, key, c.placeholder_type);
         else if (key == "string_literal_param")        read_type(v, key, c.string_literal_param);
+        else if (key == "exception_base") {
+            // Empty is the default said aloud: no exception class is generated.
+            if (v.is_string() && v.get<std::string>().empty()) c.exception_base.clear();
+            else read_type(v, key, c.exception_base);
+        }
         else if (key == "qt") {
             if (!v.is_number_integer() || (v.get<long long>() != 5 && v.get<long long>() != 6)) {
                 error(key_error(key, "must be 5 or 6"));

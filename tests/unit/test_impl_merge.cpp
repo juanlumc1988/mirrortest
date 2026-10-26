@@ -587,3 +587,50 @@ TEST(ImplMergeEnum, MergingTwiceChangesNothingTheSecondTime) {
     EXPECT_EQ(second.result->added_members, 0u);
     EXPECT_EQ(second.text(), first.text());
 }
+
+// ---- classes with a base (the exceptions a test expects) ---------------------------------------------------------------
+
+namespace {
+
+core::Config throwing() {
+    core::Config config;
+    config.exception_base = "std::runtime_error";
+    return config;
+}
+
+const char* kThrowsOnce =
+    "#include \"parse_error.h\"\n"
+    "TEST(S, N) {\n"
+    "    Parser parser;\n"
+    "    EXPECT_THROW(parser.parse(\"x\"), ParseError);\n"
+    "}\n";
+
+const char* kThrowsAndAsks =
+    "#include \"parse_error.h\"\n"
+    "TEST(S, N) {\n"
+    "    Parser parser;\n"
+    "    EXPECT_THROW(parser.parse(\"x\"), ParseError);\n"
+    "    ParseError error(3);\n"
+    "    EXPECT_EQ(error.code(), 3);\n"
+    "}\n";
+
+}  // namespace
+
+TEST(ImplMergeBases, TheInheritedConstructorsAreNotAMemberToAdd) {
+    const Files now = generate(kThrowsOnce, {"parse_error.h", "parser.h"}, throwing());
+    const Merged m = merge_header(now.at("parse_error.h"), now.at("parse_error.h"), "parse_error.h");
+    ASSERT_TRUE(m.result.has_value());
+    EXPECT_EQ(m.result->added_members, 0u);
+    EXPECT_EQ(m.text(), now.at("parse_error.h"));
+}
+
+TEST(ImplMergeBases, AMemberTheClassGainsIsAddedAndTheUsingDeclarationStaysOnce) {
+    const Files old = generate(kThrowsOnce, {"parse_error.h", "parser.h"}, throwing());
+    const Files now = generate(kThrowsAndAsks, {"parse_error.h", "parser.h"}, throwing());
+    const Merged m = merge_header(now.at("parse_error.h"), old.at("parse_error.h"), "parse_error.h");
+    ASSERT_TRUE(m.result.has_value());
+    EXPECT_EQ(m.result->added_members, 2u) << "the constructor of one argument and code()";
+    EXPECT_EQ(count(m.text(), "using std::runtime_error::runtime_error;"), 1u);
+    EXPECT_TRUE(contains(m.text(), "explicit ParseError(int arg1);"));
+    EXPECT_TRUE(contains(m.text(), "int code();"));
+}

@@ -134,6 +134,12 @@ struct Config {
     std::string string_literal_param = "const char*";
     int         qt                = 6;              // 5 or 6
 
+    // gen-impl: a type that only appears as the exception of EXPECT_THROW(stmt, E) is not a class
+    // the tool can generate by itself, for it needs a base the test does not state. With this set
+    // ("std::runtime_error") it is generated, deriving from it. Empty (the default): it must come
+    // from a header, or be reported.
+    std::string exception_base;
+
     // Applied last, and only to what was inferred (never to what the user
     // declared or annotated). Sorted by key: lookups only, never emission
     // order, so determinism does not depend on it.

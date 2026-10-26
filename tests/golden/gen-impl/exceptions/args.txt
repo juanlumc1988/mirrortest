@@ -1,0 +1,6 @@
+gen-impl
+${IN}/parser_test.cpp
+--config
+${IN}/mt.json
+--out
+${OUT}

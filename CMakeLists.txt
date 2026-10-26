@@ -193,7 +193,7 @@ if(MT_BUILD_TESTS)
     # the cases are fast and need no network; GoogleTest is the main build's.
     if(NOT MSVC)
         foreach(case basic_class fixture_members namespaces multi_class_includes no_exceptions
-                     mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums)
+                     mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums exceptions)
             set(mode throw)
             if(case STREQUAL "no_exceptions")
                 set(mode abort)

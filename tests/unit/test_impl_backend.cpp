@@ -1356,4 +1356,134 @@ TEST(ImplBackendEnums, ATestWithAnEnumIsGeneratedEndToEnd) {
     EXPECT_NE(header.find("    void set(Color arg1);"), std::string::npos);
 }
 
+// ---- classes with bases: the exceptions a test expects ---------------------------------------------------------------
+
+namespace {
+
+ir::Class thrown(const char* name, const char* base, std::vector<std::string> ns = {}) {
+    ir::Class c = klass(name, std::move(ns));
+    ir::BaseSpec b;
+    b.name = base;
+    c.bases.push_back(b);
+    c.inherited_constructors.push_back(base);
+    return c;
+}
+
+}  // namespace
+
+TEST(ImplBackendBases, TheHeadNamesTheBaseAndTheClassInheritsItsConstructors) {
+    ir::Model model;
+    model.classes = {thrown("ParseError", "std::runtime_error")};
+    const Generated g = build(model, with_headers({"parse_error.h"}));
+    EXPECT_EQ(class_heads(g.views[0].header_view), Strings{"class ParseError : public std::runtime_error {"});
+    EXPECT_EQ(member_lines(g.views[0].header_view, "class ParseError : public std::runtime_error {"),
+              Strings{"using std::runtime_error::runtime_error;"});
+}
+
+TEST(ImplBackendBases, TheIncludeOfTheBaseIsAnIncludeOfTheHeader) {
+    ir::Model model;
+    model.classes = {thrown("ParseError", "std::runtime_error"), thrown("Broken", "std::exception")};
+    const Generated g = build(model, with_headers({"errors.h"}));
+    EXPECT_EQ(includes_of(g.views[0].header_view), (Strings{"#include <exception>", "#include <stdexcept>"}));
+}
+
+TEST(ImplBackendBases, AHeaderOfClassesWithoutDefinitionsHasNoSource) {
+    ir::Model model;
+    model.classes = {thrown("ParseError", "std::runtime_error")};
+    const Generated g = build(model, with_headers({"parse_error.h"}));
+    EXPECT_TRUE(g.views[0].source_path.empty());
+}
+
+TEST(ImplBackendBases, EachBaseHasItsAccessAndMayBeVirtual) {
+    ir::Model model;
+    ir::Class c = klass("Wide");
+    ir::BaseSpec a;
+    a.name = "A";
+    ir::BaseSpec b;
+    b.name = "B";
+    b.access = ir::Access::Protected;
+    ir::BaseSpec d;
+    d.name = "ns::D";
+    d.access = ir::Access::Private;
+    d.is_virtual = true;
+    c.bases = {a, b, d};
+    model.classes = {c};
+    const Generated g = build(model, with_headers({"wide.h"}));
+    EXPECT_EQ(class_heads(g.views[0].header_view), Strings{"class Wide : public A, protected B, private virtual ns::D {"});
+}
+
+TEST(ImplBackendBases, TheNameOfTheInheritedConstructorIsTheLastOneWithoutTemplateArguments) {
+    ir::Model model;
+    ir::Class c = klass("Wide");
+    for (const char* base : {"Plain", "a::b::Scoped", "Box<int>", "ns::Box<std::map<int, int>>"}) {
+        ir::BaseSpec b;
+        b.name = base;
+        c.bases.push_back(b);
+        c.inherited_constructors.push_back(base);
+    }
+    model.classes = {c};
+    const Generated g = build(model, with_headers({"wide.h"}));
+    const Strings lines = member_lines(g.views[0].header_view,
+                                       "class Wide : public Plain, public a::b::Scoped, public Box<int>, public ns::Box<std::map<int, int>> {");
+    EXPECT_EQ(lines, (Strings{"using Plain::Plain;", "using a::b::Scoped::Scoped;", "using Box<int>::Box;", "using ns::Box<std::map<int, int>>::Box;"}));
+}
+
+TEST(ImplBackendBases, ThePlaceholderOfAClassOfOurOwnIsIncludedLikeAnyOther) {
+    // The base is a class of another generated header: its header is included, whole (a base is held by value).
+    ir::Model model;
+    ir::Class derived = klass("Derived");
+    ir::BaseSpec b;
+    b.name = "Base";
+    derived.bases.push_back(b);
+    model.classes = {klass("Base", {}, {method("run", "void")}), derived};
+    const Generated g = build(model, with_headers({"base.h", "derived.h"}));
+    EXPECT_EQ(includes_of(view_of(g, "derived.h")->header_view), Strings{"#include \"base.h\""});
+}
+
+TEST(ImplBackendBases, TheNotesOfTheClassGoAboveItsFirstMember) {
+    ir::Model model;
+    ir::Class c = thrown("ParseError", "std::runtime_error");
+    c.notes = {"why"};
+    model.classes = {c};
+    const Generated g = build(model, with_headers({"parse_error.h"}));
+    const nlohmann::json& members = g.views[0].header_view["sections"][0]["blocks"][0]["members"];
+    ASSERT_EQ(members.size(), 1u);
+    EXPECT_EQ(members[0]["notes"], nlohmann::json{"// TODO(mt): why"});
+}
+
+TEST(ImplBackendBases, TheNotesOfTheClassComeBeforeTheNotesOfItsFirstMember) {
+    ir::Model model;
+    ir::Class c = klass("Foo");
+    c.notes = {"about the class"};
+    ir::Method m = method("run", "void");
+    m.notes = {"about run"};
+    c.methods = {m};
+    model.classes = {c};
+    const Generated g = build(model, with_headers({"foo.h"}));
+    const nlohmann::json& members = g.views[0].header_view["sections"][0]["blocks"][0]["members"];
+    EXPECT_EQ(members[0]["notes"], (nlohmann::json{"// TODO(mt): about the class", "// TODO(mt): about run"}));
+}
+
+TEST(ImplBackendBases, ANoteOfAClassWithoutMembersHasNowhereToGo) {
+    ir::Model model;
+    ir::Class c = klass("Empty");
+    c.notes = {"never printed"};
+    model.classes = {c};
+    const Generated g = build(model, with_headers({"empty.h"}));
+    EXPECT_TRUE(g.views[0].header_view["sections"][0]["blocks"][0]["members"].empty());
+}
+
+TEST(ImplBackendBases, ATestThatExpectsExceptionsIsGeneratedEndToEnd) {
+    core::Config config;
+    config.exception_base = "std::runtime_error";
+    const FromTest r = from_test("#include <gtest/gtest.h>\nTEST(S, N) { Parser p; EXPECT_THROW(p.parse(\"x\"), ParseError); }\n", {"parser.h", "parse_error.h"}, config);
+    std::string header;
+    for (const core::OutputFile& f : r.plan.files) {
+        if (f.path.find("parse_error.h") != std::string::npos) header = f.content;
+    }
+    EXPECT_NE(header.find("class ParseError : public std::runtime_error {"), std::string::npos);
+    EXPECT_NE(header.find("    using std::runtime_error::runtime_error;\n"), std::string::npos);
+    EXPECT_NE(header.find("#include <stdexcept>\n"), std::string::npos);
+}
+
 }  // namespace

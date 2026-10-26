@@ -55,6 +55,8 @@ struct ClassTarget {
     std::vector<std::string> instantiations;   // `Box<int>`: "int"; distinct, in order of appearance
     ir::SourceLoc            first_use;
     std::string              header;           // `// @mt: class Foo header "acme/foo.h"`, or empty
+    bool                     thrown = false;   // named as the exception of EXPECT_THROW(stmt, Foo): derives from config.exception_base
+    ir::SourceLoc            thrown_at;        // the first such EXPECT_THROW
 
     // Indices into Classified::facts.
     std::vector<std::size_t> method_calls;     // obj.m(), including the pending calls found to be its own

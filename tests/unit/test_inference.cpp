@@ -1305,4 +1305,65 @@ TEST(InferenceEnums, EveryPrefixOfATestWithEnumsIsInferredWithoutIncident) {
     EXPECT_EQ(infer_text(text).model.enums.size(), 1u);
 }
 
+// ---- exception classes: EXPECT_THROW(stmt, E) ---------------------------------------------------------------------------------
+
+namespace {
+
+core::Config throwing(const char* base = "std::runtime_error") {
+    core::Config config;
+    config.exception_base = base;
+    return config;
+}
+
+}  // namespace
+
+TEST(InferenceExceptions, AThrownTypeDerivesFromTheConfiguredBaseAndInheritsItsConstructors) {
+    const Outcome o = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n", throwing());
+    const ir::Class& error = the_class(o, "ParseError");
+    ASSERT_EQ(error.bases.size(), 1u);
+    EXPECT_EQ(error.bases[0].name, "std::runtime_error");
+    EXPECT_EQ(error.bases[0].access, ir::Access::Public);
+    EXPECT_FALSE(error.bases[0].is_virtual);
+    EXPECT_EQ(error.inherited_constructors, std::vector<std::string>{"std::runtime_error"});
+    EXPECT_TRUE(error.methods.empty());
+    EXPECT_FALSE(error.is_struct);
+}
+
+TEST(InferenceExceptions, TheClassSaysWhyItHasTheBaseItHas) {
+    const Outcome o = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n", throwing("acme::Error"));
+    ASSERT_EQ(the_class(o, "ParseError").notes.size(), 1u);
+    EXPECT_EQ(the_class(o, "ParseError").notes[0],
+              "derives from 'acme::Error' because the test expects it to be thrown (t.cpp:4); exception_base says which base");
+}
+
+TEST(InferenceExceptions, ThatIsAllItHasWhenTheTestSaysNothingElseOfIt) {
+    const Outcome o = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n", throwing());
+    EXPECT_TRUE(the_class(o, "ParseError").methods.empty());
+    EXPECT_TRUE(the_class(o, "ParseError").fields.empty());
+}
+
+TEST(InferenceExceptions, AClassTheTestUsesAsWellKeepsItsMembers) {
+    const Outcome o = body("Parser parser;\nParseError error(3);\nEXPECT_EQ(error.code(), 3);\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n", throwing());
+    const ir::Class& error = the_class(o, "ParseError");
+    EXPECT_EQ(error.bases.size(), 1u);
+    EXPECT_NE(find_method(error, "code", 0), nullptr);
+    EXPECT_EQ(constructors(error).size(), 1u);
+}
+
+TEST(InferenceExceptions, WithoutAConfiguredBaseThereIsNoSuchClass) {
+    const Outcome o = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n");
+    EXPECT_EQ(o.model.classes.size(), 1u);
+    for (const ir::Class& c : o.model.classes) {
+        EXPECT_TRUE(c.bases.empty());
+        EXPECT_TRUE(c.notes.empty());
+    }
+}
+
+TEST(InferenceExceptions, ANormalClassHasNoBaseAndNoNote) {
+    const Outcome o = body("Parser parser;\nEXPECT_EQ(parser.size(), 3u);\n", throwing());
+    EXPECT_TRUE(the_class(o, "Parser").bases.empty());
+    EXPECT_TRUE(the_class(o, "Parser").inherited_constructors.empty());
+    EXPECT_TRUE(the_class(o, "Parser").notes.empty());
+}
+
 }  // namespace

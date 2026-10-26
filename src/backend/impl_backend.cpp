@@ -332,6 +332,9 @@ private:
     Needs scan(const Unit& unit) const {
         Needs needs;
         for (const ir::Class* c : unit.classes) {
+            for (const ir::BaseSpec& b : c->bases) {
+                for (const std::string& name : ir::mentioned_names(b.name)) note(name, unit, true, needs);   // a base is held by value
+            }
             for (const ir::Method& m : c->methods) {
                 if (!m.ret.empty()) note_types({&m.ret}, unit, false, needs);
                 for (const ir::Param& p : m.params) note_types({&p.type}, unit, false, needs);
@@ -375,15 +378,43 @@ private:
 
     // ---- one class, in the header and in the source -----------------------------------------------------
 
+    // `: public std::runtime_error`, or nothing for the class without bases.
+    static std::string base_clause(const ir::Class& c) {
+        std::string out;
+        for (const ir::BaseSpec& b : c.bases) {
+            out += out.empty() ? " : " : ", ";
+            out += b.access == ir::Access::Public ? "public " : b.access == ir::Access::Protected ? "protected " : "private ";
+            if (b.is_virtual) out += "virtual ";
+            out += b.name;
+        }
+        return out;
+    }
+
+    // `using std::runtime_error::runtime_error;`: the name of a class's constructor is its own, without
+    // the namespaces before it and the template arguments after.
+    static std::string inherit_constructors(const std::string& base) {
+        const std::string name = base.substr(0, base.find('<'));
+        const std::size_t sep = name.rfind("::");
+        return "using " + base + "::" + (sep == std::string::npos ? name : name.substr(sep + 2)) + ";";
+    }
+
     json class_block(const ir::Class& c) const {
         json members = json::array();
+        for (const std::string& base : c.inherited_constructors) members.push_back(member({}, inherit_constructors(base)));
         for (const ir::Method* m : ordered_methods(c)) members.push_back(member(m->notes, method_declaration(*m)));
         for (const ir::Field& f : c.fields) members.push_back(member(f.notes, field_declaration(f)));
+        if (!c.notes.empty() && !members.empty()) {
+            // What is true of the class as a whole goes above its first member.
+            json todo = json::array();
+            for (const std::string& n : c.notes) todo.push_back(todo_comment(n));
+            for (const json& own : members[0]["notes"]) todo.push_back(own);
+            members[0]["notes"] = todo;
+        }
 
         const std::string label = core::class_label(c.ns, c.name);
         json block;
         block["kind"] = "class";
-        block["head"] = std::string(c.is_struct ? "struct " : "class ") + c.name + " {";
+        block["head"] = std::string(c.is_struct ? "struct " : "class ") + c.name + base_clause(c) + " {";
         block["access"] = c.is_struct ? "" : "public:";
         block["begin"] = core::region_begin(label);
         block["end"] = core::region_end(label);

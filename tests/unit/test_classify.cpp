@@ -999,4 +999,81 @@ TEST(ClassifyEnums, AGeneratedEnumIsNeverAlsoAClassOfTheSameName) {
     for (const std::string& name : class_names(r)) EXPECT_NE(name, "Color");
 }
 
+// ---- exception types: EXPECT_THROW(stmt, E) -----------------------------------------------------------------------------------
+
+namespace {
+
+frontend::ClassifyOptions throwing(const char* base = "std::runtime_error") {
+    frontend::ClassifyOptions options;
+    options.config.exception_base = base;
+    return options;
+}
+
+}  // namespace
+
+TEST(ClassifyExceptions, ByDefaultATypeNobodyProvidesIsOnlyReported) {
+    const Outcome r = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n");
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Parser"});
+    EXPECT_EQ(warnings(r), std::vector<std::string>{"mt-unknown-type"});
+}
+
+TEST(ClassifyExceptions, WithABaseConfiguredItIsAClassThatIsThrown) {
+    const Outcome r = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n", "", throwing());
+    EXPECT_EQ(class_names(r), (std::vector<std::string>{"Parser", "ParseError"}));
+    EXPECT_FALSE(the_class(r, "Parser").thrown);
+    EXPECT_TRUE(the_class(r, "ParseError").thrown);
+    EXPECT_EQ(the_class(r, "ParseError").thrown_at.line, 5u);
+    EXPECT_EQ(the_class(r, "ParseError").first_use.line, 5u);
+    EXPECT_TRUE(warnings(r).empty());
+}
+
+TEST(ClassifyExceptions, TheFirstThrowIsWhereItIsSaidToHaveBeenThrown) {
+    const Outcome r = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\nEXPECT_THROW(parser.parse(\"y\"), ParseError);\n", "", throwing());
+    EXPECT_EQ(the_class(r, "ParseError").thrown_at.line, 5u);
+    EXPECT_EQ(the_class(r, "ParseError").constructions.size(), 0u);
+}
+
+TEST(ClassifyExceptions, AClassTheTestAlsoUsesIsThrownAsWell) {
+    const Outcome r = body("Parser parser;\nParseError error(3);\nEXPECT_EQ(error.code(), 3);\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n", "", throwing());
+    EXPECT_EQ(class_names(r), (std::vector<std::string>{"Parser", "ParseError"}));
+    EXPECT_TRUE(the_class(r, "ParseError").thrown);
+    EXPECT_EQ(the_class(r, "ParseError").constructions.size(), 1u);
+    EXPECT_EQ(the_class(r, "ParseError").first_use.line, 5u) << "still its first use, not the throw at line 7";
+    EXPECT_EQ(the_class(r, "ParseError").thrown_at.line, 7u);
+}
+
+TEST(ClassifyExceptions, TheNamespaceIsTheOneInTheNameOrTheTest) {
+    const Outcome qualified = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), acme::ParseError);\n", "", throwing());
+    EXPECT_EQ(class_names(qualified), (std::vector<std::string>{"Parser", "acme::ParseError"}));
+    const Outcome nearby = classify("#include <gtest/gtest.h>\nnamespace acme {\nTEST(S, N) { Parser p; EXPECT_THROW(p.parse(\"x\"), ParseError); }\n}\n", throwing());
+    EXPECT_EQ(class_names(nearby), (std::vector<std::string>{"acme::Parser", "acme::ParseError"}));
+}
+
+TEST(ClassifyExceptions, WhatSomebodyElseProvidesIsLeftAlone) {
+    const Outcome r = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), std::runtime_error);\nEXPECT_THROW(parser.parse(\"y\"), Local);\n"
+                           "EXPECT_THROW(parser.parse(\"z\"), Known);\nEXPECT_THROW(parser.parse(\"w\"), QException);\n",
+                           "struct Local {};\n", [] {
+                               frontend::ClassifyOptions o = throwing();
+                               o.known.push_back(header("class Known {};"));
+                               return o;
+                           }());
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Parser"});
+    EXPECT_TRUE(warnings(r).empty());
+}
+
+TEST(ClassifyExceptions, WithoutExceptionsThereIsNothingToThrow) {
+    frontend::ClassifyOptions options = throwing();
+    options.config.no_exceptions = true;
+    const Outcome r = body("Parser parser;\nEXPECT_THROW(parser.parse(\"x\"), ParseError);\n", "", options);
+    EXPECT_EQ(class_names(r), std::vector<std::string>{"Parser"});
+    EXPECT_EQ(warnings(r), std::vector<std::string>{"mt-unknown-type"});
+}
+
+TEST(ClassifyExceptions, EveryKindOfThrowAssertionNamesATypeToGenerate) {
+    const Outcome r = classify("#include <QtTest>\nclass T : public QObject { Q_OBJECT private slots: void s() {\n"
+                               "    Parser p;\n    QVERIFY_EXCEPTION_THROWN(p.parse(\"x\"), ParseError);\n    QVERIFY_THROWS_EXCEPTION(OtherError, p.parse(\"y\"));\n} };\n",
+                               throwing());
+    EXPECT_EQ(class_names(r), (std::vector<std::string>{"Parser", "ParseError", "OtherError"}));
+}
+
 }  // namespace
