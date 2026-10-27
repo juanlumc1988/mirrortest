@@ -7,6 +7,7 @@ project(mirrortest VERSION 0.1.0 LANGUAGES C CXX)
 option(MT_BUILD_TESTS "Build the unit, golden and round-trip tests" ON)
 option(MT_WERROR      "Treat warnings as errors" OFF)
 option(MT_WITH_YAML   "Read configuration files written in YAML (.yaml, .yml); needs yaml-cpp" ON)
+option(MT_BUILD_TOOLS "Build the development tools (tools/): the model dumper that tools/corpus.sh uses" OFF)
 option(MT_WITH_LIBCLANG "Add the libclang frontend for headers (--frontend libclang); needs libclang" OFF)
 
 # The generator itself is C++17 throughout. It runs on the development host,
@@ -116,6 +117,15 @@ mt_configure(mt_core)
 add_executable(mirrortest apps/cli/main.cpp)
 target_link_libraries(mirrortest PRIVATE mt_core)
 mt_configure(mirrortest)
+
+# ---- development tools -----------------------------------------------------
+
+if(MT_BUILD_TOOLS)
+    add_executable(mt_dump_model tools/mt_dump_model.cpp)
+    target_include_directories(mt_dump_model PRIVATE tests/unit)
+    target_link_libraries(mt_dump_model PRIVATE mt_core)
+    mt_configure(mt_dump_model)
+endif()
 
 # ---- tests -----------------------------------------------------------------
 
