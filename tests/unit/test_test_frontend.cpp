@@ -800,6 +800,31 @@ TEST(TestFrontendAssert, AnEqMatcherGivesTheTypeOfTheValueToWhatItIsComparedWith
     EXPECT_EQ(hint(method(r).use), "int");
 }
 
+TEST(TestFrontendAssert, EveryComparisonMatcherCallsItsOwnOperatorOfTheObjectItIsGivenTo) {
+    const Read r = body("Point a;\nPoint b;\n"
+                        "EXPECT_THAT(a, Eq(b));\nEXPECT_THAT(a, Ne(b));\nEXPECT_THAT(a, Lt(b));\n"
+                        "EXPECT_THAT(a, Le(b));\nASSERT_THAT(a, Gt(b));\nEXPECT_THAT(a, ::testing::Ge(b));\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Point::operator==", "Point::operator!=", "Point::operator<", "Point::operator<=",
+                                                           "Point::operator>", "Point::operator>="}));
+    for (const frontend::MethodCall& m : r.facts.method_calls) EXPECT_EQ(m.use.kind, UseKind::Condition);
+}
+
+TEST(TestFrontendAssert, AWideStringMatcherHintsWideCStrings) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), StrEq(L\"wide\"));\nEXPECT_THAT(foo.b(), StrEq(\"narrow\"));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(hint(method(r, 0).use), "const wchar_t*");
+    EXPECT_EQ(hint(method(r, 1).use), "const char*");
+}
+
+TEST(TestFrontendAssert, ABareMatcherThatIsNotACallIsNotRead) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), _);\nEXPECT_THAT(foo.b(), some_matcher);\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    for (std::size_t i = 0; i < 2; ++i) {
+        EXPECT_FALSE(method(r, i).use.hint.has_value()) << i;
+        EXPECT_EQ(method(r, i).use.matcher, "") << "no matcher to name";
+    }
+}
+
 TEST(TestFrontendAssert, StringMatchersHintCStringsOrStrings) {
     const Read r = body("Foo foo;\n"
                         "EXPECT_THAT(foo.a(), StrEq(\"x\"));\n"

@@ -172,6 +172,23 @@ fixes, each with a unit test made from the smallest header that showed it:
   macro such as `CMP_HELPER(LT, <)` at namespace scope had made GoogleTest's `gtest.h` an empty model behind a
   warning that read as a small thing).
 
+## Installing it, and the package
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMT_BUILD_TESTS=OFF
+cmake --build build
+cmake --install build --prefix /opt/mirrortest      # bin/mirrortest, share/doc/mirrortest/{LICENSE,README.md,docs/}
+tools/check_install.sh /opt/mirrortest build        # runs it, follows the links of the pages, looks for build paths
+(cd build && cpack -G TGZ)                          # build/mirrortest-<version>-<system>-<machine>.tar.gz
+```
+
+The program is one file: the templates are compiled in and the dependencies are linked in, so the install is the binary
+and the documentation, laid out as in the repository so that the links between the pages work. A build with
+`-DMT_WITH_LIBCLANG=ON` links the system's libclang as a shared library and keeps its directory in the binary's run
+path, so the installed program finds it where the build did. The check looks for the path of the build directory and of
+the source tree in every file of the install; a `Debug` or `RelWithDebInfo` binary carries them in its debug information,
+so a package is made from a `Release` build, as CI does (the `install and package` job; it publishes nothing).
+
 ## Conventions
 
 - Every source, CMake and workflow file starts with

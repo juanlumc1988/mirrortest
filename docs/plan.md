@@ -349,10 +349,10 @@ past twice its size, stop at what is solid and say so instead of widening it.
   holds the key; the keys written in the mapping win over the merged ones, and earlier mappings in a list win over later
   ones, as in YAML 1.1. A merge key whose value is not a mapping is an `mt-config` error with line and column. The reader of
   the JSON file is not touched. Unit tests for each rule, and the `config_yaml` golden case uses one (`design.md` 14).
-- [ ] **9.8** *(S, medium)* **Installing it.** `install()` rules for the binary, the licence and the user
-  documentation, a `cmake --install` check in CI that runs the installed `mirrortest --version`, and a CPack
-  tarball (`-G TGZ`) built by a CI job without publishing it. Done when: the install tree has no path from the
-  build tree in it, and `development.md` says how to install it.
+- [x] **9.8** *(S, medium)* **Installing it.** `install()` rules for the binary, the licence and the documentation (laid out as in the
+  repository, so that the links work), a CPack tarball (`-G TGZ`), `tools/check_install.sh` (the installed program runs, the
+  links between the pages lead to pages, no file holds a path of the build or the source tree), and a CI job `install and
+  package` that installs, packs, unpacks and checks, without publishing. `development.md` says how.
 
 ### Left out of phase 9, and why
 

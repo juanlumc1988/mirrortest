@@ -118,6 +118,21 @@ add_executable(mirrortest apps/cli/main.cpp)
 target_link_libraries(mirrortest PRIVATE mt_core)
 mt_configure(mirrortest)
 
+# ---- installing ------------------------------------------------------------
+
+# The binary has everything in it (the templates are compiled in, docs/templates.md), so the install is the program, the
+# licence and the documentation, laid out as in the repository so that the links between the pages work. Nothing of the
+# dependencies is installed: they are linked in. A build with libclang links the system's libclang shared, and keeps the
+# directory it was found in (a system one such as /usr/lib/llvm-18/lib, not the build tree) in the installed binary's
+# search path, since that directory is not one the loader looks in by itself.
+include(GNUInstallDirs)
+if(MT_WITH_LIBCLANG)
+    set_target_properties(mirrortest PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE)
+endif()
+install(TARGETS mirrortest RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(FILES LICENSE README.md DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+install(DIRECTORY docs DESTINATION "${CMAKE_INSTALL_DOCDIR}" FILES_MATCHING PATTERN "*.md")
+
 # ---- development tools -----------------------------------------------------
 
 if(MT_BUILD_TOOLS)
@@ -460,3 +475,15 @@ if(MT_BUILD_TESTS)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-tests/abstract/input")
     endif()
 endif()
+
+# ---- packaging -------------------------------------------------------------
+
+# `cpack -G TGZ` (or `cmake --build build --target package`) makes mirrortest-<version>-<system>-<machine>.tar.gz from the
+# install above. Publishing it is the owner's decision, not the build's.
+set(CPACK_GENERATOR "TGZ")
+set(CPACK_PACKAGE_NAME "mirrortest")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Bidirectional C++ test/code generator")
+set(CPACK_PACKAGE_FILE_NAME "mirrortest-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+include(CPack)

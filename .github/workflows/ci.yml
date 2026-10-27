@@ -147,6 +147,37 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # Installing it (plan 9.8): `cmake --install` leaves a tree in which the program runs and says its version, the
+  # documentation is there with its links, and no file holds the path of the build or of the source; and the package CPack
+  # makes from it is the same tree. Nothing is published: a release is the owner's decision.
+  install:
+    name: install and package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMT_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Install, run it, check the tree
+        run: |
+          cmake --install build --prefix "$RUNNER_TEMP/mirrortest"
+          "$RUNNER_TEMP/mirrortest/bin/mirrortest" --version
+          tools/check_install.sh "$RUNNER_TEMP/mirrortest" build
+
+      - name: Package (TGZ), unpack it, check it
+        run: |
+          (cd build && cpack -G TGZ)
+          mkdir "$RUNNER_TEMP/unpacked"
+          tar -xzf build/mirrortest-*.tar.gz -C "$RUNNER_TEMP/unpacked"
+          tools/check_install.sh "$RUNNER_TEMP"/unpacked/mirrortest-* build
+
   sanitizers:
     name: asan + ubsan
     runs-on: ubuntu-latest
