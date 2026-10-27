@@ -345,6 +345,21 @@ TEST(CodeFrontendRealHeaders, AnErrorInTheConditionOfAnIfIsNotAWarning) {
     EXPECT_TRUE(parse_warnings(crlf).empty()) << parse_warnings(crlf).front();
     EXPECT_NE(find_class(crlf, "B"), nullptr);
 
+    // Indented, as some projects write them.
+    const Read indented = read("#if 1\n"
+                               "class A { public: int x(); };\n"
+                               "  \t # elif HAS_INCLUDE(<optional>)\n"
+                               "class B { public: int y(); };\n"
+                               "#endif\n");
+    EXPECT_TRUE(parse_warnings(indented).empty()) << parse_warnings(indented).front();
+
+    // A directive is looked for within 4 KiB (so that a file of one long line is not a quadratic walk): a longer one
+    // is reported.
+    std::string long_directive = "#if 1\nclass A { public: int x(); };\n#elif 1";
+    for (int i = 0; i < 700; ++i) long_directive += " && 1 \\\n";
+    long_directive += " && HAS_INCLUDE(<optional>)\nclass B { public: int y(); };\n#endif\n";
+    EXPECT_FALSE(parse_warnings(read(long_directive)).empty());
+
     // An error in the branch is still one.
     const Read inside = read("#if 1\n"
                              "CMP_HELPER(LT, <)\n"
