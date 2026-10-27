@@ -121,7 +121,7 @@ mt_declare(googletest
 # whether it is built or not.
 mt_declare(yaml_cpp
     https://github.com/jbeder/yaml-cpp.git
-    0.8.0 f7320141120f720aecc4c32be25586e7da9eb978)
+    yaml-cpp-0.9.0 56e3bb550c91fd7005566f19c079cb7a503223cf)
 
 # ---- tree-sitter runtime + C++ grammar ------------------------------------
 
@@ -171,8 +171,6 @@ add_library(mt::inja ALIAS mt_inja)
 # ---- yaml-cpp (optional) ---------------------------------------------------
 
 if(MT_WITH_YAML)
-    # yaml-cpp 0.8.0 still asks for CMake 3.4, which CMake 4 no longer accepts.
-    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
     set(YAML_CPP_BUILD_TESTS   OFF CACHE INTERNAL "")
     set(YAML_CPP_BUILD_TOOLS   OFF CACHE INTERNAL "")
     set(YAML_CPP_BUILD_CONTRIB OFF CACHE INTERNAL "")

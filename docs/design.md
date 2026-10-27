@@ -2171,7 +2171,7 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
 ### 14.1 YAML
 
 A configuration whose name ends in `.yaml` or `.yml` (any case) is read as YAML (plan 8.4,
-`core/config_yaml.cpp`, option `MT_WITH_YAML`, on by default; it needs yaml-cpp 0.8.0, pinned by tag
+`core/config_yaml.cpp`, option `MT_WITH_YAML`, on by default; it needs yaml-cpp 0.9.0, pinned by tag
 and commit like the other dependencies). Any other name is JSON, as before. The keys, the values and
 the errors are exactly the JSON ones, because the document is **converted to JSON and handed to the
 same reader** (`apply_config_json`): there is one place that knows what a key is, and a YAML file

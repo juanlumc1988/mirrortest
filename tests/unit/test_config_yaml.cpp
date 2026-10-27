@@ -251,6 +251,50 @@ TEST(ConfigYaml, ValuesThatLookLikeOtherThingsStayStringsWhereAStringIsWanted) {
     EXPECT_EQ(only_message(apply_yaml("qt:\n")), "configuration key 'qt' must be 5 or 6") << "nor is nothing";
 }
 
+TEST(ConfigYaml, AnIntegerIsOptionalSignThenDigitsAndNothingElse) {
+    SKIP_WITHOUT_YAML();
+    // `clang_args` is a list of texts, so an integer in it is the error and anything else is the text itself.
+    for (const char* number : {"0", "9", "10", "90", "1234567890", "-0", "+9", "-90"}) {
+        EXPECT_FALSE(apply_yaml(std::string("clang_args: [") + number + "]\n").ok) << number << " is an integer";
+    }
+    for (const char* text : {"+", "+-5", "-+5", "--5", "++5", "5-", "5+", "1_000", "1e3", ".5", "0x1F", "-.5"}) {
+        const Applied a = apply_yaml(std::string("clang_args: [") + text + "]\n");
+        ASSERT_TRUE(a.ok) << text << ": " << all_messages(a);
+        ASSERT_EQ(a.config.clang_args.size(), 1u) << text;
+        EXPECT_EQ(a.config.clang_args[0], text) << "not an integer, so the text";
+    }
+}
+
+TEST(ConfigYaml, ADocumentOfExactlyTheLimitOfNodesIsReadAndOneMoreIsNot) {
+    SKIP_WITHOUT_YAML();
+    // The root mapping and the sequence are two nodes, each item one more: the limit is 100000.
+    const auto list_of = [](std::size_t items) {
+        std::string text = "by_value_types: [x";
+        text.reserve(items * 3 + 32);
+        for (std::size_t i = 1; i < items; ++i) text += ",x";
+        return text + "]\n";
+    };
+    const Applied at_limit = apply_yaml(list_of(99998));
+    EXPECT_TRUE(at_limit.ok) << all_messages(at_limit);
+    const Applied over = apply_yaml(list_of(99999));
+    EXPECT_FALSE(over.ok);
+    EXPECT_EQ(over.diagnostics.all().size(), 1u);
+    EXPECT_NE(all_messages(over).find("the document expands to more than 100000 nodes"), std::string::npos) << all_messages(over);
+}
+
+TEST(ConfigYaml, ADocumentNestedExactlyTheLimitDeepIsReadAndOneLevelMoreIsNot) {
+    SKIP_WITHOUT_YAML();
+    // The root mapping is level 0, the first sequence level 1: `x` inside k brackets is at level k + 1, and 64 is the deepest allowed.
+    // What is read is then the JSON reader's business (nested lists are not a list of types), which is a different error.
+    const auto nested = [](int brackets) { return "by_value_types: " + std::string(static_cast<std::size_t>(brackets), '[') + "x" +
+                                                  std::string(static_cast<std::size_t>(brackets), ']') + "\n"; };
+    const Applied at_limit = apply_yaml(nested(63));
+    EXPECT_EQ(all_messages(at_limit).find("levels deep"), std::string::npos) << all_messages(at_limit);
+    const Applied over = apply_yaml(nested(64));
+    EXPECT_FALSE(over.ok);
+    EXPECT_NE(all_messages(over).find("nested more than 64 levels deep"), std::string::npos) << all_messages(over);
+}
+
 TEST(ConfigYaml, ABlockScalarKeepsItsLines) {
     SKIP_WITHOUT_YAML();
     const Applied folded = apply_yaml("file_header: >\n  // one\n  // two\n");
