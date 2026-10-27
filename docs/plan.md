@@ -289,3 +289,80 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 - [x] **8.5** libclang frontend for headers behind `MT_WITH_LIBCLANG` (D1; design 6.7): `--frontend libclang`, `--clang-arg`;
   the same model as tree-sitter makes (`test_clang_frontend.cpp`, and every `gen-tests`/`gen-impl` golden run again with it:
   `GoldenWithLibclang`), plus what only a compiler knows (`libclang_ifdef`, `libclang_macros`); a CI job.
+
+---
+
+## Phase 9 — Robustness and coverage (defined, not started)
+
+What is left after phase 8 comes from three places: the places where the design says "a later phase"
+(§7.6 matchers, §9.1 free functions, §6.5 members under `#if`), the limits that the phase 8 review listed,
+and one thing nobody has done yet: run the tool on code that was not written for it. The tasks are ordered
+by usefulness for their size and risk, so that the first ones also find the bugs that the later ones would
+otherwise meet by accident. Size: **S** under a day of work, **M** a few days, **L** a week. If a task grows
+past twice its size, stop at what is solid and say so instead of widening it.
+
+- [ ] **9.1** *(M, high)* **Run it on real headers.** A development script (`tools/corpus.sh`, not part of the
+  build or of CI: the corpus is other people's code) runs `gen-tests` with both frontends over the public
+  headers of the dependencies already fetched into the build tree (CLI11, GoogleTest, inja, nlohmann/json,
+  yaml-cpp, tree-sitter) and over a sample of the standard library's. A first probe over the 26 headers of CLI11
+  found no crash or hang but different output from the two frontends for 5 of them, which is what this task is to
+  explain. Done when: no crash, hang (>60 s) or sanitizer report over the corpus with either frontend; every
+  `error` is either fixed (with a unit test made from the smallest header that shows it) or documented as a
+  limit in `design.md`; every difference between the two frontends is classified (a bug of one of them, or
+  something only a compiler knows); the script and the classification are described in `development.md`.
+- [ ] **9.2** *(S, high)* **libclang across versions.** The CI job builds and tests against a matrix of the libclang
+  versions that `apt` offers on the runner image, from the oldest the code is expected to support up to the newest
+  (`cmake/MtLibclang.cmake` already looks for 14 to 21). Phase 8 showed why: a later version than the one tried
+  locally keeps `alignas` in the extent of a declaration. Done when: the matrix is green, or the lowest
+  supported version is raised and written in `design.md` §6.7 and in the user documentation, with the reason.
+- [ ] **9.3** *(S, medium)* **Types written with parentheses.** `ir::type_from_spelling` stops analysing a
+  spelling that has parentheses, so `const decltype(x)&` has no base, no `const` and no reference; the
+  syntax-tree reader reads it right, and the two frontends differ (found while pinning the parity battery of
+  phase 8). `decltype(...)`, `typeof(...)` and `__typeof__(...)` are one word for the analysis; function-pointer
+  and array-reference types stay as they are. Done when: both frontends make the same model of the cases in
+  `kSnippets` that today are left out of the parity battery, and `ir/type` has unit tests for each form.
+- [ ] **9.4** *(M, medium)* **Matchers in `gen-impl`** (§7.6: "matchers: later phase"). `EXPECT_THAT(v, m)` gives
+  `v` the type its matcher implies when the matcher says it: `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge` with a literal
+  (the literal's type, as `EXPECT_EQ` does), `StrEq`, `StrNe`, `HasSubstr`, `StartsWith`, `EndsWith`
+  (`const char*`/string by the literal), `IsTrue`/`IsFalse` (`bool`), `IsNull`/`NotNull` (a pointer, which one is
+  not said), `DoubleEq`, `FloatEq`, `DoubleNear`, `FloatNear`, and `AllOf`/`AnyOf`/`Not` over those. Matchers over
+  containers (`ElementsAre`, `Contains`, `SizeIs`, `IsEmpty`) stay `mt-unknown-return`, with the matcher named in
+  the note. Done when: a golden case and a round trip for the scalar and the string matchers, unit tests of the
+  facts and of the inference, and the table in §7.6 says which matchers are read and which are not.
+- [ ] **9.5** *(L, high)* **Free functions in `gen-tests`** (§9.1: "an extension for a later phase"). Today a header's
+  free functions get one `mt-unsupported` note. They get tests: one suite per header (the stem of the header, as
+  `{stem}` in the naming rules) holding a test per function in its namespace, an overload set as one test per
+  overload, `static` and `inline` as they are, `extern "C"` blocks read, templates and operators noted as
+  they are for classes. Same planner and backends for GoogleTest and Qt Test, so the work is in the planner (a
+  plan without a class) and the naming. Design first: the file name and suite name rules go into §9.1 and §10
+  before the code. Done when: golden cases for both frameworks, a round trip that compiles and runs the generated
+  tests against the header's implementation, and the `mt-unsupported` note is gone from the free-function path.
+- [ ] **9.6** *(M, medium)* **Tests guarded like the members they test** (§6.5). Under the syntax-tree reader every
+  member under `#if` is tested, so the generated test compiles only in a configuration that declares it. The model
+  keeps the condition of each alternative (the text of the `#if`/`#ifdef` chain, outermost first), and the
+  backend wraps the test in the same `#if … #endif`, in both frameworks. The libclang frontend is unaffected (it
+  reads the branch that builds). Done when: the `ifdef_branches` golden shows the guards, and has a round trip
+  that compiles the generated test in each of the configurations; a member under `#else`/`#elif` is guarded by
+  the negation or the chain, never by a guess.
+- [ ] **9.7** *(S, low)* **YAML merge keys** (`<<: *base`). The converter merges a mapping, or a sequence of
+  mappings, into the one that holds the key; the keys written in the mapping win over the merged ones, and
+  earlier mappings in a sequence win over later ones, as in YAML 1.1. A merge key whose value is not a mapping is
+  an `mt-config` error with line and column. The reader of the JSON file is not touched. Done when: unit tests for
+  each rule above and the `config_yaml` golden case uses one.
+- [ ] **9.8** *(S, medium)* **Installing it.** `install()` rules for the binary, the licence and the user
+  documentation, a `cmake --install` check in CI that runs the installed `mirrortest --version`, and a CPack
+  tarball (`-G TGZ`) built by a CI job without publishing it. Done when: the install tree has no path from the
+  build tree in it, and `development.md` says how to install it.
+
+### Left out of phase 9, and why
+
+- **Publishing releases or binaries.** It acts outside the repository (a release page, an artifact someone
+  downloads); the owner decides if and where, and 9.8 only makes it possible.
+- **`mt_not_implemented.h` under `--overwrite merge`.** A file the test side is meant to edit (it installs the handler
+  there) is never overwritten: a changed one gets a `.new`. That is the safe behaviour, not a missing feature.
+- **The two limits of the syntax-tree reader** that libclang does not have (a comment inside a fundamental type,
+  an abstract declarator in a trailing return type). They are rare, `--frontend libclang` reads them right, and 9.1
+  will say if the corpus shows them often enough to change that.
+- **Windows and macOS builds.** Nothing in the project needs them yet, and each is a CI job to keep green.
+- **Matchers over containers** (9.4) and **templates and operators as free functions** (9.5): they need
+  decisions about which instantiation to test, which the design leaves to the configuration (`template_instantiations`, §9.1).
