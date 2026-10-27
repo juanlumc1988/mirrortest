@@ -356,7 +356,7 @@ TEST(CodeFrontendRealHeaders, AnErrorInTheConditionOfAnIfIsNotAWarning) {
     // Far from the start of the file.
     std::string padded;
     for (int i = 0; i < 100; ++i) padded += "// a comment that makes the directive start far from the beginning of the file\n";
-    padded += "#if 1\nclass A { public: int x(); };\n#elif HAS_INCLUDE(<optional>)\nclass B { public: int y(); };\n#endif\n";
+    padded += "#if defined(X) || \\\n    (HAS_INCLUDE(<any>) && LANG >= 201703L)\nclass A { public: int x(); };\n#endif\n";
     EXPECT_TRUE(parse_warnings(read(padded)).empty()) << parse_warnings(read(padded)).front();
 
     // A directive is looked for within 4 KiB (so that a file of one long line is not a quadratic walk): a longer one
