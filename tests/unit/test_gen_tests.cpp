@@ -199,6 +199,26 @@ TEST(GenTestsLibclang, TheIncludeDirectoriesAreRelativeToTheRunNotToTheProcess) 
     EXPECT_TRUE(exists(dir, "tests/user_test.cpp"));
 }
 
+TEST(GenTestsLibclang, AnIncludeNextToTheHeaderIsFoundWhateverTheProcessDirectoryIs) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "src/dep.h", "struct Dep { int v; };\n");
+    write_file(dir.path() / "src/user.h", "#include \"dep.h\"\nclass User {\npublic:\n    Dep get() const;\n};\n");
+    const Outcome r = gen_tests(dir, {"src/user.h", "--out", "tests", "--frontend", "libclang"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(contains(r.err, "file not found")) << r.err;
+    EXPECT_FALSE(contains(r.err, "warning")) << r.err;
+}
+
+TEST(GenTestsLibclang, CxxTwentyThreeIsTheStandardLibclangCallsTwentyThreeB) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "functor.h", "struct Functor {\n    static int operator()(int x);\n};\n");
+    const Outcome r = gen_tests(dir, {"functor.h", "--out", "tests", "--frontend", "libclang", "--std", "c++23"});
+    EXPECT_FALSE(contains(r.err, "[mt-parse]")) << r.err;
+    EXPECT_FALSE(contains(r.err, "invalid value")) << r.err;
+}
+
 TEST(GenTestsLibclang, TheCompileCommandsOfTheProjectGiveItsIncludeDirectoriesToo) {
     SKIP_WITHOUT_LIBCLANG();
     const TempDir dir;

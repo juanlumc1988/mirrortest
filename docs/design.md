@@ -400,8 +400,9 @@ What it is for: a header is code that compiles, and a compiler knows what a synt
 - **Types as written.** The model's rule is that the spelling is what the user wrote, so the types of
   parameters, fields and returns are read from the declaration's tokens, not from libclang's printing of the
   type, which would make `unsigned` into `unsigned int`, qualify names as the libclang at hand does and say `int`
-  for a type it does not know. (Only a declaration made by a macro, which has no text of its own, takes
-  libclang's spelling.) With that, the two readers make **the same model**, positions included, of what
+  for a type it does not know. (Only a declaration made by a macro, or one that starts with a macro invocation such
+  as an export macro, takes libclang's spelling: the text of the first has none of its own, and for the second
+  libclang tokenises from the attribute in the macro's definition, so the tokens are not the declaration's.) With that, the two readers make **the same model**, positions included, of what
   both can read: that is a test (`tests/unit/test_clang_frontend.cpp`) over a battery of headers, and the
   `GoldenWithLibclang` run of every `gen-tests` and `gen-impl` golden case (all but `ifdef_branches`, which
   differs on purpose). Qualifiers that are keywords (`virtual`, `explicit`, `override`, `noexcept`, `= delete`)

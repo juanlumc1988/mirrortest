@@ -192,6 +192,9 @@ public:
 
     void run() {
         report_diagnostics();
+        for (CXCursor c : children(clang_getTranslationUnitCursor(tu_))) {
+            if (clang_getCursorKind(c) == CXCursor_MacroExpansion && in_main_file(c)) macro_expansions_.push_back(span_of(c).begin);
+        }
         declarations(clang_getTranslationUnitCursor(tu_));
     }
 
@@ -312,14 +315,17 @@ private:
 
     // A declaration that comes out of a macro has no text of its own to read a type from: its first
     // token is written somewhere else than where it is expanded. (The location of the name is no help: for a
-    // parameter written in the macro's body libclang reports the expansion for both.)
-    static bool from_macro(CXCursor c) {
+    // parameter written in the macro's body libclang reports the expansion for both.) Nor has one that starts with a macro
+    // (`MYLIB_API int size() const;`): the macro may expand to an attribute, and then libclang tokenises the declaration
+    // from the attribute in the definition of the macro, so the tokens are everything from there to its end. What the
+    // macro expands to is for libclang to say, which is why an export macro needs no `ignore_macros`.
+    bool from_macro(CXCursor c) const {
         const CXSourceLocation where = clang_getRangeStart(clang_getCursorExtent(c));
         unsigned spelled = 0;
         unsigned expanded = 0;
         clang_getSpellingLocation(where, nullptr, nullptr, nullptr, &spelled);
         clang_getExpansionLocation(where, nullptr, nullptr, nullptr, &expanded);
-        return spelled != expanded;
+        return spelled != expanded || std::find(macro_expansions_.begin(), macro_expansions_.end(), expanded) != macro_expansions_.end();
     }
 
     ir::Type make(const std::string& spelling, CXSourceLocation where) const {
@@ -341,6 +347,21 @@ private:
             if (t[i].begin >= offset) return i;
         }
         return std::string::npos;
+    }
+
+    // Whether a parenthesis before the name (token `name_at`) opens a declarator, as in `void (*get())(int)`, and not a
+    // decltype, an attribute or an alignas, whose parentheses are part of a type that can be read as written.
+    static bool has_declarator_parentheses(const std::vector<Tok>& t, std::size_t name_at) {
+        for (std::size_t i = 0; i < name_at && i < t.size(); ++i) {
+            const std::string& x = t[i].text;
+            const bool own_parentheses = x == "decltype" || x == "typeof" || x == "__typeof__" || x == "__attribute__" || x == "alignas" || x == "__declspec";
+            if (own_parentheses && i + 1 < t.size() && t[i + 1].text == "(") {
+                i = closing(t, i + 1);
+            } else if (x == "(") {
+                return true;
+            }
+        }
+        return false;
     }
 
     // The type that tokens [from, to) spell once the words that only say how something is declared
@@ -418,7 +439,7 @@ private:
             const std::size_t name_at = index_at(t, name_offset(c));
             if (name_at != std::string::npos) {
                 // `void (*get())(int)` has its name inside its own type: that is for libclang to spell.
-                const bool nested = std::any_of(t.begin(), t.begin() + static_cast<std::ptrdiff_t>(name_at), [](const Tok& x) { return x.text == "("; });
+                const bool nested = has_declarator_parentheses(t, name_at);
                 const std::string written = nested ? std::string() : spelled(t, 0, name_at, std::string::npos);
                 if (!written.empty()) return make(written, where);
             }
@@ -951,6 +972,7 @@ private:
     ir::Model&                   model_;
     core::Diagnostics&           diagnostics_;
     std::vector<std::string>     ns_;
+    std::vector<unsigned>        macro_expansions_;   // where, in the text, a macro is used
 };
 
 }  // namespace

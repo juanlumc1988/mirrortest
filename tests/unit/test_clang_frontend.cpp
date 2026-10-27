@@ -105,6 +105,7 @@ private:
     long long big = 1;
     static const int kMax = 8;
     int braced{5};
+    int ternary = true ? 1 : 2;
     const char* text{"x"};
     double empty{};
 };)"},
@@ -127,7 +128,11 @@ bool operator!=(const Num& a, const Num& b);)"},
 class A {};
 class B : public A, protected base::Root, private virtual A {};
 struct C : A, virtual base::Root {};
-class D final : public base::Tpl<int> {};)"},
+class D final : public base::Tpl<int> {};
+class D2 : public A, base::Root {};
+class D3 : virtual A, base::Root {};
+struct D4 : private A, base::Root {};
+class D5 : public base::Tpl<base::Tpl<int>>, A {};)"},
     {"namespaces",
      R"(namespace outer {
 namespace inner {
@@ -168,7 +173,17 @@ template <typename T> struct Pair { T a; T b; };
 template <> class Box<char, 1> {};
 template <typename T> class Pair2 { public: void f(); };
 template <typename T> T identity(T v);
-template <typename... Ts> class Pack { public: void f(Ts... ts); };)"},
+template <typename... Ts> class Pack { public: void f(Ts... ts); };
+template <typename T = Pair<Pair<int>>> class Defaulted { public: T get() const; };
+class Counter {
+public:
+    template <typename U> unsigned count(U u) const;
+    template <typename U, typename V = Pair<Pair<int>>> unsigned long long total(U u, V v);
+    [[nodiscard]] unsigned checked() const;
+    [[nodiscard, deprecated("x")]] unsigned long both() const;
+    __attribute__((unused)) unsigned plain();
+    alignas(8) unsigned aligned_field;
+};)"},
     {"nested",
      R"(class Outer {
 public:
@@ -184,6 +199,18 @@ protected:
 private:
     class Impl { int x; };
 };)"},
+    {"nested_in_a_namespace",
+     R"(namespace n {
+class WithNested {
+public:
+    struct In { int a; };
+    class Deeper { public: struct Deepest {}; };
+};
+})"},
+    {"default_values",
+     R"(extern int x_;
+void assigned(decltype(x_ = 1) v = 3);
+void ternary(int a = x_ == 1 ? 2 : 3, int b = (x_ > 1) ? 4 : 5);)"},
     {"parameters",
      R"(struct V {};
 void many(int a = 3, const V& v = V(), int b = (1 + 2), const char* s = "x");
@@ -228,6 +255,17 @@ class Value {
     Q_DISABLE_COPY(Value)
 public:
     int v;
+};
+class Outer {
+public:
+    class Inner : public QObject {
+        Q_OBJECT
+    public:
+        Q_INVOKABLE int one() const;
+    signals:
+        void done();
+    };
+    int plain() const;
 };)"},
     {"includes",
      R"(#include <cstddef>
@@ -257,6 +295,10 @@ struct Fields {
     union { int i; float f; } bare_union;
     class { public: int c; } bare_class;
     enum { One, Two } bare_enum;
+};
+struct Deep {
+    struct { struct { int a; } in; int b; } outer;
+    int after;
 };)"},
     {"trailing_returns",
      R"(template <typename T> struct Vec {};
@@ -268,6 +310,7 @@ auto assigned() -> decltype(x_ = 1);
 auto decl(int a, const Vec<int>& v) -> decltype(x_);
 auto array_ref(int (&a)[4]) -> int (&)[4];
 auto expression() -> Arr<int, (4 > 2 ? 4 : 2)>;
+decltype(x_) leading_decltype(int a);
 struct B {
     virtual ~B();
     virtual auto over() -> int;
@@ -285,6 +328,7 @@ struct S : B {
     virtual auto dpure() -> decltype(x_ = 1) = 0;
     auto dover(int a) const & -> decltype(x_) override;
     static auto make(int n) -> decltype(x_);
+    static decltype(x_) from_decltype() noexcept;
     auto with_body(int n) const -> decltype(x_) { return x_ + n; }
 };)"},
     {"comments_inside_declarations",
@@ -325,14 +369,15 @@ TEST(ClangFrontendParity, TheUnsupportedConstructsAreReportedAsTreeSitterReports
     const char* text = R"(template <typename T> class Pair2 { public: void f(); };
 template <> class Pair2<char> {};
 template <typename T> class Pair2<T*> {};
+template <typename T> class Pair2<Pair2<T>> {};
 template <typename T> T identity(T v);
-class Base { public: Base(int); };
-class Derived : public Base { public: using Base::Base; };
+class Base { public: Base(int); void helper(); };
+class Derived : public Base { public: using Base::Base; using Base::helper; };
 )";
     const Read a = tree_sitter(text);
     const Read b = clang(text);
     EXPECT_EQ(messages(b, "mt-unsupported"), messages(a, "mt-unsupported"));
-    EXPECT_EQ(messages(a, "mt-unsupported").size(), 4u) << "and tree-sitter did say something about each";
+    EXPECT_EQ(messages(a, "mt-unsupported").size(), 5u) << "and tree-sitter did say something about each (not about the using of a method)";
     const std::vector<core::Diagnostic> from_tree_sitter = a.diagnostics.sorted();
     const std::vector<core::Diagnostic> from_clang = b.diagnostics.sorted();
     ASSERT_EQ(from_tree_sitter.size(), from_clang.size());
@@ -428,6 +473,115 @@ TEST(ClangFrontend, ACommentInsideAFundamentalTypeIsNotPartOfIt) {
     ASSERT_EQ(r.model.classes.size(), 1u);
     ASSERT_EQ(r.model.classes[0].fields.size(), 1u);
     EXPECT_EQ(r.model.classes[0].fields[0].type.spelling, "unsigned long");
+}
+
+TEST(ClangFrontend, ADeclarationThatStartsWithAnExportMacroIsReadByLibclangAndTakesNothingFromWhatPrecedesIt) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(#define API __attribute__((visibility("default")))
+class W {
+public:
+    static int a();
+    virtual int c();
+    API int b() const;
+    API int d();
+    API static int e();
+    API virtual int f() = 0;
+    explicit W(int);
+    API void g(unsigned n);
+};)";
+    const Read r = clang(text);
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    const std::vector<ir::Method>& m = r.model.classes[0].methods;
+    ASSERT_EQ(m.size(), 8u);
+    EXPECT_TRUE(m[0].is_static);
+    EXPECT_TRUE(m[1].is_virtual);
+    EXPECT_EQ(m[2].name, "b");
+    EXPECT_EQ(m[2].ret.spelling, "int");
+    EXPECT_TRUE(m[2].is_const);
+    EXPECT_FALSE(m[2].is_static) << "the static of a() is another declaration";
+    EXPECT_FALSE(m[2].is_virtual) << "and so is the virtual of c()";
+    EXPECT_EQ(m[3].name, "d");
+    EXPECT_FALSE(m[3].is_static);
+    EXPECT_FALSE(m[3].is_virtual);
+    EXPECT_TRUE(m[4].is_static);
+    EXPECT_TRUE(m[5].is_virtual);
+    EXPECT_TRUE(m[5].is_pure);
+    EXPECT_EQ(m[6].kind, ir::MethodKind::Constructor);
+    EXPECT_FALSE(m[6].is_static);
+    EXPECT_EQ(m[7].name, "g");
+    ASSERT_EQ(m[7].params.size(), 1u);
+    EXPECT_EQ(m[7].params[0].type.spelling, "unsigned");
+    EXPECT_TRUE(r.diagnostics.empty());
+}
+
+TEST(ClangFrontend, MembersDeclaredByAMacroKeepTheirQualifiers) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(#define VIRT(T, N) virtual T N() const noexcept;
+#define STAT(T, N) static T N();
+#define PURE(T, N) virtual T N() = 0;
+#define OVER(T, N) T N() override;
+#define FIN(T, N) T N() final;
+#define DEF(C) C() = default;
+#define NOTHROW(T, N) T N() throw();
+#define MAYBE(T, N) T N() noexcept(false);
+struct Base { virtual int over(); virtual int fin(); virtual ~Base() = default; };
+struct Macros : Base {
+    VIRT(int, v)
+    STAT(int, s)
+    PURE(int, p)
+    OVER(int, over)
+    FIN(int, fin)
+    DEF(Macros)
+    NOTHROW(int, nt)
+    MAYBE(int, may)
+};)";
+    const Read r = clang(text, {"-std=c++14"});
+    ASSERT_EQ(r.model.classes.size(), 2u);
+    const std::vector<ir::Method>& m = r.model.classes[1].methods;
+    ASSERT_EQ(m.size(), 8u);
+    EXPECT_EQ(m[0].name, "v");
+    EXPECT_TRUE(m[0].is_virtual);
+    EXPECT_TRUE(m[0].is_const);
+    EXPECT_TRUE(m[0].is_noexcept);
+    EXPECT_FALSE(m[0].is_static);
+    EXPECT_FALSE(m[0].is_pure);
+    EXPECT_FALSE(m[0].is_override);
+    EXPECT_FALSE(m[0].is_final);
+    EXPECT_FALSE(m[0].is_defaulted);
+    EXPECT_EQ(m[1].name, "s");
+    EXPECT_TRUE(m[1].is_static);
+    EXPECT_FALSE(m[1].is_virtual);
+    EXPECT_FALSE(m[1].is_const);
+    EXPECT_FALSE(m[1].is_noexcept);
+    EXPECT_EQ(m[2].name, "p");
+    EXPECT_TRUE(m[2].is_virtual);
+    EXPECT_TRUE(m[2].is_pure);
+    EXPECT_EQ(m[3].name, "over");
+    EXPECT_TRUE(m[3].is_override);
+    EXPECT_FALSE(m[3].is_final);
+    EXPECT_EQ(m[4].name, "fin");
+    EXPECT_TRUE(m[4].is_final);
+    EXPECT_FALSE(m[4].is_override);
+    EXPECT_EQ(m[5].kind, ir::MethodKind::Constructor);
+    EXPECT_TRUE(m[5].is_defaulted);
+    EXPECT_EQ(m[6].name, "nt");
+    EXPECT_FALSE(m[6].is_noexcept) << "throw() is a dynamic specification, which neither reader calls noexcept";
+    EXPECT_EQ(m[7].name, "may");
+    EXPECT_FALSE(m[7].is_noexcept) << "noexcept(false) is not";
+}
+
+TEST(ClangFrontend, TheLocationOfAParseWarningIsThatOfTheHeaderAsGivenNotOfTheAbsolutePathItWasOpenedAs) {
+    SKIP_WITHOUT_LIBCLANG();
+    frontend::ClangOptions options;
+    options.arguments = {"-std=c++17"};
+    options.absolute_path = "/some/directory/t.h";
+    Read r;
+    r.model = frontend::read_header_clang({"t.h", "class A {\npublic:\n    Mystery get() const;\n};\n"}, "acme/t.h", {}, options, r.diagnostics);
+    const std::vector<core::Diagnostic> all = r.diagnostics.all();
+    ASSERT_FALSE(all.empty());
+    EXPECT_EQ(all[0].where.file, "t.h");
+    EXPECT_EQ(all[0].where.line, 3u);
+    EXPECT_EQ(all[0].where.column, 5u);
 }
 
 TEST(ClangFrontend, AFunctionThatReturnsAFunctionPointerHasItsOwnParametersOnly) {
