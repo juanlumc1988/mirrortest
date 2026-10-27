@@ -170,7 +170,13 @@ TEST(TestPlannerPlan, AClassWithNothingPublicIsANote) {
 
 TEST(TestPlannerPlan, NothingToPlanIsNothing) {
     EXPECT_TRUE(plan("").plans.empty());
-    EXPECT_TRUE(plan("int free_function(int);").plans.empty());
+    EXPECT_TRUE(plan("namespace empty_ns {}\nenum class OnlyAnEnum { A };\nextern int a_variable;\n").plans.empty());
+}
+
+TEST(TestPlannerPlan, AFreeFunctionIsPlannedIntoTheFileOfItsHeader) {
+    const Planned p = plan("int free_function(int);");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(p.plans[0].file, "foo_functions_test.cpp");
 }
 
 // ---- a method ------------------------------------------------------------------------------------------------------------
@@ -1893,5 +1899,108 @@ TEST(TestPlannerGuards, ANestedClassIsUnderTheConditionsOfTheClassAroundItAndIts
             EXPECT_TRUE(c.guards.empty());
         }
     }
+}
+
+// ---- the free functions of a header (plan 9.5) --------------------------------------------------------------------------
+
+TEST(TestPlannerFunctions, TheFunctionsOfAHeaderAreOneFileNamedAfterTheHeaderAndASuiteForEachNamespace) {
+    const Planned p = plan("namespace acme { int clamp(int lo, int hi, int x); namespace detail { unsigned sum(unsigned a); } }\n"
+                           "int global_count();\n",
+                           {}, "acme/util.h");
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(p.plans[0].file, "util_functions_test.cpp");
+    ASSERT_EQ(p.plans[0].suites.size(), 3u);
+    EXPECT_EQ(p.plans[0].suites[0].ns, (std::vector<std::string>{"acme"}));
+    EXPECT_EQ(p.plans[0].suites[1].ns, (std::vector<std::string>{"acme", "detail"}));
+    EXPECT_TRUE(p.plans[0].suites[2].ns.empty());
+    for (const ir::TestSuite& s : p.plans[0].suites) {
+        EXPECT_EQ(s.name, "UtilFunctionsTest");
+        EXPECT_EQ(s.target_class, "UtilFunctions");
+        EXPECT_FALSE(s.fixture.has_value());
+    }
+    EXPECT_EQ(p.plans[0].includes.back().path, "acme/util.h");
+    EXPECT_TRUE(p.diagnostics.all().empty());
+}
+
+TEST(TestPlannerFunctions, TheFileOfTheFunctionsIsNotTheFileOfAClassOfTheSameName) {
+    const Planned p = plan("class Util { public: void run(); };\nint helper(int v);\n", {}, "util.h");
+    ASSERT_EQ(p.plans.size(), 2u);
+    EXPECT_EQ(p.plans[0].file, "util_test.cpp");
+    EXPECT_EQ(p.plans[1].file, "util_functions_test.cpp");
+    EXPECT_EQ(p.plans[1].suites[0].name, "UtilFunctionsTest");
+}
+
+TEST(TestPlannerFunctions, QtTestAndAnAwkwardHeaderName) {
+    const Planned p = plan_qt("namespace n { int f(int v); }\n");
+    EXPECT_EQ(p.plans.at(0).file, "tst_foo_functions.cpp");
+    EXPECT_EQ(suite(p).name, "TestFooFunctions");
+
+    const Planned q = plan("int f(int v);\n", {}, "include/my-util.hpp");
+    EXPECT_EQ(q.plans.at(0).file, "my_util_functions_test.cpp");
+    EXPECT_EQ(suite(q).name, "MyUtilFunctionsTest");
+}
+
+TEST(TestPlannerFunctions, ACaseCallsTheFunctionQualifiedAndChecksWhatItDeclares) {
+    const Planned p = plan("namespace acme {\nint clamp(int lo, int hi, int x);\nvoid reset() noexcept;\nstd::string join(const std::string& a, const std::string& b = \",\");\n}\nvoid beep();\n");
+    EXPECT_EQ(body(p, "clamp"), (Lines{"placeholder: TODO(mt): write the test for acme::clamp(int, int, int)", "blank", "// Arrange", "int lo{};", "int hi{};",
+                                       "int x{};", "// Act", "const int result = acme::clamp(lo, hi, x);", "(void)result;", "// Assert",
+                                       "// TODO(mt): compare result with the expected value"}));
+    EXPECT_EQ(body(p, "reset"), (Lines{"placeholder: TODO(mt): write the test for acme::reset()", "blank", "// Arrange", "// Act", "acme::reset();", "// Assert",
+                                       "static_assert(noexcept(acme::reset()), \"acme::reset() is declared noexcept\")", "// TODO(mt): check the effect of the call"}));
+    const Lines join = body(p, "join");
+    EXPECT_NE(std::find(join.begin(), join.end(), "// TODO(mt): the arguments that have default values are left out"), join.end());
+    EXPECT_NE(std::find(join.begin(), join.end(), "const std::string result = acme::join(a);"), join.end());
+    const ir::TestPlan& plan_of_functions = p.plans.at(0);
+    ASSERT_EQ(plan_of_functions.suites.size(), 2u);
+    EXPECT_EQ(plan_of_functions.suites[1].cases.at(0).name, "beep");
+}
+
+TEST(TestPlannerFunctions, AnOperatorIsCalledAsTheFunctionItIsAndOverloadsAreToldApart) {
+    const Planned p = plan("namespace acme {\nbool operator==(const std::string& a, int b);\nint add(int a, int b);\ndouble add(double a, double b);\n}\n");
+    EXPECT_EQ(case_names(p), (std::vector<std::string>{"OperatorEq", "add_int_int", "add_double_double"}));
+    const Lines op = body(p, "OperatorEq");
+    EXPECT_NE(std::find(op.begin(), op.end(), "const bool result = acme::operator==(a, b);"), op.end());
+}
+
+TEST(TestPlannerFunctions, ADeclarationRepeatedIsOneFunctionAndItsConditionsGoOrStay) {
+    const Planned p = plan("int f(int v);\nint f(int v);\n"
+                           "#ifdef X\nint g(int v);\n#else\nint g(int v);\n#endif\n"
+                           "#ifdef Y\nint h(int v);\n#endif\nint h(int v);\n"
+                           "#ifdef Z\nint k(int v);\nint k(int v);\n#endif\n");
+    EXPECT_EQ(case_names(p), (std::vector<std::string>{"f", "g", "h", "k"}));
+    EXPECT_TRUE(the_case(p, "f").guards.empty());
+    EXPECT_TRUE(the_case(p, "g").guards.empty()) << "it is there whichever branch is taken";
+    EXPECT_TRUE(the_case(p, "h").guards.empty());
+    EXPECT_EQ(the_case(p, "k").guards, (std::vector<std::string>{"defined(Z)"}));
+}
+
+TEST(TestPlannerFunctions, AFunctionTemplateIsNotPlannedAndAHeaderOfNothingElseHasNoFunctionsFile) {
+    const Planned p = plan("template <typename T> T identity(T v);\n");
+    EXPECT_TRUE(p.plans.empty());
+}
+
+TEST(TestPlannerFunctions, TheFixtureOfTheConfigurationHasNothingToOwnHere) {
+    core::Config config;
+    config.gtest.fixture = true;
+    const Planned p = plan("int f(int v);\n", config);
+    EXPECT_FALSE(suite(p).fixture.has_value());
+    EXPECT_EQ(body(p, "f").at(0), "placeholder: TODO(mt): write the test for f(int)");
+}
+
+TEST(TestPlannerFunctions, ACaseOverATableOfArgumentsIsOneToo) {
+    core::Config config;
+    config.gtest.parameterised = true;
+    const Planned p = plan("namespace acme { int clamp(int lo, int hi, int x); }\n", config);
+    const ir::TestCase& c = the_case(p, "clamp");
+    ASSERT_TRUE(c.data.has_value());
+    ASSERT_EQ(c.data->columns.size(), 3u);
+    EXPECT_EQ(c.data->columns[0].name, "lo");
+}
+
+TEST(TestPlannerFunctions, AnArgumentThatCannotBeBuiltCommentsTheCallOutAsForAMethod) {
+    const Planned p = plan("struct Handle { Handle(int); };\nvoid use(Handle h);\n");
+    ASSERT_EQ(p.plans.size(), 2u);
+    const Lines use = body(p, "use", 1);
+    EXPECT_NE(std::find(use.begin(), use.end(), "// ::use(h);"), use.end());
 }
 

@@ -1265,6 +1265,10 @@ TEST(CodeFrontendGuards, TheGuardOfTheHeaderAgainstBeingIncludedTwiceIsNoConditi
     const Read other = read("#ifndef A_H\n#define B_H\nclass A { public: void a(); };\n#endif\n#ifndef C\nclass C { public: void c(); };\n#endif\n");
     EXPECT_EQ(the_class(other, "A").guards, (Guards{"!defined(A_H)"}));
     EXPECT_EQ(the_class(other, "C").guards, (Guards{"!defined(C)"}));
+
+    // Nor is an `#ifdef` whose first line defines the macro it tests: only `#ifndef` guards a header.
+    const Read ifdef = read("#ifdef A_H\n#define A_H\nclass A { public: void a(); };\n#endif\n");
+    EXPECT_EQ(the_class(ifdef, "A").guards, (Guards{"defined(A_H)"}));
 }
 
 TEST(CodeFrontendGuards, AClassUnderAnIfIsUnderItAndItsMembersAreOnlyUnderWhatIsInsideIt) {

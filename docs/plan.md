@@ -330,14 +330,15 @@ past twice its size, stop at what is solid and say so instead of widening it.
   over those. Matchers over containers stay `mt-unknown-return`, now with the matcher named. Golden cases `matchers` (with a
   round trip that compiles the stubs and the test against gmock and requires every test red) and `matchers_unknown`; unit
   tests of the facts; the table is in §7.6.
-- [ ] **9.5** *(L, high)* **Free functions in `gen-tests`** (§9.1: "an extension for a later phase"). Today a header's
-  free functions get one `mt-unsupported` note. They get tests: one suite per header (the stem of the header, as
-  `{stem}` in the naming rules) holding a test per function in its namespace, an overload set as one test per
-  overload, `static` and `inline` as they are, `extern "C"` blocks read, templates and operators noted as
-  they are for classes. Same planner and backends for GoogleTest and Qt Test, so the work is in the planner (a
-  plan without a class) and the naming. Design first: the file name and suite name rules go into §9.1 and §10
-  before the code. Done when: golden cases for both frameworks, a round trip that compiles and runs the generated
-  tests against the header's implementation, and the `mt-unsupported` note is gone from the free-function path.
+- [x] **9.5** *(L, high)* **Free functions in `gen-tests`** (§9.1). A header's free functions get tests: one file for the header
+  (`util.h` gives `util_functions_test.cpp` and `UtilFunctionsTest`, `tst_util_functions.cpp` and `TestUtilFunctions` for Qt Test:
+  a name of its own, so that it cannot be the file of a class `Util`), a suite for each namespace, a test for each function
+  (an overload set as one test per overload), the call qualified, `noexcept` asserted, an operator called as a function,
+  a function declared twice one function, `static`, `inline` and `extern "C"` read as they are, the conditions of 9.6 on
+  a function under `#if`; function templates stay `mt-unsupported`. The same planner and backends as for a method of a class:
+  a case is the one of a `static` method without the class. Design first (§9.1 and §10), then the golden cases
+  `free_functions` (GoogleTest) and `qt_free_functions`, a round trip that builds, links and runs the tests against an
+  implementation of the header for both frameworks, unit tests of the planner; the note that said they were not tested is gone.
 - [x] **9.6** *(M, medium)* **Tests guarded like the members they test** (§6.5). Under the syntax-tree reader every member under `#if`
   was tested, so the generated test compiled only in a configuration that declares it. The model keeps the condition of
   each branch (`#if`/`#elif` as written, `defined(X)`, `!defined(X)`, and for the branches after the first the negation of the

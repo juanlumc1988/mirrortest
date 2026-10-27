@@ -529,6 +529,14 @@ called after it (`FooTest`). Overloads are told apart by their types
 (`set_int`, `set_std_string`), operators have names (`OperatorEq`,
 `ConversionToBool`).
 
+The free functions of a header are tested in one more file, named after the header and not after a class: `util.h` gives
+`util_functions_test.cpp` with the suite `UtilFunctionsTest` (`tst_util_functions.cpp` and `TestUtilFunctions` for Qt Test), so it
+never takes the file of a class called `Util`. A suite for each namespace that has functions, a test for each function, named
+as the tests of methods are; the call is qualified (`acme::clamp(lo, hi, x)`, `::beep()` in the global namespace), a
+`noexcept` function gets its `static_assert`, an operator is called as a function (`acme::operator==(a, b)`), and a function
+declared twice is one. `static`, `inline` and `extern "C"` functions are functions like the others; function templates are
+reported and left out. The naming patterns apply with `{stem}` = `util_functions` and `{Class}` = `UtilFunctions`.
+
 Every test starts with `FAIL() << "TODO(mt): write the test for ..."` (with
 `--placeholder skip`, `GTEST_SKIP()`), so a skeleton is red until somebody writes
 it. What follows the placeholder is **compiled but never run**: it builds the
@@ -702,8 +710,7 @@ be a function Qt Test calls by itself, so its test is a slot with `_call` after
 the name (`init_call`).
 
 Not tested, and why: signals; deleted, protected and private members; inherited members (see Inheritance and refused copies); member
-templates, and class templates you do not list in `template_instantiations`; free functions (the
-run prints a note). A member declared under `#if` has its test under the same `#if`
+templates, and class templates you do not list in `template_instantiations`, and function templates. A member declared under `#if` has its test under the same `#if`
 (`#if defined(USE_DMA)` … `#endif`; in the `#else` of it `#if !(defined(USE_DMA))`), so the tests build in every configuration
 and a configuration has the tests of the members it declares; a class under `#if` has all its tests under it, and the
 `#ifndef X_H` / `#define X_H` that guards a header against being included twice is no condition. The conditions

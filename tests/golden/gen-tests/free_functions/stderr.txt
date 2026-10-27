@@ -1,1 +1,2 @@
-in/math.h:1:5: note: 2 free function(s) in this header get no tests: gen-tests covers classes (docs/design.md, section 9.1) [mt-unsupported]
+in/math.h:16:25: warning: function template 'identity' is not supported and is skipped [mt-unsupported]
+created out/math_functions_test.cpp

@@ -332,6 +332,7 @@ private:
             f.is_noexcept = traits.is_noexcept;
             f.header = header_;
             f.where = syntax::location(d.name_node, file_);
+            f.guards = inner_guards();
             model_.functions.push_back(std::move(f));
         }
     }

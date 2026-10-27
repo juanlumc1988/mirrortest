@@ -201,6 +201,7 @@ struct Function {
     Origin                   origin = Origin::Declared;
     SourceLoc                where;
     std::vector<std::string> notes;
+    std::vector<std::string> guards;   // the `#if` conditions the function is under, as for Method::guards
 };
 
 struct Enum {

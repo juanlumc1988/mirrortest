@@ -1492,6 +1492,23 @@ compile or link: every function is `inline` and the handler is a function-local 
   - The test includes the header only; a template has no definitions to link, so
     its members must be in the header. Member templates are skipped as for any
     class.
+- **The free functions of a header are tested too** (plan 9.5), in a file of their own. The functions are one more "class" to
+  the naming rules, called after the header and not after anything in it, so that it cannot be the file of a class that
+  the header holds: `{stem}` is the `snake_case` of the header's file name and `_functions`, and `{Class}` the file name in
+  camel case and `Functions` (`util.h` gives `util_functions_test.cpp` and `UtilFunctionsTest`; for Qt Test
+  `tst_util_functions.cpp` and `TestUtilFunctions`; `my-util.hpp`, `MyUtilFunctions`). One suite for each namespace that
+  has functions, in the order they first appear, emitted in that namespace; one case for each function, named as the case
+  of a method is (`test_base_name`, and the parameter types when the name repeats, unique over the file). A case is the
+  one of a `static` method without the class: the arguments as locals, the call, `const R result`, the `noexcept`
+  `static_assert` of a function declared so, the placeholder first. The call is qualified, `acme::clamp(lo, x)` and
+  `::clamp(lo, x)` for the global namespace, so that a local with the name of the function cannot hide it, and an
+  operator is called as the function it is (`acme::operator==(a, b)`). There is no fixture and no object under test:
+  `gtest.fixture` has nothing to own; tables of arguments (`gtest.parameterised`, `qtest.data_driven`) and mocks as
+  arguments (`gtest.mocks`) work as for a method. A function declared twice (a prototype and the definition, or in the
+  two branches of an `#if`) is one, under no condition if the declarations differ in theirs (§6.5). A function template
+  is not in the model and keeps its `mt-unsupported` warning; a `static` or `inline` function, and the ones of an
+  `extern "C"` block, are functions like the rest. A Qt Test file with the functions of more than one namespace has
+  more than one test class and the warning that goes with that.
 - **A derived class gets an `Inherits` case** (plan 7.2), the first of its suite:
   one `static_assert(std::is_base_of<Base, Derived>::value, "…")` for each direct
   base, in the order of the base clause, with the base as written (`Counted<int>`,
@@ -1567,15 +1584,11 @@ compile or link: every function is `inline` and the handler is a function-local 
   and no plan. Those and the template warnings are the only diagnostics the planner emits: what
   a header cannot give the skeleton is said in the skeleton itself, as a
   `TODO(mt)`.
-- **Members under `#if`** (§6.5) are all tested, as if each existed: the
-  generated test compiles only in a configuration that declares the member it
-  calls. Guarding the test with the same condition is a possible extension; the
-  `ifdef_branches` golden documents the current behaviour and has no round
-  trip for that reason.
-- **Free functions get no tests** (gen-tests covers classes). `gen-tests` says so
-  with one `mt-unsupported` note per header, located at the first function and
-  counting them; they are an extension for a later phase, not an omission by
-  accident.
+- **Members under `#if`** (§6.5) are all tested, each under the condition of its branch,
+  so the generated tests build in every configuration of the header; the
+  `ifdef_branches` golden has a round trip that builds them in six.
+- **Free functions** have their tests in a file of their own (§9.1, plan 9.5); a function
+  template is skipped with its `mt-unsupported` warning, as before.
 - One `ir::TestPlan` per class: the file is `config.naming.gtest_file` expanded
   with the class (`{stem}` = its `snake_case`), the suite lives in the class's
   namespace.
@@ -1938,6 +1951,9 @@ Implemented in `core/output.h` (`OutputPlan`: the plan, as data) and
   renames (practically impossible after the temporaries were written) can leave
   some earlier files in place. When overwriting, the file's permissions are
   kept.
+- The functions of a header are written to the file of the header's name and `_functions` (§9.1), which is one file for the
+  header however many namespaces they are in, so it cannot take the name of a class's file; two headers of one run with the
+  same stem still collide, and are reported as any two plans that write one path are.
 - `--dry-run`: does not write and fills `FileResult::diff` (a unified diff, 3
   lines of context, `--- a/…` / `+++ b/…`) for each changed file: for a
   `WriteNew` it is the diff against the file itself; for a `Merge`, against the
