@@ -289,3 +289,82 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 - [x] **8.5** libclang frontend for headers behind `MT_WITH_LIBCLANG` (D1; design 6.7): `--frontend libclang`, `--clang-arg`;
   the same model as tree-sitter makes (`test_clang_frontend.cpp`, and every `gen-tests`/`gen-impl` golden run again with it:
   `GoldenWithLibclang`), plus what only a compiler knows (`libclang_ifdef`, `libclang_macros`); a CI job.
+
+---
+
+## Phase 9 — Robustness and coverage (defined, not started)
+
+What is left after phase 8 comes from three places: the places where the design says "a later phase"
+(§7.6 matchers, §9.1 free functions, §6.5 members under `#if`), the limits that the phase 8 review listed,
+and one thing nobody has done yet: run the tool on code that was not written for it. The tasks are ordered
+by usefulness for their size and risk, so that the first ones also find the bugs that the later ones would
+otherwise meet by accident. Size: **S** under a day of work, **M** a few days, **L** a week. If a task grows
+past twice its size, stop at what is solid and say so instead of widening it.
+
+- [x] **9.1** *(M, high)* **Run it on real headers.** `tools/corpus.sh` (a development script, not part of the build
+  or of CI: the corpus is other people's code) runs `gen-tests` with both frontends over the public headers of the
+  dependencies already fetched into the build tree (CLI11, GoogleTest and GoogleMock, inja, nlohmann/json, yaml-cpp,
+  tree-sitter) and a sample of libstdc++'s, compares the models with `mt_dump_model` (`-DMT_BUILD_TOOLS=ON`), and runs
+  `gen-impl` over the tests of GoogleTest and GoogleMock. 200 headers and 75 test files, with the address and
+  undefined-behaviour sanitizers: no crash, hang or sanitizer report and no `error`. The defects of the two
+  readers that it found were fixed, each with a unit test made from the smallest header that showed it; the limits that
+  stay are in `design.md` 6.6, and every difference between the frontends is classified in `development.md` ("Running it on code
+  that was not written for it").
+- [x] **9.2** *(S, high)* **libclang across versions.** The CI job builds and tests against a matrix of the libclang
+  versions that Ubuntu 24.04 and 26.04 offer, 14 to 22 (`cmake/MtLibclang.cmake` looks for the same; 21 and 22 are only in 26.04, and a
+  `newest` job builds with the GCC 15 and Clang 22 of 26.04, where a missing `#include <algorithm>` showed up). Phase 8
+  showed why: a later version than the one tried locally keeps `alignas` in the extent of a declaration. Run locally
+  against each of them, it found `extern "C" { }` (an `UnexposedDecl` before 17) and the name of a typedef'd anonymous
+  struct or enum (not in the cursor's spelling before 16) read wrong by 14 to 16, a parity snippet that was not valid
+  C++ and was read only because 18 keeps an invalid default, and a C++23 test that needs 16: all fixed, and written in
+  `design.md` 6.7 with what cannot be made up for.
+- [x] **9.3** *(S, medium)* **Types written with parentheses.** `decltype(...)`, `typeof(...)` and `__typeof__(...)` are one
+  word for `ir::type_from_spelling` (done while running the corpus, 9.1): `const decltype(x)&` has its base, its `const` and
+  its reference; function-pointer, array and array-reference types stay whole. `test_type.cpp` has a row for each form
+  (nested parentheses, `decltype(auto)`, the argument inside angle brackets, the GNU spellings) and the parity battery has
+  a snippet of them, so both frontends make the same model. The one form the syntax-tree reader cannot read is the GNU
+  `typeof`/`__typeof__` as a declaration's type: the grammar has no such type (`design.md` 6.6).
+- [x] **9.4** *(M, medium)* **Matchers in `gen-impl`** (§7.6). `EXPECT_THAT(v, m)` gives `v` the type its matcher implies when
+  the matcher says it: `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`, `StrEq`, `StrNe`, `StrCaseEq`, `StrCaseNe`, `HasSubstr`, `StartsWith`,
+  `EndsWith`, `IsTrue`, `IsFalse`, `IsNull`, `NotNull`, `DoubleEq`, `FloatEq`, `DoubleNear`, `FloatNear`, and `AllOf`/`AnyOf`/`Not`
+  over those. Matchers over containers stay `mt-unknown-return`, now with the matcher named. Golden cases `matchers` (with a
+  round trip that compiles the stubs and the test against gmock and requires every test red) and `matchers_unknown`; unit
+  tests of the facts; the table is in §7.6.
+- [x] **9.5** *(L, high)* **Free functions in `gen-tests`** (§9.1). A header's free functions get tests: one file for the header
+  (`util.h` gives `util_functions_test.cpp` and `UtilFunctionsTest`, `tst_util_functions.cpp` and `TestUtilFunctions` for Qt Test:
+  a name of its own, so that it cannot be the file of a class `Util`), a suite for each namespace, a test for each function
+  (an overload set as one test per overload), the call qualified, `noexcept` asserted, an operator called as a function,
+  a function declared twice one function, `static`, `inline` and `extern "C"` read as they are, the conditions of 9.6 on
+  a function under `#if`; function templates stay `mt-unsupported`. The same planner and backends as for a method of a class:
+  a case is the one of a `static` method without the class. Design first (§9.1 and §10), then the golden cases
+  `free_functions` (GoogleTest) and `qt_free_functions`, a round trip that builds, links and runs the tests against an
+  implementation of the header for both frameworks, unit tests of the planner; the note that said they were not tested is gone.
+- [x] **9.6** *(M, medium)* **Tests guarded like the members they test** (§6.5). Under the syntax-tree reader every member under `#if`
+  was tested, so the generated test compiled only in a configuration that declares it. The model keeps the condition of
+  each branch (`#if`/`#elif` as written, `defined(X)`, `!defined(X)`, and for the branches after the first the negation of the
+  ones before it), and both backends write the test between the same `#if … #endif`; a class under `#if` has all its tests
+  under it; an include guard is no condition; libclang writes none. The `ifdef_branches` golden shows the guards and its
+  round trip compiles, links and runs the tests in six configurations (`tests/roundtrip/gen-tests/ifdef_branches.configs`),
+  where the number of tests changes with the configuration.
+- [x] **9.7** *(S, low)* **YAML merge keys** (`<<: *base`). The converter merges a mapping, or a list of mappings, into the one that
+  holds the key; the keys written in the mapping win over the merged ones, and earlier mappings in a list win over later
+  ones, as in YAML 1.1. A merge key whose value is not a mapping is an `mt-config` error with line and column. The reader of
+  the JSON file is not touched. Unit tests for each rule, and the `config_yaml` golden case uses one (`design.md` 14).
+- [x] **9.8** *(S, medium)* **Installing it.** `install()` rules for the binary, the licence and the documentation (laid out as in the
+  repository, so that the links work), a CPack tarball (`-G TGZ`), `tools/check_install.sh` (the installed program runs, the
+  links between the pages lead to pages, no file holds a path of the build or the source tree), and a CI job `install and
+  package` that installs, packs, unpacks and checks, without publishing. `development.md` says how.
+
+### Left out of phase 9, and why
+
+- **Publishing releases or binaries.** It acts outside the repository (a release page, an artifact someone
+  downloads); the owner decides if and where, and 9.8 only makes it possible.
+- **`mt_not_implemented.h` under `--overwrite merge`.** A file the test side is meant to edit (it installs the handler
+  there) is never overwritten: a changed one gets a `.new`. That is the safe behaviour, not a missing feature.
+- **The two limits of the syntax-tree reader** that libclang does not have (a comment inside a fundamental type,
+  an abstract declarator in a trailing return type). They are rare, `--frontend libclang` reads them right, and 9.1
+  will say if the corpus shows them often enough to change that.
+- **Windows and macOS builds.** Nothing in the project needs them yet, and each is a CI job to keep green.
+- **Matchers over containers** (9.4) and **function templates** (9.5): they need decisions about which instantiation
+  to test, which the design leaves to the configuration (`template_instantiations`, §9.1); a function template still gets
+  an `mt-unsupported` warning and no test.

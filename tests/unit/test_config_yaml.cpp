@@ -370,15 +370,102 @@ TEST(ConfigYaml, OnlyTheStringTagIsAccepted) {
     EXPECT_TRUE(apply_yaml("std: !!str c++11\n").ok);
 }
 
-TEST(ConfigYaml, MergeKeysAreNotSupportedAndSayWhichKeyIsUnknown) {
+// ---- merge keys ---------------------------------------------------------------------------
+
+TEST(ConfigYaml, AMergeKeyPutsTheKeysOfAMappingIntoTheOneThatHoldsIt) {
     SKIP_WITHOUT_YAML();
-    EXPECT_EQ(only_message(apply_yaml("naming:\n  <<: { header: a }\n")), "unknown configuration key 'naming.<<'");
-    // The anchor's own key is unknown to the reader as well, and both are reported at once.
-    const Applied merged = apply_yaml("base: &b { header: a }\nnaming:\n  <<: *b\n  source: \"{stem}.cc\"\n");
-    EXPECT_FALSE(merged.ok);
-    ASSERT_EQ(merged.diagnostics.all().size(), 2u) << all_messages(merged);
-    EXPECT_EQ(merged.diagnostics.all()[0].message, "unknown configuration key 'base'");
-    EXPECT_EQ(merged.diagnostics.all()[1].message, "unknown configuration key 'naming.<<'");
+    const Applied a = apply_yaml(
+        "overrides:\n"
+        "  acme::Repo::count: &size { returns: std::size_t, const: true }\n"
+        "  acme::Repo::size: { <<: *size }\n"
+        "  acme::Repo::length:\n"
+        "    <<: *size\n"
+        "    returns: unsigned\n"
+        "    static: false\n");
+    ASSERT_TRUE(a.ok) << all_messages(a);
+    ASSERT_EQ(a.config.overrides.size(), 3u);
+    const MemberOverride& size = a.config.overrides.at("acme::Repo::size");
+    EXPECT_EQ(size.returns, "std::size_t");
+    EXPECT_EQ(size.is_const, true);
+    const MemberOverride& length = a.config.overrides.at("acme::Repo::length");
+    EXPECT_EQ(length.returns, "unsigned") << "what the mapping says wins over what it merges";
+    EXPECT_EQ(length.is_const, true);
+    EXPECT_EQ(length.is_static, false);
+}
+
+TEST(ConfigYaml, TheKeysOfAMappingWinOverTheMergedOnesWhereverTheMergeKeyIs) {
+    SKIP_WITHOUT_YAML();
+    const Applied after = apply_yaml(
+        "overrides:\n"
+        "  a::B::c: &base { returns: int, const: true }\n"
+        "  a::B::d: { returns: long, <<: *base }\n");
+    ASSERT_TRUE(after.ok) << all_messages(after);
+    EXPECT_EQ(after.config.overrides.at("a::B::d").returns, "long");
+    EXPECT_EQ(after.config.overrides.at("a::B::d").is_const, true);
+}
+
+TEST(ConfigYaml, OfSeveralMergedMappingsTheEarlierWins) {
+    SKIP_WITHOUT_YAML();
+    const Applied a = apply_yaml(
+        "overrides:\n"
+        "  a::B::x: &first { returns: int }\n"
+        "  a::B::y: &second { returns: long, const: true, virtual: true }\n"
+        "  a::B::z:\n"
+        "    <<: [*first, *second]\n"
+        "    noexcept: true\n");
+    ASSERT_TRUE(a.ok) << all_messages(a);
+    const MemberOverride& z = a.config.overrides.at("a::B::z");
+    EXPECT_EQ(z.returns, "int");
+    EXPECT_EQ(z.is_const, true);
+    EXPECT_EQ(z.is_virtual, true);
+    EXPECT_EQ(z.is_noexcept, true);
+}
+
+TEST(ConfigYaml, AMergedMappingMayMergeAnother) {
+    SKIP_WITHOUT_YAML();
+    const Applied a = apply_yaml(
+        "overrides:\n"
+        "  a::B::x: &inner { returns: int }\n"
+        "  a::B::y: &outer { <<: *inner, const: true }\n"
+        "  a::B::z: { <<: *outer, static: true }\n");
+    ASSERT_TRUE(a.ok) << all_messages(a);
+    const MemberOverride& z = a.config.overrides.at("a::B::z");
+    EXPECT_EQ(z.returns, "int");
+    EXPECT_EQ(z.is_const, true);
+    EXPECT_EQ(z.is_static, true);
+}
+
+TEST(ConfigYaml, AMergeKeyThatIsNotAMappingIsAnErrorAtItsPlace) {
+    SKIP_WITHOUT_YAML();
+    const Applied scalar = apply_yaml("overrides:\n  a::B::x:\n    <<: int\n");
+    EXPECT_EQ(only_message(scalar), "a merge key '<<' takes a mapping or a list of mappings");
+    ASSERT_EQ(scalar.diagnostics.all().size(), 1u);
+    EXPECT_EQ(scalar.diagnostics.all()[0].where.line, 3u);
+    EXPECT_EQ(scalar.diagnostics.all()[0].where.column, 9u);
+
+    const Applied in_list = apply_yaml("overrides:\n  a::B::x: &m { returns: int }\n  a::B::y:\n    <<: [*m, 3]\n");
+    EXPECT_EQ(only_message(in_list), "a merge key '<<' takes a mapping or a list of mappings");
+    EXPECT_EQ(in_list.diagnostics.all()[0].where.line, 4u);
+
+    EXPECT_EQ(only_message(apply_yaml("overrides:\n  a::B::x:\n    <<:\n")), "a merge key '<<' takes a mapping or a list of mappings");
+}
+
+TEST(ConfigYaml, ATwoMergeKeysInOneMappingAreTheSameKeyTwice) {
+    SKIP_WITHOUT_YAML();
+    const Applied a = apply_yaml("overrides:\n  a::B::x: &m { returns: int }\n  a::B::y:\n    <<: *m\n    <<: *m\n");
+    EXPECT_EQ(only_message(a), "the key '<<' appears twice in the same mapping");
+}
+
+TEST(ConfigYaml, AQuotedMergeKeyIsJustAKeyAndSoUnknown) {
+    SKIP_WITHOUT_YAML();
+    EXPECT_EQ(only_message(apply_yaml("naming:\n  \"<<\": { header: a }\n")), "unknown configuration key 'naming.<<'");
+}
+
+TEST(ConfigYaml, AMergeThatMeetsItselfIsStoppedLikeAnyAliasThatKeepsExpanding) {
+    SKIP_WITHOUT_YAML();
+    const Applied a = apply_yaml("overrides:\n  a::B::x: &m\n    returns: int\n    <<: *m\n");
+    EXPECT_FALSE(a.ok);
+    EXPECT_NE(all_messages(a).find("alias that refers to itself"), std::string::npos) << all_messages(a);
 }
 
 TEST(ConfigYaml, AnAliasThatKeepsExpandingIsStoppedNotFollowed) {

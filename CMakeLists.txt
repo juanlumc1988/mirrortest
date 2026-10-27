@@ -7,6 +7,7 @@ project(mirrortest VERSION 0.1.0 LANGUAGES C CXX)
 option(MT_BUILD_TESTS "Build the unit, golden and round-trip tests" ON)
 option(MT_WERROR      "Treat warnings as errors" OFF)
 option(MT_WITH_YAML   "Read configuration files written in YAML (.yaml, .yml); needs yaml-cpp" ON)
+option(MT_BUILD_TOOLS "Build the development tools (tools/): the model dumper that tools/corpus.sh uses" OFF)
 option(MT_WITH_LIBCLANG "Add the libclang frontend for headers (--frontend libclang); needs libclang" OFF)
 
 # The generator itself is C++17 throughout. It runs on the development host,
@@ -117,6 +118,30 @@ add_executable(mirrortest apps/cli/main.cpp)
 target_link_libraries(mirrortest PRIVATE mt_core)
 mt_configure(mirrortest)
 
+# ---- installing ------------------------------------------------------------
+
+# The binary has everything in it (the templates are compiled in, docs/templates.md), so the install is the program, the
+# licence and the documentation, laid out as in the repository so that the links between the pages work. Nothing of the
+# dependencies is installed: they are linked in. A build with libclang links the system's libclang shared, and keeps the
+# directory it was found in (a system one such as /usr/lib/llvm-18/lib, not the build tree) in the installed binary's
+# search path, since that directory is not one the loader looks in by itself.
+include(GNUInstallDirs)
+if(MT_WITH_LIBCLANG)
+    set_target_properties(mirrortest PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE)
+endif()
+install(TARGETS mirrortest RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(FILES LICENSE README.md DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+install(DIRECTORY docs DESTINATION "${CMAKE_INSTALL_DOCDIR}" FILES_MATCHING PATTERN "*.md")
+
+# ---- development tools -----------------------------------------------------
+
+if(MT_BUILD_TOOLS)
+    add_executable(mt_dump_model tools/mt_dump_model.cpp)
+    target_include_directories(mt_dump_model PRIVATE tests/unit)
+    target_link_libraries(mt_dump_model PRIVATE mt_core)
+    mt_configure(mt_dump_model)
+endif()
+
 # ---- tests -----------------------------------------------------------------
 
 if(MT_BUILD_TESTS)
@@ -216,7 +241,7 @@ if(MT_BUILD_TESTS)
     # the cases are fast and need no network; GoogleTest is the main build's.
     if(NOT MSVC)
         foreach(case basic_class fixture_members namespaces multi_class_includes no_exceptions no_stl no_stl_library_types
-                     stub_hook stub_hook_abort mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums exceptions)
+                     stub_hook stub_hook_abort mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums exceptions matchers)
             set(mode throw)
             if(case STREQUAL "no_exceptions" OR case STREQUAL "no_stl" OR case STREQUAL "no_stl_library_types" OR case STREQUAL "stub_hook_abort")
                 set(mode abort)
@@ -243,7 +268,8 @@ if(MT_BUILD_TESTS)
     # in tests/roundtrip/gen-tests/ named after the golden case, plus an optional
     # <case>.prelude.h forced into every translation unit for the types the header
     # relies on and the tool cannot know, and an optional <case>.mocks.cpp: one more
-    # translation unit, compiled against the generated mock headers (gtest.mocks).
+    # translation unit, compiled against the generated mock headers (gtest.mocks); and an optional <case>.configs, one
+    # configuration of the header a line (compiler flags, or `none`), for a header that has `#if`: the case is then run in each.
     if(NOT MSVC)
         file(GLOB mt_gen_tests_impls RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests"
              "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/*.cpp")
@@ -265,9 +291,14 @@ if(MT_BUILD_TESTS)
             if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.mocks.cpp")
                 set(mocks "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.mocks.cpp")
             endif()
+            set(configs "")
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.configs")
+                set(configs "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.configs")
+            endif()
             add_test(NAME roundtrip.gen_tests.${case}
                 COMMAND "${CMAKE_COMMAND}"
                     -DMT_BIN=$<TARGET_FILE:mirrortest>
+                    "-DMT_CONFIGS=${configs}"
                     -DMT_CASE_DIR=${case_dir}
                     -DMT_IMPL=${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${impl}
                     "-DMT_PRELUDE=${prelude}"
@@ -439,4 +470,26 @@ if(MT_BUILD_TESTS)
     # and round-trip suites, which drive the real binary.
     add_test(NAME cli.version COMMAND mirrortest --version)
     set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "mirrortest ${PROJECT_VERSION}")
+
+    # The script that runs the tool over code nobody wrote for it (docs/development.md) runs, and finds nothing wrong
+    # in the headers of the golden cases: its exit status is non-zero when a crash, a hang or a sanitizer report is.
+    if(MT_BUILD_TOOLS AND MT_WITH_LIBCLANG AND UNIX)
+        add_test(NAME tools.corpus
+            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/corpus.sh"
+                --bin $<TARGET_FILE:mirrortest> --dump $<TARGET_FILE:mt_dump_model> --jobs 2
+                --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-smoke"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-tests/abstract/input")
+    endif()
 endif()
+
+# ---- packaging -------------------------------------------------------------
+
+# `cpack -G TGZ` (or `cmake --build build --target package`) makes mirrortest-<version>-<system>-<machine>.tar.gz from the
+# install above. Publishing it is the owner's decision, not the build's.
+set(CPACK_GENERATOR "TGZ")
+set(CPACK_PACKAGE_NAME "mirrortest")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Bidirectional C++ test/code generator")
+set(CPACK_PACKAGE_FILE_NAME "mirrortest-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+include(CPack)

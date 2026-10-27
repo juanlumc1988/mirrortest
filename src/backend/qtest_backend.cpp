@@ -59,7 +59,7 @@ json data_view(const ir::TestSuite& suite, const ir::TestCase& test) {
 
     json view;
     view["name"] = test.name + "_data";
-    view["lines"] = lines;
+    view["lines"] = guarded_lines(lines, suite.guards, test.guards);
     return view;
 }
 
@@ -69,10 +69,13 @@ json class_view(const ir::TestSuite& suite, core::Placeholder placeholder) {
     head.push_back("    Q_OBJECT");
     head.push_back("private slots:");
     for (const ir::TestCase& test : suite.cases) {
-        if (test.data) head.push_back("    void " + test.name + "_data();");
-        head.push_back("    void " + test.name + "();");
+        json slots = json::array();
+        if (test.data) slots.push_back("    void " + test.name + "_data();");
+        slots.push_back("    void " + test.name + "();");
+        for (const json& line : guarded_lines(slots, {}, test.guards)) head.push_back(line);
     }
     head.push_back("};");
+    head = guarded_lines(head, suite.guards);
 
     json tests = json::array();
     for (const ir::TestCase& test : suite.cases) {
@@ -89,7 +92,7 @@ json class_view(const ir::TestSuite& suite, core::Placeholder placeholder) {
 
         json view;
         view["name"] = test.name;
-        view["lines"] = lines;
+        view["lines"] = guarded_lines(lines, suite.guards, test.guards);
         tests.push_back(std::move(view));
     }
 
@@ -142,6 +145,7 @@ json view_of(const ir::TestPlan& plan, const QtestOptions& options, core::Diagno
         main.push_back(std::string(main_macro(options.qt_main)) + "(" + qualified + ")");
         main.push_back("// AUTOMOC: the name of the moc file must follow the name of this file.");
         main.push_back("#include \"" + moc_name(plan.file) + "\"");
+        main = guarded_lines(main, plan.suites[0].guards);
     }
 
     json view;

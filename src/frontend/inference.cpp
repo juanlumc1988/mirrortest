@@ -613,9 +613,15 @@ private:
                                "declare the variable's type, or annotate the call: '// @mt: returns TYPE'",
                                noun, first, out.notes);
         } else {
+            std::string matcher;
+            for (const Call* call : calls) {
+                if (matcher.empty()) matcher = call->use->matcher;
+            }
             out.type = unknown(core::code::unknown_return,
-                               what + " cannot be inferred: no test compares the result with a typed value; "
-                               "annotate it: '// @mt: returns TYPE'",
+                               what + " cannot be inferred: " +
+                                   (matcher.empty() ? std::string("no test compares the result with a typed value")
+                                                    : "the matcher '" + matcher + "' does not say its type") +
+                                   "; annotate it: '// @mt: returns TYPE'",
                                noun, first, out.notes);
         }
         out.type = mapped(out.type);

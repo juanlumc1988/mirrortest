@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,15 @@ std::vector<std::string> messages(const Read& r, const char* code) {
 }
 
 // ---- the build without libclang ------------------------------------------------------------------
+
+TEST(ClangFrontendBuild, ThereIsAVersionExactlyWhenThereIsALibclang) {
+    if (frontend::libclang_supported()) {
+        EXPECT_GE(frontend::libclang_major_version(), 14) << "the oldest this reads (cmake/MtLibclang.cmake)";
+        EXPECT_LT(frontend::libclang_major_version(), 100);
+    } else {
+        EXPECT_EQ(frontend::libclang_major_version(), 0);
+    }
+}
 
 TEST(ClangFrontendBuild, WithoutLibclangItRefusesAndSaysHowToHaveIt) {
     if (frontend::libclang_supported()) GTEST_SKIP() << "built with libclang";
@@ -108,6 +118,18 @@ private:
     int ternary = true ? 1 : 2;
     const char* text{"x"};
     double empty{};
+};)"},
+    {"several_declarators",
+     R"(template <typename T> struct Box {};
+struct Marks {
+    int line, column;
+    unsigned char *p1, p2, **p3;
+    long a1 = 1, a2{2}, a3[3];
+    const char *const names[2], *single;
+    Box<int> first, second;
+    std::size_t m_row, m_col;
+    static int count_a, count_b;
+    unsigned flag_a : 1, flag_b : 2;
 };)"},
     {"operators",
      R"(class Num {
@@ -185,6 +207,11 @@ public:
     [[nodiscard, deprecated("x")]] unsigned long both() const;
     __attribute__((unused)) unsigned plain();
     alignas(8) unsigned aligned_field;
+    template <typename T> void log(const char* fmt, ...);
+    template <typename, typename> static auto test(...) -> int;
+    template <typename... Ts> void packed(Ts&&... ts);
+    template <typename... Ts> void unnamed_pack(Ts&&...);
+    template <typename T> void typed(T, ...);
 };)"},
     {"nested",
      R"(class Outer {
@@ -209,9 +236,31 @@ public:
     class Deeper { public: struct Deepest {}; };
 };
 })"},
+    {"conversion_templates",
+     R"(namespace ns { template <typename T> class Matcher {}; }
+template <typename S> class Action {};
+class Convertible {
+public:
+    template <typename F> operator Action<F>() const;
+    template <typename U, typename... Args> operator Action<U(Args...)>() const;
+    template <typename T> operator ::ns::Matcher<T>() const;
+    template <typename T> operator T*() const;
+    operator bool() const;
+};)"},
+    {"function_types",
+     R"(template <typename S> class Fn {};
+struct Option {};
+class Handlers {
+public:
+    void on(const Fn<void(int)>& cb);
+    void filter(const Fn<bool(const Option*)> f = {}, Fn<bool(Option*)>&& g = {});
+    Fn<int(int)> make() const;
+    Fn<void()>* pointer(Fn<int(int, int)> const& c);
+    Fn<void(int)> field_;
+};)"},
     {"default_values",
      R"(extern int x_;
-void assigned(decltype(x_ = 1) v = 3);
+void assigned(decltype(static_cast<int>(x_ = 1)) v = 3);
 void ternary(int a = x_ == 1 ? 2 : 3, int b = (x_ > 1) ? 4 : 5);)"},
     {"parameters",
      R"(struct V {};
@@ -332,8 +381,27 @@ struct S : B {
     auto dover(int a) const & -> decltype(x_) override;
     static auto make(int n) -> decltype(x_);
     static decltype(x_) from_decltype() noexcept;
+    template <typename... Args> auto operator()(const Args&...) -> decltype(x_);
+    template <typename T> auto operator()(T t) const -> decltype(x_);
     auto with_body(int n) const -> decltype(x_) { return x_ + n; }
 };)"},
+    {"parenthesised_types",
+     R"(extern int x_;
+struct P {
+    const decltype(x_)& a() const;
+    decltype(x_)* b(const decltype(x_)& v, decltype(x_) const* w, decltype(x_)&& r);
+    decltype(x_)& d;
+    const decltype(x_) e;
+    volatile decltype(x_)* const f;
+    decltype(sizeof(int)) g();
+    decltype(x_) const& h(decltype(x_) (*cb)(int), int (&arr)[3]);
+    decltype(auto) i();
+    void (*fp)(int);
+    int (*ap)[3];
+    int (&ar)[3];
+    const decltype(x_) (*fp2)(int);
+};
+const decltype(x_)& free_a(decltype(x_) const* p);)"},
     {"comments_inside_declarations",
      R"(class Annotated {
 public:
@@ -376,11 +444,19 @@ template <typename T> class Pair2<Pair2<T>> {};
 template <typename T> T identity(T v);
 class Base { public: Base(int); void helper(); };
 class Derived : public Base { public: using Base::Base; using Base::helper; };
+class Outer { public: struct Inner; class Deep; };
+struct Outer::Inner { int v; };
+class Outer::Deep : public Outer { public: int size() const; };
+template <typename T> class Holder { public: struct Node; };
+template <typename T> struct Holder<T>::Node { T item; };
 )";
     const Read a = tree_sitter(text);
     const Read b = clang(text);
     EXPECT_EQ(messages(b, "mt-unsupported"), messages(a, "mt-unsupported"));
-    EXPECT_EQ(messages(a, "mt-unsupported").size(), 5u) << "and tree-sitter did say something about each (not about the using of a method)";
+    EXPECT_EQ(messages(a, "mt-unsupported").size(), 8u) << "and tree-sitter did say something about each (not about the using of a method)";
+    const std::vector<std::string> said = messages(a, "mt-unsupported");
+    EXPECT_NE(std::find(said.begin(), said.end(), "the class 'Outer::Inner' is defined outside the class that declares it, which is not supported; it is skipped"), said.end());
+    EXPECT_NE(std::find(said.begin(), said.end(), "the class 'Holder<T>::Node' is defined outside the class that declares it, which is not supported; it is skipped"), said.end());
     const std::vector<core::Diagnostic> from_tree_sitter = a.diagnostics.sorted();
     const std::vector<core::Diagnostic> from_clang = b.diagnostics.sorted();
     ASSERT_EQ(from_tree_sitter.size(), from_clang.size());
@@ -587,6 +663,64 @@ TEST(ClangFrontend, TheLocationOfAParseWarningIsThatOfTheHeaderAsGivenNotOfTheAb
     EXPECT_EQ(all[0].where.column, 5u);
 }
 
+TEST(ClangFrontend, ACommentOrAPreprocessorLineInTheMiddleOfATypeIsNotPartOfIt) {
+    SKIP_WITHOUT_LIBCLANG();
+    // From CLI11's TypeTools.hpp, where a pragma sits inside a decltype.
+    const char* text = R"(extern int x_;
+struct True {};
+struct S {
+    template <typename TT>
+    static auto test(int) -> decltype(
+        // NVCC warns about narrowing conversions here
+#ifdef __CUDACC__
+#pragma nv_diag_suppress 2361
+#endif
+        x_ /* the value */,
+#ifdef __CUDACC__
+#pragma nv_diag_default 2361
+#endif
+        True());
+};)";
+    const Read r = clang(text);
+    ASSERT_EQ(r.model.classes.size(), 2u);
+    ASSERT_EQ(r.model.classes[1].methods.size(), 1u);
+    const std::string ret = r.model.classes[1].methods[0].ret.spelling;
+    EXPECT_EQ(ret.find('#'), std::string::npos) << ret;
+    EXPECT_EQ(ret.find("//"), std::string::npos) << ret;
+    EXPECT_EQ(ret.find("/*"), std::string::npos) << ret;
+    EXPECT_EQ(ret, "decltype(x_, True())");
+}
+
+TEST(ClangFrontend, AMacroInTheMiddleOfATypeIsExpandedByLibclangNotKeptInTheType) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(#define API
+#define WORD unsigned
+struct Holder {
+    static API long counter_;
+    API static long other_;
+    WORD flags_;
+    void f(API long n, WORD m);
+    API long g();
+    long API h();
+    static WORD i();
+};)";
+    const Read r = clang(text);
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    const ir::Class& c = r.model.classes[0];
+    ASSERT_EQ(c.fields.size(), 3u);
+    EXPECT_EQ(c.fields[0].type.spelling, "long");
+    EXPECT_EQ(c.fields[1].type.spelling, "long");
+    EXPECT_EQ(c.fields[2].type.spelling, "unsigned int") << "what the macro stands for is libclang's to say";
+    ASSERT_EQ(c.methods.size(), 4u);
+    ASSERT_EQ(c.methods[0].params.size(), 2u);
+    EXPECT_EQ(c.methods[0].params[0].type.spelling, "long");
+    EXPECT_EQ(c.methods[0].params[1].type.spelling, "unsigned int");
+    EXPECT_EQ(c.methods[1].ret.spelling, "long");
+    EXPECT_EQ(c.methods[2].ret.spelling, "long");
+    EXPECT_EQ(c.methods[3].ret.spelling, "unsigned int");
+    EXPECT_TRUE(c.methods[3].is_static);
+}
+
 TEST(ClangFrontend, AnAttributeInTheMiddleOfAReturnTypeIsNotPartOfIt) {
     SKIP_WITHOUT_LIBCLANG();
     const char* text = R"(struct S {
@@ -628,6 +762,36 @@ TEST(ClangFrontend, TheEllipsisOfAFunctionIsWhereTheFunctionIs) {
     EXPECT_EQ(r.model.functions[0].params[1].type.spelling, "...");
     EXPECT_EQ(r.model.functions[0].params[1].type.where.line, 3u);
     EXPECT_EQ(r.model.functions[0].params[1].type.where.column, 5u);
+}
+
+TEST(ClangFrontend, TheDefaultOfAParameterAMacroDeclaresIsTheTokensOfTheDefault) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(enum class Codes { A, B = 5 };
+template <typename A, typename B> struct Pair { Pair(A, B); };
+#define MAKE(name) name(int code = 0); name(const char* s, int n = static_cast<int>(Codes::B))
+#define PAIR(name) name(Pair<int, int> p = Pair<int, int>(1, 2), bool flag = true)
+class Widget {
+public:
+    MAKE(Widget);
+    PAIR(Widget);
+    int size() const;
+};)";
+    const Read r = clang(text);
+    ASSERT_EQ(r.model.classes.size(), 2u);
+    const std::vector<ir::Method>& m = r.model.classes[1].methods;
+    ASSERT_EQ(m.size(), 4u);
+    ASSERT_EQ(m[0].params.size(), 1u);
+    ASSERT_TRUE(m[0].params[0].default_value.has_value());
+    EXPECT_EQ(*m[0].params[0].default_value, "0");
+    ASSERT_EQ(m[1].params.size(), 2u);
+    EXPECT_FALSE(m[1].params[0].default_value.has_value()) << "`s` has none: the `= ` that follows is `n`'s";
+    ASSERT_TRUE(m[1].params[1].default_value.has_value());
+    EXPECT_EQ(*m[1].params[1].default_value, "static_cast<int>(Codes::B)");
+    ASSERT_EQ(m[2].params.size(), 2u);
+    ASSERT_TRUE(m[2].params[0].default_value.has_value());
+    EXPECT_EQ(*m[2].params[0].default_value, "Pair<int,int>(1,2)") << "a comma inside <> does not end it";
+    ASSERT_TRUE(m[2].params[1].default_value.has_value());
+    EXPECT_EQ(*m[2].params[1].default_value, "true");
 }
 
 TEST(ClangFrontend, AFunctionThatReturnsAFunctionPointerHasItsOwnParametersOnly) {
@@ -703,6 +867,22 @@ TEST(ClangFrontend, AStructGivenANameByATypedefIsReadWhichTheSyntaxTreeReaderDoe
     EXPECT_EQ(r.model.classes[0].fields[0].name, "b");
     EXPECT_EQ(r.model.classes[1].name, "Tagged");
     EXPECT_TRUE(tree_sitter("typedef struct { int b; } Named;\n").model.classes.empty());
+}
+
+TEST(ClangFrontend, ATypedefThatNamesAnAnonymousTypeInANamespaceGivesItsUnqualifiedName) {
+    // libclang 14 and 15 have the name only in the spelling of the type, as `n::Named`.
+    SKIP_WITHOUT_LIBCLANG();
+    const Read r = clang("namespace n {\n"
+                         "typedef struct { int b; } Named;\n"
+                         "typedef enum { X, Y } Kind;\n"
+                         "struct { int hidden; } variable;\n"
+                         "}\n");
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    EXPECT_EQ(r.model.classes[0].name, "Named");
+    EXPECT_EQ(r.model.classes[0].ns, (std::vector<std::string>{"n"}));
+    ASSERT_EQ(r.model.enums.size(), 1u);
+    EXPECT_EQ(r.model.enums[0].name, "Kind");
+    EXPECT_EQ(r.model.enums[0].ns, (std::vector<std::string>{"n"}));
 }
 
 TEST(ClangFrontend, APointerToMemberIsReadWhichTheSyntaxTreeReaderDoesNot) {
@@ -815,6 +995,72 @@ TEST(ClangFrontend, AnIncludeNextToTheFileIsFoundWhateverTheProcessDirectoryIs) 
     const ir::Model model = frontend::read_header_clang({"user.h", "#include \"pair.h\"\nclass U { public: Pair make() const; };\n"}, "user.h", {}, options, diagnostics);
     EXPECT_TRUE(diagnostics.empty()) << (diagnostics.all().empty() ? "" : diagnostics.all()[0].message);
     ASSERT_EQ(model.classes.size(), 1u);
+}
+
+TEST(ClangFrontend, AHeaderIncludedBackFromTheFileItIncludesIsNotReadTwice) {
+    // CLI11's `Validators.hpp` and `impl/Validators_inl.hpp`: the first includes the second at its end, and the second
+    // includes the first at its beginning. As the file libclang parses, `#pragma once` is ignored and every
+    // declaration of the first is a redefinition; as a file that is included, it is what a program sees.
+    SKIP_WITHOUT_LIBCLANG();
+    test::TempDir dir;
+    const std::string foo = "#pragma once\nstruct Foo { int get() const; };\n#include \"foo_inl.h\"\n";
+    const std::string inl = "#pragma once\n#include \"foo.h\"\ninline int Foo::get() const { return 1; }\nstruct Inl { int one; };\n";
+    test::write_file(dir.path() / "foo.h", foo);
+    test::write_file(dir.path() / "foo_inl.h", inl);
+
+    frontend::ClangOptions options;
+    options.arguments = {"-std=c++17"};
+    options.absolute_path = (dir.path() / "foo.h").string();
+    core::Diagnostics first;
+    const ir::Model a = frontend::read_header_clang({"foo.h", foo}, "foo.h", {}, options, first);
+    EXPECT_TRUE(first.empty()) << (first.empty() ? "" : first.all()[0].message);
+    ASSERT_EQ(a.classes.size(), 1u);
+    EXPECT_EQ(a.classes[0].name, "Foo");
+
+    options.absolute_path = (dir.path() / "foo_inl.h").string();
+    core::Diagnostics second;
+    const ir::Model b = frontend::read_header_clang({"foo_inl.h", inl}, "foo_inl.h", {}, options, second);
+    EXPECT_TRUE(second.empty()) << (second.empty() ? "" : second.all()[0].message);
+    ASSERT_EQ(b.classes.size(), 1u) << "Foo is declared in the other file";
+    EXPECT_EQ(b.classes[0].name, "Inl");
+}
+
+TEST(ClangFrontend, WhatAMacroOfAnotherHeaderDeclaresIsReadWhereTheMacroIsUsed) {
+    // GoogleMock's `MATCHER(IsTrue, "")` is defined in a header of its own and declares a class and a function where it
+    // is used: they are the declarations of the header that uses it.
+    SKIP_WITHOUT_LIBCLANG();
+    test::TempDir dir;
+    test::write_file(dir.path() / "macros.h", "#define DECLARE_COUNTER(name) struct name { int value; int next() const; };\n");
+    const std::string text = "#include \"macros.h\"\nDECLARE_COUNTER(Made)\nclass Plain {};\n";
+    test::write_file(dir.path() / "user.h", text);
+    frontend::ClangOptions options;
+    options.arguments = {"-std=c++17"};
+    options.absolute_path = (dir.path() / "user.h").string();
+    core::Diagnostics diagnostics;
+    const ir::Model model = frontend::read_header_clang({"user.h", text}, "user.h", {}, options, diagnostics);
+    EXPECT_TRUE(diagnostics.empty());
+    ASSERT_EQ(model.classes.size(), 2u);
+    EXPECT_EQ(model.classes[0].name, "Made");
+    EXPECT_EQ(model.classes[0].where.line, 2u);
+    EXPECT_EQ(model.classes[0].methods.size(), 1u);
+    EXPECT_EQ(model.classes[0].fields.size(), 1u);
+    EXPECT_EQ(model.classes[1].name, "Plain");
+}
+
+TEST(ClangFrontend, AFileNameThatCannotBeWrittenInAnIncludeIsParsedAsTheMainFile) {
+    SKIP_WITHOUT_LIBCLANG();
+    test::TempDir dir;
+    const std::string text = "class Odd { public: int one() const; };\n";
+    const std::filesystem::path path = dir.path() / "od\"d.h";
+    test::write_file(path, text);
+    frontend::ClangOptions options;
+    options.arguments = {"-std=c++17"};
+    options.absolute_path = path.string();
+    core::Diagnostics diagnostics;
+    const ir::Model model = frontend::read_header_clang({"od\"d.h", text}, "odd.h", {}, options, diagnostics);
+    EXPECT_TRUE(diagnostics.empty());
+    ASSERT_EQ(model.classes.size(), 1u);
+    EXPECT_EQ(model.classes[0].name, "Odd");
 }
 
 TEST(ClangFrontend, TheStandardIsTheOneItIsGiven) {

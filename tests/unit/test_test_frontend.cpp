@@ -766,11 +766,142 @@ TEST(TestFrontendAssert, DeathAssertionsAnalyseTheStatement) {
     EXPECT_EQ(method(r, 1).use.kind, UseKind::Discarded);
 }
 
-TEST(TestFrontendAssert, MatchersGiveNoHintButTheValueIsStillSeen) {
+TEST(TestFrontendAssert, MatchersOverContainersGiveNoHintButTheValueIsStillSeen) {
     const Read r = body("Foo foo;\nEXPECT_THAT(foo.values(), ::testing::ElementsAre(1, 2));\n");
     ASSERT_EQ(r.facts.method_calls.size(), 1u);
     EXPECT_EQ(method(r).use.kind, UseKind::Unknown);
     EXPECT_FALSE(method(r).use.hint.has_value());
+    EXPECT_EQ(method(r).use.matcher, "ElementsAre") << "so that the note can name it";
+}
+
+TEST(TestFrontendAssert, ComparisonMatchersHintTheTypeOfTheirArgumentAsTheAssertionsDo) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), Eq(3u));\n"
+                        "EXPECT_THAT(foo.b(), ::testing::Ne(2.5));\n"
+                        "EXPECT_THAT(foo.c(), testing::Lt('x'));\n"
+                        "ASSERT_THAT(foo.d(), Ge(7L));\n"
+                        "EXPECT_THAT(foo.e(), Eq(\"text\"));\n"
+                        "EXPECT_THAT(foo.f(), Le(1));\n"
+                        "EXPECT_THAT(foo.g(), Gt(true));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 7u);
+    EXPECT_EQ(hint(method(r, 0).use), "unsigned int");
+    EXPECT_EQ(hint(method(r, 1).use), "double");
+    EXPECT_EQ(hint(method(r, 2).use), "char");
+    EXPECT_EQ(hint(method(r, 3).use), "long");
+    EXPECT_EQ(hint(method(r, 4).use), "std::string") << "a string literal is a std::string, as in EXPECT_EQ";
+    EXPECT_EQ(hint(method(r, 5).use), "int");
+    EXPECT_EQ(hint(method(r, 6).use), "bool");
+    for (std::size_t i = 0; i < 7; ++i) EXPECT_EQ(method(r, i).use.kind, UseKind::Compared) << i;
+}
+
+TEST(TestFrontendAssert, AnEqMatcherGivesTheTypeOfTheValueToWhatItIsComparedWith) {
+    const Read r = body("Foo foo;\nint n = 4;\nEXPECT_THAT(n, Eq(foo.count()));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(hint(method(r).use), "int");
+}
+
+TEST(TestFrontendAssert, EveryComparisonMatcherCallsItsOwnOperatorOfTheObjectItIsGivenTo) {
+    const Read r = body("Point a;\nPoint b;\n"
+                        "EXPECT_THAT(a, Eq(b));\nEXPECT_THAT(a, Ne(b));\nEXPECT_THAT(a, Lt(b));\n"
+                        "EXPECT_THAT(a, Le(b));\nASSERT_THAT(a, Gt(b));\nEXPECT_THAT(a, ::testing::Ge(b));\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Point::operator==", "Point::operator!=", "Point::operator<", "Point::operator<=",
+                                                           "Point::operator>", "Point::operator>="}));
+    for (const frontend::MethodCall& m : r.facts.method_calls) EXPECT_EQ(m.use.kind, UseKind::Condition);
+}
+
+TEST(TestFrontendAssert, AWideStringMatcherHintsWideCStrings) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), StrEq(L\"wide\"));\nEXPECT_THAT(foo.b(), StrEq(\"narrow\"));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(hint(method(r, 0).use), "const wchar_t*");
+    EXPECT_EQ(hint(method(r, 1).use), "const char*");
+}
+
+TEST(TestFrontendAssert, TheArgumentsOfAFloatingPointMatcherAreCodeToo) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), DoubleNear(foo.b(), 0.5));\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Foo::a", "Foo::b"}));
+}
+
+TEST(TestFrontendAssert, OfSeveralMatchersThatSayNothingTheFirstIsTheOneNamed) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(1));\nEXPECT_THAT(foo.a(), Contains(2));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(method(r, 0).use.matcher, "ElementsAre");
+    EXPECT_EQ(method(r, 1).use.matcher, "Contains");
+}
+
+TEST(TestFrontendAssert, ABareMatcherThatIsNotACallIsNotRead) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), _);\nEXPECT_THAT(foo.b(), some_matcher);\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    for (std::size_t i = 0; i < 2; ++i) {
+        EXPECT_FALSE(method(r, i).use.hint.has_value()) << i;
+        EXPECT_EQ(method(r, i).use.matcher, "") << "no matcher to name";
+    }
+}
+
+TEST(TestFrontendAssert, StringMatchersHintCStringsOrStrings) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), StrEq(\"x\"));\n"
+                        "EXPECT_THAT(foo.b(), ::testing::StrNe(\"y\"));\n"
+                        "EXPECT_THAT(foo.c(), StrCaseEq(\"z\"));\n"
+                        "EXPECT_THAT(foo.d(), HasSubstr(\"mid\"));\n"
+                        "EXPECT_THAT(foo.e(), StartsWith(\"pre\"));\n"
+                        "EXPECT_THAT(foo.f(), EndsWith(\"post\"));\n"
+                        "std::string s = \"x\";\n"
+                        "EXPECT_THAT(foo.g(), HasSubstr(s));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 7u);
+    for (std::size_t i = 0; i < 3; ++i) EXPECT_EQ(hint(method(r, i).use), "const char*") << i;
+    for (std::size_t i = 3; i < 7; ++i) EXPECT_EQ(hint(method(r, i).use), "std::string") << i;
+}
+
+TEST(TestFrontendAssert, TruthNullAndFloatingPointMatchers) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), IsTrue());\n"
+                        "EXPECT_THAT(foo.b(), ::testing::IsFalse());\n"
+                        "EXPECT_THAT(foo.c(), IsNull());\n"
+                        "EXPECT_THAT(foo.d(), NotNull());\n"
+                        "EXPECT_THAT(foo.e(), DoubleEq(1.5));\n"
+                        "EXPECT_THAT(foo.f(), FloatEq(1.5f));\n"
+                        "EXPECT_THAT(foo.g(), DoubleNear(1.5, 0.1));\n"
+                        "EXPECT_THAT(foo.h(), FloatNear(1.5f, 0.1f));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 8u);
+    EXPECT_EQ(hint(method(r, 0).use), "bool");
+    EXPECT_EQ(hint(method(r, 1).use), "bool");
+    EXPECT_EQ(method(r, 0).use.kind, UseKind::Condition);
+    EXPECT_EQ(hint(method(r, 2).use), "void*");
+    EXPECT_EQ(hint(method(r, 3).use), "void*");
+    EXPECT_NE(method(r, 2).use.hint->reason.find("which one is not said"), std::string::npos);
+    EXPECT_EQ(hint(method(r, 4).use), "double");
+    EXPECT_EQ(hint(method(r, 5).use), "float");
+    EXPECT_EQ(hint(method(r, 6).use), "double");
+    EXPECT_EQ(hint(method(r, 7).use), "float");
+}
+
+TEST(TestFrontendAssert, AllOfAnyOfAndNotHandTheirMatchersTheSameValue) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), AllOf(Ge(1u), Le(9u)));\n"
+                        "EXPECT_THAT(foo.b(), ::testing::Not(StrEq(\"x\")));\n"
+                        "EXPECT_THAT(foo.c(), AnyOf(Not(IsNull()), ElementsAre(1)));\n"
+                        "EXPECT_THAT(foo.d(), AllOf(HasSubstr(\"a\"), Not(StartsWith(\"b\"))));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 4u);
+    EXPECT_EQ(hint(method(r, 0).use), "unsigned int");
+    EXPECT_EQ(hint(method(r, 1).use), "const char*");
+    EXPECT_EQ(hint(method(r, 2).use), "void*") << "the first matcher that says something wins";
+    EXPECT_EQ(hint(method(r, 3).use), "std::string");
+}
+
+TEST(TestFrontendAssert, AMatcherAfterAHintDoesNotChangeIt) {
+    const Read r = body("Foo foo;\nEXPECT_EQ(foo.a(), 3u);\nEXPECT_THAT(foo.a(), Eq(2.5));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(hint(method(r, 0).use), "unsigned int");
+}
+
+TEST(TestFrontendAssert, MatchersWithTheWrongNumberOfArgumentsOrOfThePrefixTestingAreNotRead) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), Eq());\n"
+                        "EXPECT_THAT(foo.b(), IsTrue(1));\n"
+                        "EXPECT_THAT(foo.c(), other::Eq(3));\n"
+                        "EXPECT_THAT(foo.d(), Eq<int>(3));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 4u);
+    for (std::size_t i = 0; i < 4; ++i) EXPECT_FALSE(method(r, i).use.hint.has_value()) << i;
 }
 
 TEST(TestFrontendAssert, MockSetupIsNotCodeUnderTest) {

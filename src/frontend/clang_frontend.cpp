@@ -13,7 +13,9 @@
 
 #if MT_WITH_LIBCLANG
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
+#include <filesystem>
 #include <iterator>
 #include <optional>
 
@@ -27,6 +29,20 @@ namespace mt::frontend {
 bool libclang_supported() { return MT_WITH_LIBCLANG != 0; }
 
 #if MT_WITH_LIBCLANG
+
+int libclang_major_version() {
+    CXString text = clang_getClangVersion();
+    const std::string version = clang_getCString(text) != nullptr ? clang_getCString(text) : "";
+    clang_disposeString(text);
+    static const std::string marker = "clang version ";
+    const std::size_t at = version.find(marker);
+    if (at == std::string::npos) return 0;
+    int major = 0;
+    for (std::size_t i = at + marker.size(); i < version.size() && std::isdigit(static_cast<unsigned char>(version[i])) != 0; ++i) {
+        major = major * 10 + (version[i] - '0');
+    }
+    return major;
+}
 
 namespace {
 
@@ -94,7 +110,7 @@ struct Shape {
     bool is_deleted = false;
     bool is_defaulted = false;
     ir::RefKind ref = ir::RefKind::None;
-    std::optional<std::pair<unsigned, unsigned>> trailing_return;   // the span after `->`, if there is one
+    std::optional<std::pair<std::size_t, std::size_t>> trailing_return;   // the tokens after `->` (first, last), if there are any
 };
 
 bool is_specifier(const std::string& x) {
@@ -119,6 +135,47 @@ std::size_t closing(const std::vector<Tok>& t, std::size_t from) {
     }
     return t.size();
 }
+
+// Where the parameter list of a function's declaration is, in the offsets of its '(' and its ')'.
+struct ParameterList {
+    bool     found = false;
+    unsigned open = 0;
+    unsigned close = 0;
+    bool     c_variadic = false;   // it ends in a C-style `...`, which is not the `...` of a pack
+};
+
+// The parameter list is the first '(' after the name that is not the pair of `operator()` and is not inside the angle
+// brackets of the type a conversion function converts to (`operator Action<U(Args...)>()`).
+ParameterList find_parameter_list(const std::vector<Tok>& t, unsigned name_offset) {
+    ParameterList list;
+    std::size_t i = 0;
+    while (i < t.size() && t[i].begin < name_offset) ++i;
+    if (i < t.size() && t[i].text == "operator") {
+        ++i;
+        if (i + 1 < t.size() && t[i].text == "(" && t[i + 1].text == ")") {
+            i += 2;
+        } else {
+            int angles = 0;
+            for (; i < t.size(); ++i) {
+                if (t[i].text == "<") ++angles;
+                if (t[i].text == ">") --angles;
+                if (t[i].text == ">>") angles -= 2;
+                if (t[i].text == "(" && angles <= 0) break;
+            }
+        }
+    }
+    const std::size_t close = closing(t, i);
+    if (close >= t.size()) return list;
+    while (t[i].text != "(") ++i;
+    list.found = true;
+    list.open = t[i].begin;
+    list.close = t[close].begin;
+    list.c_variadic = close >= i + 2 && t[close - 1].text == "..." && (t[close - 2].text == "(" || t[close - 2].text == ",");
+    return list;
+}
+
+// Whether the tokens of a function's declaration include its parameter list.
+bool has_parameter_list(const std::vector<Tok>& t, unsigned name_offset) { return find_parameter_list(t, name_offset).found; }
 
 Shape read_shape(const std::vector<Tok>& t, unsigned name_offset) {
     Shape s;
@@ -147,7 +204,7 @@ Shape read_shape(const std::vector<Tok>& t, unsigned name_offset) {
                 if (inner <= 0 && (y == ";" || y == "{" || y == "=" || y == "override" || y == "final" || y == "requires")) break;
                 ++last;
             }
-            if (last > k + 1) s.trailing_return = std::make_pair(t[k + 1].begin, t[last - 1].end);
+            if (last > k + 1) s.trailing_return = std::make_pair(k + 1, last - 1);
             k = last - 1;
             continue;
         }
@@ -185,16 +242,20 @@ Shape read_shape(const std::vector<Tok>& t, unsigned name_offset) {
 
 class Reader {
 public:
-    Reader(CXTranslationUnit tu, const std::string& text, const std::vector<QtMarker>& markers, const std::string& main_file,
-           const std::string& file, const std::string& header, ir::Model& model, core::Diagnostics& diagnostics)
-        : tu_(tu), text_(text), markers_(markers), main_file_(main_file), file_(file), header_(header), model_(model),
-          diagnostics_(diagnostics) {}
+    // `opened` is the header as libclang names it; `wrapper`, if not empty, is the file that includes it (see
+    // read_header_clang).
+    Reader(CXTranslationUnit tu, const std::string& text, const std::vector<QtMarker>& markers, const std::string& opened,
+           const std::string& wrapper, const std::string& file, const std::string& header, ir::Model& model,
+           core::Diagnostics& diagnostics)
+        : tu_(tu), text_(text), markers_(markers), main_file_(opened), wrapper_(wrapper), header_file_(clang_getFile(tu, opened.c_str())),
+          file_(file), header_(header), model_(model), diagnostics_(diagnostics) {}
 
     void run() {
         report_diagnostics();
         for (CXCursor c : children(clang_getTranslationUnitCursor(tu_))) {
-            if (clang_getCursorKind(c) == CXCursor_MacroExpansion && in_main_file(c)) macro_expansions_.push_back(span_of(c).begin);
+            if (clang_getCursorKind(c) == CXCursor_MacroExpansion && in_header(c)) macro_expansions_.push_back(span_of(c).begin);
         }
+        std::sort(macro_expansions_.begin(), macro_expansions_.end());
         declarations(clang_getTranslationUnitCursor(tu_));
     }
 
@@ -232,7 +293,12 @@ private:
 
     static unsigned name_offset(CXCursor c) { return offset_of(clang_getCursorLocation(c)); }
 
-    static bool in_main_file(CXCursor c) { return clang_Location_isFromMainFile(clang_getCursorLocation(c)) != 0; }
+    // Whether the cursor is in the header being read and not in one it includes.
+    bool in_header(CXCursor c) const {
+        CXFile file = nullptr;
+        clang_getExpansionLocation(clang_getCursorLocation(c), &file, nullptr, nullptr, nullptr);
+        return file != nullptr && header_file_ != nullptr && clang_File_isEqual(file, header_file_) != 0;
+    }
 
     ir::SourceLoc location_of(CXSourceLocation where) const {
         unsigned line = 0;
@@ -269,12 +335,28 @@ private:
         return text_.substr(begin, std::min<std::size_t>(end, text_.size()) - begin);
     }
 
-    // The tokens of the text between two offsets, comments left out.
+    // Whether the first thing on its line before `offset` is a '#': the offset is where a preprocessor line starts.
+    bool starts_a_directive(unsigned offset) const {
+        std::size_t i = offset;
+        while (i > 0 && (text_[i - 1] == ' ' || text_[i - 1] == '\t')) --i;
+        return (i == 0 || text_[i - 1] == '\n') && offset < text_.size() && text_[offset] == '#';
+    }
+
+    // The end of the preprocessor line that starts at `offset`: the first line break that is not escaped.
+    unsigned directive_end(unsigned offset) const {
+        std::size_t i = offset;
+        while (i < text_.size() && !(text_[i] == '\n' && (i == 0 || text_[i - 1] != '\\'))) ++i;
+        return static_cast<unsigned>(i);
+    }
+
+    // The tokens of the text between two offsets, comments and preprocessor lines left out (a declaration can have an
+    // `#ifdef` in the middle of an expression of its own).
     std::vector<Tok> tokens_in(CXSourceRange range, unsigned limit) const {
         std::vector<Tok> out;
         CXToken* raw = nullptr;
         unsigned count = 0;
         clang_tokenize(tu_, range, &raw, &count);
+        unsigned directive_until = 0;
         for (unsigned i = 0; i < count; ++i) {
             if (clang_getTokenKind(raw[i]) == CXToken_Comment) continue;
             const CXSourceRange r = clang_getTokenExtent(tu_, raw[i]);
@@ -282,10 +364,29 @@ private:
             t.begin = offset_of(clang_getRangeStart(r));
             t.end = offset_of(clang_getRangeEnd(r));
             if (t.begin >= limit) continue;   // some versions return one token past the range
+            if (t.begin < directive_until) continue;
             t.text = to_string(clang_getTokenSpelling(tu_, raw[i]));
+            if (t.text == "#" && starts_a_directive(t.begin)) {
+                directive_until = directive_end(t.begin);
+                continue;
+            }
             out.push_back(std::move(t));
         }
         clang_disposeTokens(tu_, raw, count);
+        return out;
+    }
+
+    // Tokens `first` to `last` (inclusive) as they were written: the text between them as it is, except where it holds
+    // more than blanks (a comment, a preprocessor line in the middle of an expression), which becomes one space.
+    std::string written(const std::vector<Tok>& t, std::size_t first, std::size_t last) const {
+        if (first > last || last >= t.size()) return {};
+        std::string out = slice(t[first].begin, t[first].end);
+        for (std::size_t i = first + 1; i <= last; ++i) {
+            const std::string gap = slice(t[i - 1].end, t[i].begin);
+            const bool blank = std::all_of(gap.begin(), gap.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; });
+            out += blank ? gap : std::string(" ");
+            out += slice(t[i].begin, t[i].end);
+        }
         return out;
     }
 
@@ -293,15 +394,14 @@ private:
 
     // The tokens of a function's declaration. libclang's extent of `auto f() -> decltype(x);` is the two words
     // `auto f`: the trailing return type that has a decltype in it is left out, and so is everything after it (the
-    // parameter list, `const`, `override`). A declaration whose extent has no parameter list is read on, from the same
-    // start, to the `;` or `{` that ends it.
+    // parameter list, `const`, `override`). A declaration whose extent has no parameter list (the `()` of an
+    // `operator()` is not one) is read on, from the same start, to the `;` or `{` that ends it.
     std::vector<Tok> function_tokens(CXCursor c) const {
         std::vector<Tok> t = tokens(c);
-        if (std::any_of(t.begin(), t.end(), [](const Tok& x) { return x.text == "("; })) return t;
-        const CXFile file = clang_getFile(tu_, main_file_.c_str());
-        if (file == nullptr) return t;
+        if (has_parameter_list(t, name_offset(c))) return t;
+        if (header_file_ == nullptr) return t;
         const CXSourceRange rest = clang_getRange(clang_getRangeStart(clang_getCursorExtent(c)),
-                                                  clang_getLocationForOffset(tu_, file, static_cast<unsigned>(text_.size())));
+                                                  clang_getLocationForOffset(tu_, header_file_, static_cast<unsigned>(text_.size())));
         std::vector<Tok> longer;
         int depth = 0;
         for (Tok& x : tokens_in(rest, static_cast<unsigned>(text_.size()))) {
@@ -325,7 +425,19 @@ private:
         unsigned expanded = 0;
         clang_getSpellingLocation(where, nullptr, nullptr, nullptr, &spelled);
         clang_getExpansionLocation(where, nullptr, nullptr, nullptr, &expanded);
-        return spelled != expanded || std::find(macro_expansions_.begin(), macro_expansions_.end(), expanded) != macro_expansions_.end();
+        return spelled != expanded || is_macro_use(expanded);
+    }
+
+    // Whether a macro is used at this offset of the text.
+    bool is_macro_use(unsigned offset) const { return std::binary_search(macro_expansions_.begin(), macro_expansions_.end(), offset); }
+
+    // Whether a macro is used in tokens [from, to): a type with a macro in it (`static YAML_CPP_API std::atomic<size_t> x;`)
+    // is for libclang to spell, because the macro may stand for a word of the type or for nothing at all.
+    bool has_macro_use(const std::vector<Tok>& t, std::size_t from, std::size_t to) const {
+        for (std::size_t i = from; i < to && i < t.size(); ++i) {
+            if (is_macro_use(t[i].begin)) return true;
+        }
+        return false;
     }
 
     ir::Type make(const std::string& spelling, CXSourceLocation where) const {
@@ -400,6 +512,70 @@ private:
         return ir::normalize_spelling(out);
     }
 
+    // For a declaration with several declarators, `int line, column;`: whether the tokens `t` are those of a declarator
+    // after the first (`later`), whether the specifiers could be read (`read`: not when the first declarator is a function
+    // pointer) and where they end (`end`): before the name of the first declarator, less the stars and references that
+    // belong to it. `name_at` is the token that names the declarator the tokens are of.
+    struct SharedSpecifiers {
+        bool        later = false;
+        bool        read = false;
+        std::size_t end = 0;         // the specifiers are tokens [0, end)
+        std::size_t own_start = 0;   // the declarator the tokens are of starts here (after the last comma before its name)
+    };
+
+    static SharedSpecifiers shared_specifiers(const std::vector<Tok>& t, std::size_t name_at) {
+        SharedSpecifiers result;
+        if (name_at == std::string::npos) return result;
+        std::size_t comma = std::string::npos;   // the first comma, which ends the first declarator
+        std::size_t last = std::string::npos;    // the last before the name, which starts this declarator
+        int depth = 0;
+        int angles = 0;
+        for (std::size_t i = 0; i < name_at && i < t.size(); ++i) {
+            const std::string& x = t[i].text;
+            if (x == "(" || x == "[" || x == "{") ++depth;
+            if (x == ")" || x == "]" || x == "}") --depth;
+            if (depth == 0 && x == "<") ++angles;
+            if (depth == 0 && x == ">" && angles > 0) --angles;
+            if (depth == 0 && x == ">>" && angles > 0) angles = std::max(0, angles - 2);
+            if (depth == 0 && angles == 0 && x == ",") {
+                if (comma == std::string::npos) comma = i;
+                last = i;
+            }
+        }
+        if (comma == std::string::npos) return result;
+        result.later = true;
+        result.own_start = last + 1;
+        // The first declarator ends at the comma; its name is the last identifier before whatever follows the name.
+        std::size_t stop = comma;
+        for (std::size_t i = 0; i < comma; ++i) {
+            const std::string& x = t[i].text;
+            if (x == "(") return result;                      // a function pointer, or a function: not read
+            if (x == "=" || x == "{" || x == "[" || x == ":") {
+                stop = i;
+                break;
+            }
+        }
+        std::size_t name = std::string::npos;
+        for (std::size_t i = stop; i-- > 0;) {
+            const char first = t[i].text.empty() ? ' ' : t[i].text[0];
+            if (std::isalpha(static_cast<unsigned char>(first)) != 0 || first == '_') {
+                name = i;
+                break;
+            }
+        }
+        if (name == std::string::npos || name == 0) return result;
+        std::size_t end = name;
+        while (end > 0) {
+            const std::string& x = t[end - 1].text;
+            const bool qualifier = (x == "const" || x == "volatile") && end >= 2 && (t[end - 2].text == "*" || t[end - 2].text == "&" || t[end - 2].text == "&&");
+            if (x == "*" || x == "&" || x == "&&" || qualifier) --end;
+            else break;
+        }
+        result.read = end > 0;
+        result.end = end;
+        return result;
+    }
+
     // The type a parameter or a field declares, as written: its declaration without the name and
     // without what follows it (= initialiser, {initialiser}, : bits). A declaration libclang cannot
     // make sense of (a type it does not know) is still read this way, which is the point.
@@ -429,21 +605,45 @@ private:
                 break;
             }
         }
-        const std::string written = spelled(t, 0, end, skip);
-        return written.empty() ? type_of(clang_getCursorType(c), where) : make(written, where);
+        // `int line, column;` and `unsigned char *p, q, **r[2];`: the cursor of the second starts where the whole
+        // declaration does, so its tokens hold the declarators before it. Its type is the specifiers, then what is
+        // written around its own name: the stars before it, the array after it.
+        const SharedSpecifiers shared = shared_specifiers(t, skip);
+        if (shared.later) {
+            if (!shared.read) return type_of(clang_getCursorType(c), where);
+            std::vector<Tok> own(t.begin(), t.begin() + static_cast<std::ptrdiff_t>(shared.end));
+            own.insert(own.end(), t.begin() + static_cast<std::ptrdiff_t>(shared.own_start), t.begin() + static_cast<std::ptrdiff_t>(skip));
+            int nesting = 0;
+            for (std::size_t i = skip + 1; i < t.size(); ++i) {
+                const std::string& x = t[i].text;
+                if (x == "(" || x == "[") ++nesting;
+                if (x == ")" || x == "]") --nesting;
+                if (nesting == 0 && (x == "=" || x == "{" || x == ":" || x == ",")) break;
+                own.push_back(t[i]);
+            }
+            if (has_macro_use(own, 0, own.size())) return type_of(clang_getCursorType(c), where);
+            const std::string text = spelled(own, 0, own.size(), std::string::npos);
+            return text.empty() ? type_of(clang_getCursorType(c), where) : make(text, where);
+        }
+        if (has_macro_use(t, 0, end)) return type_of(clang_getCursorType(c), where);
+        const std::string text = spelled(t, 0, end, skip);
+        return text.empty() ? type_of(clang_getCursorType(c), where) : make(text, where);
     }
 
     // What a function returns, as written: the declaration before its name, or what follows `->`.
     ir::Type return_type(CXCursor c, const std::vector<Tok>& t, const Shape& shape) const {
         const CXSourceLocation where = clang_getRangeStart(clang_getCursorExtent(c));
         if (!from_macro(c)) {
-            if (shape.trailing_return) return make(ir::normalize_spelling(slice(shape.trailing_return->first, shape.trailing_return->second)), where);
+            if (shape.trailing_return) {
+                if (has_macro_use(t, shape.trailing_return->first, shape.trailing_return->second + 1)) return type_of(clang_getCursorResultType(c), where);
+                return make(ir::normalize_spelling(written(t, shape.trailing_return->first, shape.trailing_return->second)), where);
+            }
             const std::size_t name_at = index_at(t, name_offset(c));
             if (name_at != std::string::npos) {
                 // `void (*get())(int)` has its name inside its own type: that is for libclang to spell.
-                const bool nested = has_declarator_parentheses(t, name_at);
-                const std::string written = nested ? std::string() : spelled(t, 0, name_at, std::string::npos);
-                if (!written.empty()) return make(written, where);
+                const bool nested = has_declarator_parentheses(t, name_at) || has_macro_use(t, 0, name_at);
+                const std::string text = nested ? std::string() : spelled(t, 0, name_at, std::string::npos);
+                if (!text.empty()) return make(text, where);
             }
         }
         return type_of(clang_getCursorResultType(c), where);
@@ -466,7 +666,7 @@ private:
                     clang_getExpansionLocation(clang_getDiagnosticLocation(d), &file, &line, &column, nullptr);
                     ir::SourceLoc where;
                     where.file = file == nullptr ? std::string() : to_string(clang_getFileName(file));
-                    if (where.file == main_file_) where.file = file_;
+                    if (where.file == main_file_ || (!wrapper_.empty() && where.file == wrapper_)) where.file = file_;
                     where.line = line;
                     where.column = column;
                     diagnostics_.warning(core::code::parse, "libclang: " + to_string(clang_getDiagnosticSpelling(d)) + "; declarations around it may be missing or have wrong types", where);
@@ -508,7 +708,7 @@ private:
     }
 
     void declaration(CXCursor c) {
-        if (!in_main_file(c)) return;
+        if (!in_header(c)) return;
         switch (clang_getCursorKind(c)) {
             case CXCursor_Namespace: {
                 const std::string name = to_string(clang_getCursorSpelling(c));
@@ -519,6 +719,7 @@ private:
                 break;
             }
             case CXCursor_LinkageSpec:
+            case CXCursor_UnexposedDecl:   // `extern "C" { ... }` in libclang 14, which has no kind for it
                 declarations(c);
                 break;
             case CXCursor_InclusionDirective:
@@ -565,7 +766,7 @@ private:
             if (t[i].text == "<") ++depth;
             if (t[i].text == ">") --depth;
             if (t[i].text == ">>") depth -= 2;
-            if (depth <= 0) return ir::normalize_spelling(slice(t[at].begin, t[i].end));
+            if (depth <= 0) return ir::normalize_spelling(written(t, at, i));
         }
         return name;
     }
@@ -588,7 +789,7 @@ private:
     // ---- enums ------------------------------------------------------------------------------------
 
     void enum_definition(CXCursor c) {
-        const std::string name = to_string(clang_getCursorSpelling(c));
+        const std::string name = declared_name(c);
         if (is_unnamed(name) || clang_isCursorDefinition(c) == 0) return;   // anonymous, or a forward declaration
         ir::Enum e;
         e.name = name;
@@ -613,7 +814,7 @@ private:
         std::size_t last = i + 1;
         while (last < t.size() && t[last].text != "{" && t[last].text != ";") ++last;
         if (last == i + 1) return std::nullopt;
-        return ir::normalize_spelling(slice(t[i + 1].begin, t[last - 1].end));
+        return ir::normalize_spelling(written(t, i + 1, last - 1));
     }
 
     // ---- free functions ----------------------------------------------------------------------------
@@ -636,16 +837,25 @@ private:
 
     // The parameters of the function itself: not those of a function pointer it returns, which libclang also lists among
     // the children (`void (*get(int a))(int b)` has `b` among them, and before `a`). It can say how many are the function's
-    // own for a function but not for a function template, whose children are all there is.
+    // own for a function but not for a function template, whose children are all there is: those between the
+    // parentheses of the parameter list, which the tokens say (the type a conversion function converts to can have
+    // parameters of its own, `operator Action<U(Args...)>()`), and its C-style `...` is told by them too.
     std::vector<ir::Param> parameters(CXCursor function) const {
         std::vector<CXCursor> declared;
         const int own = clang_Cursor_getNumArguments(function);
+        bool c_variadic = clang_Cursor_isVariadic(function) != 0;
         if (own >= 0) {
             for (int i = 0; i < own; ++i) declared.push_back(clang_Cursor_getArgument(function, static_cast<unsigned>(i)));
         } else {
+            ParameterList list;
+            if (!from_macro(function)) list = find_parameter_list(function_tokens(function), name_offset(function));
             for (CXCursor p : children(function)) {
-                if (clang_getCursorKind(p) == CXCursor_ParmDecl) declared.push_back(p);
+                if (clang_getCursorKind(p) != CXCursor_ParmDecl) continue;
+                const unsigned at = span_of(p).begin;
+                if (list.found && (at < list.open || at > list.close)) continue;
+                declared.push_back(p);
             }
+            c_variadic = c_variadic || list.c_variadic;
         }
         std::vector<ir::Param> params;
         for (CXCursor p : declared) {
@@ -655,7 +865,7 @@ private:
             param.default_value = default_value(p);
             params.push_back(std::move(param));
         }
-        if (clang_Cursor_isVariadic(function) != 0) {
+        if (c_variadic) {
             ir::Param ellipsis;
             ellipsis.type.spelling = "...";
             ellipsis.type.base = "...";
@@ -666,15 +876,55 @@ private:
         return params;
     }
 
+    // The text of the default argument of a parameter that a macro declares, from the spellings of the tokens
+    // libclang tokenises for it. The offsets of a token that came out of a macro are those of the place where the
+    // macro was used, so a slice of the text would be a piece of whatever is there; and the range of the tokens
+    // runs on past the end of the expression, to the end of the use, so it is cut where the expression ends: at a `,`
+    // outside parentheses and angle brackets, at a `)` that closes nothing, or at a `;`.
+    std::string default_by_tokens(CXCursor expression) const {
+        CXToken* raw = nullptr;
+        unsigned count = 0;
+        clang_tokenize(tu_, clang_getCursorExtent(expression), &raw, &count);
+        std::string out;
+        const auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+        int depth = 0;
+        int angles = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            if (clang_getTokenKind(raw[i]) == CXToken_Comment) continue;
+            const std::string text = to_string(clang_getTokenSpelling(tu_, raw[i]));
+            if (text == "(" || text == "[" || text == "{") ++depth;
+            if (text == ")" || text == "]" || text == "}") {
+                if (depth == 0) break;
+                --depth;
+            }
+            if (depth == 0 && text == "<") ++angles;
+            if (depth == 0 && text == ">" && angles > 0) --angles;
+            if (depth == 0 && text == ">>" && angles > 0) angles = std::max(0, angles - 2);
+            if (depth == 0 && angles == 0 && (text == "," || text == ";")) break;
+            if (!out.empty() && !text.empty() && word(out.back()) && word(text.front())) out += ' ';
+            out += text;
+        }
+        clang_disposeTokens(tu_, raw, count);
+        return out;
+    }
+
     // What follows the first top-level '=' of a parameter, as it was written.
     std::optional<std::string> default_value(CXCursor param) const {
+        if (from_macro(param)) {
+            for (CXCursor child : children(param)) {
+                if (clang_isExpression(clang_getCursorKind(child)) == 0) continue;
+                const std::string text = default_by_tokens(child);
+                return text.empty() ? std::nullopt : std::optional<std::string>(text);
+            }
+            return std::nullopt;
+        }
         const std::vector<Tok> t = tokens(param);
         int depth = 0;
         for (std::size_t i = 0; i < t.size(); ++i) {
             const std::string& x = t[i].text;
             if (x == "(" || x == "[" || x == "{") ++depth;
             if (x == ")" || x == "]" || x == "}") --depth;
-            if (depth == 0 && x == "=" && i + 1 < t.size()) return slice(t[i + 1].begin, t.back().end);
+            if (depth == 0 && x == "=" && i + 1 < t.size()) return written(t, i + 1, t.size() - 1);
         }
         return std::nullopt;
     }
@@ -706,9 +956,42 @@ private:
         return any ? ir::collapse_spaces(slice(all.begin, all.end)) : std::string();
     }
 
-    void class_definition(CXCursor c, const std::optional<std::string>& template_params) {
+    // The name of a class or an enum. libclang 14 and 15 leave the name that a typedef gives an anonymous one
+    // (`typedef struct { int b; } Named;`) out of the spelling of its cursor and keep it in the spelling of its type, qualified.
+    std::string declared_name(CXCursor c) const {
         const std::string name = to_string(clang_getCursorSpelling(c));
+        if (!name.empty()) return name;
+        const std::string type = to_string(clang_getTypeSpelling(clang_getCursorType(c)));
+        const std::size_t scope = type.rfind("::");
+        return is_unnamed(type) || scope == std::string::npos ? type : type.substr(scope + 2);
+    }
+
+    // The name after the `class` or `struct` of a definition, as it was written (`Outer::Inner`, `Tpl<T>::Node`).
+    std::string written_class_name(CXCursor c) const {
+        const std::vector<Tok> t = tokens(c);
+        std::size_t first = 0;
+        while (first < t.size() && t[first].text != "class" && t[first].text != "struct" && t[first].text != "union") ++first;
+        ++first;
+        std::size_t last = first;
+        int angles = 0;
+        for (; last < t.size(); ++last) {
+            const std::string& x = t[last].text;
+            if (x == "<") ++angles;
+            if (x == ">") --angles;
+            if (x == ">>") angles -= 2;
+            if (angles <= 0 && (x == "{" || x == ":" || x == "final")) break;
+        }
+        return first < last ? ir::normalize_spelling(written(t, first, last - 1)) : to_string(clang_getCursorSpelling(c));
+    }
+
+    void class_definition(CXCursor c, const std::optional<std::string>& template_params) {
+        const std::string name = declared_name(c);
         if (is_unnamed(name)) return;
+        if (clang_equalCursors(clang_getCursorSemanticParent(c), clang_getCursorLexicalParent(c)) == 0) {
+            // `struct Outer::Inner { ... };`: defined outside the class that declares it.
+            unsupported("the class '" + written_class_name(c) + "' is defined outside the class that declares it, which is not supported; it is skipped", c);
+            return;
+        }
         read_class(find_or_add_class(name), c, template_params);
     }
 
@@ -750,7 +1033,7 @@ private:
         const auto flush = [&] {
             if (first != std::string::npos) {
                 ir::BaseSpec base;
-                base.name = ir::normalize_spelling(slice(t[first].begin, t[last].end));
+                base.name = ir::normalize_spelling(written(t, first, last));
                 base.access = access;
                 base.is_virtual = is_virtual;
                 cls.bases.push_back(std::move(base));
@@ -899,6 +1182,28 @@ private:
         return invokable ? ir::QtRole::Invokable : ir::QtRole::None;
     }
 
+    // `operator Matcher<T>`: the type after `operator`, as written. libclang names the conversion function of a template
+    // with the canonical names of its parameters (`operator Matcher<type-parameter-0-0>`).
+    std::string conversion_name(CXCursor c, const std::vector<Tok>& t, const std::string& api_name) const {
+        if (!from_macro(c)) {
+            const std::size_t at = index_at(t, name_offset(c));
+            if (at != std::string::npos && at < t.size() && t[at].text == "operator") {
+                std::size_t end = at + 1;
+                int angles = 0;
+                for (; end < t.size(); ++end) {
+                    const std::string& x = t[end].text;
+                    if (x == "<") ++angles;
+                    if (x == ">") --angles;
+                    if (x == ">>") angles -= 2;
+                    if (x == "(" && angles <= 0) break;
+                }
+                const std::string written = end > at + 1 && end < t.size() ? spelled(t, at + 1, end, std::string::npos) : std::string();
+                if (!written.empty()) return "operator " + written;
+            }
+        }
+        return "operator " + ir::normalize_spelling(api_name.substr(std::min<std::size_t>(api_name.size(), 8)));
+    }
+
     void method(CXCursor c, ClassState& state, bool is_template) {
         const CXCursorKind kind = is_template ? clang_getTemplateCursorKind(c) : clang_getCursorKind(c);
         if (is_template && !is_method_kind(kind)) return;   // a member class template, for one: not a member to test
@@ -919,7 +1224,7 @@ private:
                 break;
             case CXCursor_ConversionFunction:
                 m.kind = ir::MethodKind::Conversion;
-                m.name = "operator " + ir::normalize_spelling(spelled.substr(std::min<std::size_t>(spelled.size(), 8)));
+                m.name = conversion_name(c, t, spelled);
                 break;
             default:
                 m.name = ir::normalize_operator_name(spelled);
@@ -969,6 +1274,8 @@ private:
     const std::string&           text_;
     const std::vector<QtMarker>& markers_;
     const std::string&           main_file_;
+    const std::string&           wrapper_;
+    CXFile                       header_file_;
     const std::string&           file_;
     const std::string&           header_;
     ir::Model&                   model_;
@@ -983,22 +1290,41 @@ ir::Model read_header_clang(const core::SourceFile& source, const std::string& i
                             const ClangOptions& options, core::Diagnostics& diagnostics) {
     ir::Model model;
     const syntax::Preprocessed pre = syntax::preprocess(source.text, macros);
-    const std::string opened = options.absolute_path.empty() ? source.path : options.absolute_path;
+    std::string opened = options.absolute_path;
+    if (opened.empty()) {
+        // libclang finds the file that a wrapper includes by its directory, which a bare name does not have.
+        std::error_code ec;
+        const std::filesystem::path absolute = std::filesystem::absolute(source.path, ec);
+        opened = ec ? source.path : absolute.lexically_normal().string();
+    }
 
     std::vector<std::string> arguments = {"-x", "c++"};
     arguments.insert(arguments.end(), options.arguments.begin(), options.arguments.end());
     std::vector<const char*> argv;
     for (const std::string& a : arguments) argv.push_back(a.c_str());
 
-    CXUnsavedFile unsaved;
-    unsaved.Filename = opened.c_str();
-    unsaved.Contents = pre.text.c_str();
-    unsaved.Length = static_cast<unsigned long>(pre.text.size());
+    // The header is not the file libclang parses but one that a file of its own includes, as it is in a program. Parsed as
+    // the main file, a `#pragma once` is ignored (a compiler warns about it), and a header that is included back from the
+    // end of the file it includes at the beginning (CLI11's `Foo.hpp` and `impl/Foo_inl.hpp`) is read twice, and each of its
+    // declarations is a redefinition. A name that cannot be written in an `#include` is the exception.
+    const std::string name = std::filesystem::path(opened).filename().string();
+    const bool wrapped = !name.empty() && name.find_first_of("\"\n\r") == std::string::npos;
+    const std::string wrapper = wrapped ? opened + ".mirrortest.cpp" : std::string();
+    const std::string wrapper_text = "#include \"" + name + "\"\n";
+
+    CXUnsavedFile unsaved[2];
+    unsaved[0].Filename = opened.c_str();
+    unsaved[0].Contents = pre.text.c_str();
+    unsaved[0].Length = static_cast<unsigned long>(pre.text.size());
+    unsaved[1].Filename = wrapper.c_str();
+    unsaved[1].Contents = wrapper_text.c_str();
+    unsaved[1].Length = static_cast<unsigned long>(wrapper_text.size());
 
     CXIndex index = clang_createIndex(0, 0);
     CXTranslationUnit tu = nullptr;
     const unsigned flags = CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_SkipFunctionBodies;
-    const CXErrorCode error = clang_parseTranslationUnit2(index, opened.c_str(), argv.data(), static_cast<int>(argv.size()), &unsaved, 1, flags, &tu);
+    const CXErrorCode error = clang_parseTranslationUnit2(index, wrapped ? wrapper.c_str() : opened.c_str(), argv.data(),
+                                                          static_cast<int>(argv.size()), unsaved, wrapped ? 2 : 1, flags, &tu);
     if (error != CXError_Success || tu == nullptr) {
         ir::SourceLoc where;
         where.file = source.path;
@@ -1008,13 +1334,15 @@ ir::Model read_header_clang(const core::SourceFile& source, const std::string& i
         return model;
     }
 
-    Reader(tu, pre.text, pre.markers, opened, source.path, include_path, model, diagnostics).run();
+    Reader(tu, pre.text, pre.markers, opened, wrapper, source.path, include_path, model, diagnostics).run();
     clang_disposeTranslationUnit(tu);
     clang_disposeIndex(index);
     return model;
 }
 
 #else  // !MT_WITH_LIBCLANG
+
+int libclang_major_version() { return 0; }
 
 ir::Model read_header_clang(const core::SourceFile& source, const std::string&, const syntax::MacroTable&, const ClangOptions&,
                             core::Diagnostics& diagnostics) {

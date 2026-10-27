@@ -120,6 +120,12 @@ struct Method {
     // Free text, one line each. gen-impl emits them as "TODO(mt): ..." next
     // to the declaration; gen-tests ignores them.
     std::vector<std::string> notes;
+
+    // The conditions of the `#if` branches the declaration is in, inside the class (those the class is in are its own),
+    // outermost first, each as the text of an `#if` that is true when the branch is taken: `defined(USE_DMA)`, and in
+    // the `#else` of it `!(defined(USE_DMA))`. Only the syntax-tree reader reads them; libclang reads the branch that
+    // builds. A test of the method is written under the same conditions.
+    std::vector<std::string> guards;
 };
 
 struct Field {
@@ -148,6 +154,9 @@ struct Class {
     std::vector<std::string> inherited_constructors;
     // What concerns the class as a whole (why it has the base it has), as the TODO(mt) lines above its first member.
     std::vector<std::string> notes;
+    // The conditions of the `#if` branches the class is defined in (for a nested class, inside the class around it),
+    // as for Method::guards. The tests of the class are written under the same conditions.
+    std::vector<std::string> guards;
     std::vector<Method>      methods;   // declaration order
     std::vector<Field>       fields;
     // Names of member types (nested class/struct/enum, typedef, using). Out
@@ -192,6 +201,7 @@ struct Function {
     Origin                   origin = Origin::Declared;
     SourceLoc                where;
     std::vector<std::string> notes;
+    std::vector<std::string> guards;   // the `#if` conditions the function is under, as for Method::guards
 };
 
 struct Enum {
@@ -268,6 +278,7 @@ struct DataTable {
 struct TestCase {
     std::string                name;          // a valid identifier
     std::string                target;        // "acme::Foo::size() const": for messages only
+    std::vector<std::string>   guards;        // the `#if` conditions the target is under (Method::guards), outermost first
     std::vector<Stmt>          body;
     std::optional<DataTable>   data;
 };
@@ -291,6 +302,7 @@ struct TestSuite {
     std::string              name;            // "FooTest"; QTest: the test class
     std::string              target_class;    // "Foo"
     std::vector<std::string> ns;              // emitted inside these namespaces
+    std::vector<std::string> guards;          // the `#if` conditions the class is under (Class::guards), outermost first
     std::optional<Fixture>   fixture;
     std::vector<TestCase>    cases;
 };

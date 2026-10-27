@@ -253,6 +253,235 @@ TEST_F(SpikeHeader, EnumsAndFreeFunctions) {
 
 // ---- scopes ------------------------------------------------------------------------------------
 
+// ---- what running it on real headers showed -------------------------------------------------------------------------
+
+TEST(CodeFrontendRealHeaders, ABracedDefaultHasNoBlankAroundIt) {
+    // The node of `= {}` starts at the blank after the `=`.
+    const Read r = read("template <typename S> class Fn {};\n"
+                        "class K { public: void run(Fn<void()> a = {}, Fn<int()> b =   { 1, 2 }  , int c = (3)); };\n");
+    const ir::Class& k = the_class(r, "K");
+    ASSERT_EQ(k.methods.size(), 1u);
+    const std::vector<ir::Param>& p = k.methods[0].params;
+    ASSERT_EQ(p.size(), 3u);
+    EXPECT_EQ(p[0].default_value, std::optional<std::string>("{}"));
+    EXPECT_EQ(p[1].default_value, std::optional<std::string>("{ 1, 2 }"));
+    EXPECT_EQ(p[2].default_value, std::optional<std::string>("(3)"));
+}
+
+TEST(CodeFrontendRealHeaders, ADestructorCanBePureVirtual) {
+    // Found with GoogleTest's MatchResultListener: the grammar reads `~L() = 0;` as a definition with a pure-virtual clause.
+    const Read r = read("class Listener {\npublic:\n    virtual ~Listener() = 0;\n    virtual void f() = 0;\n    virtual void g();\n"
+                        "    virtual ~Other() = default;\n};\n");
+    const ir::Class& c = the_class(r, "Listener");
+    ASSERT_GE(c.methods.size(), 3u);
+    EXPECT_EQ(c.methods[0].kind, ir::MethodKind::Destructor);
+    EXPECT_TRUE(c.methods[0].is_pure);
+    EXPECT_TRUE(c.methods[0].is_virtual);
+    EXPECT_TRUE(c.methods[1].is_pure);
+    EXPECT_FALSE(c.methods[2].is_pure);
+}
+
+TEST(CodeFrontendRealHeaders, WhatTheParserMadeOfTextItCouldNotReadIsNotAMember) {
+    // A comma expression with template-ids in a decltype: tree-sitter-cpp gives up on it and the recovery leaves
+    // pieces that look like declarations (a field called `std::declval<A>`).
+    const Read r = read("template <typename T> struct X {\n"
+                        "    template <typename A> static auto test(int) -> decltype(std::declval<A>().real(), std::declval<A>().imag(), std::true_type());\n"
+                        "    template <typename, typename> static auto other(...) -> std::false_type;\n"
+                        "    int real_member;\n"
+                        "    void real_method() const;\n"
+                        "};\n");
+    const ir::Class& x = the_class(r, "X");
+    for (const ir::Field& f : x.fields) {
+        EXPECT_EQ(f.name.find_first_of(":<> "), std::string::npos) << "field '" << f.name << "'";
+        EXPECT_FALSE(f.name.empty());
+    }
+    for (const ir::Method& m : x.methods) {
+        EXPECT_EQ(m.name.find_first_of(":<> "), std::string::npos) << "method '" << m.name << "'";
+        EXPECT_FALSE(m.name.empty());
+    }
+    bool has_real_member = false;
+    bool has_real_method = false;
+    for (const ir::Field& f : x.fields) has_real_member = has_real_member || f.name == "real_member";
+    for (const ir::Method& m : x.methods) has_real_method = has_real_method || m.name == "real_method";
+    EXPECT_TRUE(has_real_member);
+    EXPECT_TRUE(has_real_method);
+    EXPECT_FALSE(r.diagnostics.empty()) << "and the parser did say it could not make sense of the text";
+}
+
+namespace {
+
+std::vector<std::string> parse_warnings(const Read& r) {
+    std::vector<std::string> out;
+    for (const core::Diagnostic& d : r.diagnostics.all()) {
+        if (d.code == core::code::parse) out.push_back(d.message);
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(CodeFrontendRealHeaders, AnErrorInTheConditionOfAnIfIsNotAWarning) {
+    // GoogleTest: `#if defined(__cpp_lib_any) || (GTEST_INTERNAL_HAS_INCLUDE(<any>) && ...)`. The parser cannot read
+    // `<any>` as an argument; nothing is lost, because every branch is read whatever the condition says.
+    const Read r = read("#if defined(__cpp_lib_any) || \\\n"
+                        "    (HAS_INCLUDE(<any>) && LANG >= 201703L)\n"
+                        "#include <any>\n"
+                        "class A { public: int x(); };\n"
+                        "#elif HAS_INCLUDE(<optional>)\n"
+                        "class B { public: int y(); };\n"
+                        "#else\n"
+                        "class D { public: int w(); };\n"
+                        "#endif\n"
+                        "class C { public: int z(); };\n");
+    EXPECT_TRUE(parse_warnings(r).empty()) << parse_warnings(r).front();
+    for (const char* name : {"A", "B", "C", "D"}) EXPECT_NE(find_class(r, name), nullptr) << name;
+
+    // The same with the line breaks of Windows.
+    const Read crlf = read("#if 1\r\n"
+                           "class A { public: int x(); };\r\n"
+                           "#elif HAS_INCLUDE(<optional>)\r\n"
+                           "class B { public: int y(); };\r\n"
+                           "#endif\r\n");
+    EXPECT_TRUE(parse_warnings(crlf).empty()) << parse_warnings(crlf).front();
+    EXPECT_NE(find_class(crlf, "B"), nullptr);
+
+    // Indented, as some projects write them.
+    const Read indented = read("#if 1\n"
+                               "class A { public: int x(); };\n"
+                               "  \t # elif HAS_INCLUDE(<optional>)\n"
+                               "class B { public: int y(); };\n"
+                               "#endif\n");
+    EXPECT_TRUE(parse_warnings(indented).empty()) << parse_warnings(indented).front();
+
+    // Far from the start of the file.
+    std::string padded;
+    for (int i = 0; i < 100; ++i) padded += "// a comment that makes the directive start far from the beginning of the file\n";
+    padded += "#if defined(X) || \\\n    (HAS_INCLUDE(<any>) && LANG >= 201703L)\nclass A { public: int x(); };\n#endif\n";
+    EXPECT_TRUE(parse_warnings(read(padded)).empty()) << parse_warnings(read(padded)).front();
+
+    // A directive is looked for within 4 KiB (so that a file of one long line is not a quadratic walk): a longer one
+    // is reported.
+    std::string long_directive = "#if 1\nclass A { public: int x(); };\n#elif 1";
+    for (int i = 0; i < 700; ++i) long_directive += " && 1 \\\n";
+    long_directive += " && HAS_INCLUDE(<optional>)\nclass B { public: int y(); };\n#endif\n";
+    EXPECT_FALSE(parse_warnings(read(long_directive)).empty());
+
+    // An error in the branch is still one.
+    const Read inside = read("#if 1\n"
+                             "CMP_HELPER(LT, <)\n"
+                             "#endif\n");
+    EXPECT_FALSE(parse_warnings(inside).empty());
+}
+
+TEST(CodeFrontendRealHeaders, AParameterThatIsAPointerToMemberSkipsItsFunctionWithAWarning) {
+    // The grammar makes `int S::*p` a parameter called `S::*p` of type `int`; a test of it would not compile.
+    const Read r = read("struct S {\n"
+                        "    int member;\n"
+                        "    void take(int S::*p, int ok);\n"
+                        "    void call(int (S::*f)(int));\n"
+                        "    void plain(int a, const char* b);\n"
+                        "    void arrays(int (&a)[3], int (*b)[4], void (&c)(int), const char* (*d)(int));\n"
+                        "};\n"
+                        "void free_take(int S::*p);\n"
+                        "void free_plain(int a);\n");
+    const ir::Class& s = the_class(r, "S");
+    EXPECT_EQ(method_names(s), (std::vector<std::string>{"plain", "arrays"})) << "a reference or a pointer is not a pointer to member";
+    ASSERT_EQ(r.model.functions.size(), 1u);
+    EXPECT_EQ(r.model.functions[0].name, "free_plain");
+
+    std::vector<std::string> said;
+    for (const core::Diagnostic& d : r.diagnostics.all()) {
+        if (d.code == core::code::unsupported) said.push_back(d.message);
+    }
+    ASSERT_EQ(said.size(), 3u);
+    EXPECT_NE(said[0].find("'take' has a pointer-to-member parameter"), std::string::npos) << said[0];
+    EXPECT_NE(said[1].find("'call'"), std::string::npos) << said[1];
+    EXPECT_NE(said[2].find("'free_take'"), std::string::npos) << said[2];
+}
+
+TEST(CodeFrontendRealHeaders, AMacroInFrontOfOverrideIsNotAFieldCalledOverride) {
+    // yaml-cpp: `~Exception() YAML_CPP_NOEXCEPT override;`
+    const std::string text = "struct Base { virtual ~Base(); virtual void run(); };\n"
+                             "struct Derived : Base {\n"
+                             "    ~Derived() MYLIB_NOEXCEPT override;\n"
+                             "    void run() MYLIB_NOEXCEPT final;\n"
+                             "    int kept;\n"
+                             "};\n";
+    const Read r = read(text);
+    const ir::Class& d = the_class(r, "Derived");
+    ASSERT_EQ(d.fields.size(), 1u);
+    EXPECT_EQ(d.fields[0].name, "kept");
+    const std::vector<std::string> warnings = parse_warnings(r);
+    std::size_t in_front_of_the_keyword = 0;
+    for (const std::string& w : warnings) {
+        if (w.find("macro of the project in front of the keyword") != std::string::npos) ++in_front_of_the_keyword;
+    }
+    EXPECT_EQ(in_front_of_the_keyword, 2u) << "one for `override` and one for `final`";
+
+    syntax::MacroTable macros;
+    macros.ignore = {"MYLIB_NOEXCEPT"};
+    const Read ok = read(text, "foo.h", macros);
+    EXPECT_TRUE(parse_warnings(ok).empty());
+    ASSERT_NE(find_method(the_class(ok, "Derived"), "run"), nullptr);
+    EXPECT_EQ(the_class(ok, "Derived").fields.size(), 1u);
+}
+
+TEST(CodeFrontendRealHeaders, AMacroWhoseArgumentsAreNotCppLosesTheFileAndTheWarningSaysSo) {
+    // GoogleTest's `GTEST_IMPL_CMP_HELPER_(LT, <)` at namespace scope: the `<` opens a template argument list for the
+    // parser, which then recovers by wrapping the rest of the file in one error. Nothing in it is read.
+    const Read r = read("#ifndef G_H\n"
+                        "#define G_H\n"
+                        "namespace testing {\n"
+                        "class Before { public: int one(); };\n"
+                        "CMP_HELPER(NE, !=)\n"
+                        "CMP_HELPER(LE, <=)\n"
+                        "CMP_HELPER(LT, <)\n"
+                        "CMP_HELPER(GE, >=)\n"
+                        "CMP_HELPER(GT, >)\n"
+                        "class After { public: int two(); };\n"
+                        "}\n"
+                        "#endif\n");
+    const std::vector<std::string> warnings = parse_warnings(r);
+    ASSERT_EQ(warnings.size(), 1u);
+    EXPECT_NE(warnings[0].find("lost the structure of most of this file"), std::string::npos) << warnings[0];
+    EXPECT_NE(warnings[0].find("ignore_macros"), std::string::npos) << warnings[0];
+
+    // The macro in `ignore_macros` is gone for the parser, and everything is where it was.
+    syntax::MacroTable macros;
+    macros.ignore = {"CMP_HELPER"};
+    const Read ok = read("#ifndef G_H\n"
+                         "#define G_H\n"
+                         "namespace testing {\n"
+                         "class Before { public: int one(); };\n"
+                         "CMP_HELPER(NE, !=)\n"
+                         "CMP_HELPER(LT, <)\n"
+                         "CMP_HELPER(GT, >)\n"
+                         "class After { public: int two(); };\n"
+                         "}\n"
+                         "#endif\n",
+                         "foo.h", macros);
+    EXPECT_TRUE(parse_warnings(ok).empty());
+    EXPECT_EQ(the_class(ok, "Before").ns, (std::vector<std::string>{"testing"}));
+    EXPECT_EQ(the_class(ok, "After").ns, (std::vector<std::string>{"testing"}));
+}
+
+TEST(CodeFrontendRealHeaders, ASmallParseErrorKeepsTheGenericWarning) {
+    const Read r = read("class A { public: int one(); };\n"
+                        "class B { public: int two(); };\n"
+                        "class C { public: int three(); };\n"
+                        "CMP_HELPER(LT, <)\n"
+                        "class D { public: int four(); };\n"
+                        "class E { public: int five(); };\n"
+                        "class F { public: int six(); };\n");
+    const std::vector<std::string> warnings = parse_warnings(r);
+    ASSERT_FALSE(warnings.empty());
+    for (const std::string& w : warnings) {
+        EXPECT_NE(w.find("could not make sense of this text"), std::string::npos) << w;
+        EXPECT_EQ(w.find("most of this file"), std::string::npos) << w;
+    }
+    EXPECT_NE(find_class(r, "A"), nullptr);
+}
+
 TEST(CodeFrontendScopes, NestedAndCompactNamespaces) {
     const Read r = read("namespace a { namespace b { class X {}; } }\nnamespace c::d::e { class Y {}; }");
     EXPECT_EQ(the_class(r, "X").ns, (std::vector<std::string>{"a", "b"}));
@@ -973,3 +1202,105 @@ TEST(CodeFrontendUnsupported, FunctionTemplatesStillWarn) {
     EXPECT_EQ(with_code(r, "mt-unsupported").size(), 1u);
     EXPECT_EQ(r.model.functions.size(), 1u);
 }
+
+// ---- the conditions a member is under (plan 9.6) -----------------------------------------------------------------------
+
+namespace {
+
+using Guards = std::vector<std::string>;
+
+Guards guards_of(const ir::Class& c, const char* method, std::size_t which = 0) {
+    std::size_t seen = 0;
+    for (const ir::Method& m : c.methods) {
+        if (m.name == method && seen++ == which) return m.guards;
+    }
+    ADD_FAILURE() << "no method " << method << " #" << which;
+    return {};
+}
+
+}  // namespace
+
+TEST(CodeFrontendGuards, AMemberUnderAnIfdefIsUnderTheDefinitionOfItsName) {
+    const Read r = read("class A {\npublic:\n    void always();\n#ifdef X\n    void with_x();\n#endif\n#ifndef Y\n    void without_y();\n#endif\n#if Z > 2\n    void big_z();\n#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_TRUE(guards_of(a, "always").empty());
+    EXPECT_EQ(guards_of(a, "with_x"), (Guards{"defined(X)"}));
+    EXPECT_EQ(guards_of(a, "without_y"), (Guards{"!defined(Y)"}));
+    EXPECT_EQ(guards_of(a, "big_z"), (Guards{"Z > 2"}));
+    EXPECT_TRUE(a.guards.empty());
+}
+
+TEST(CodeFrontendGuards, TheBranchesOfAChainAreUnderTheNegationOfTheOnesBefore) {
+    const Read r = read("class A {\npublic:\n"
+                        "#ifdef X\n    void a();\n"
+                        "#elif defined(Y) && \\\n      Z > 1\n    void b();\n"
+                        "#elifdef W\n    void c();\n"
+                        "#elifndef V\n    void d();\n"
+                        "#else\n    void e();\n"
+                        "#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_EQ(guards_of(a, "a"), (Guards{"defined(X)"}));
+    EXPECT_EQ(guards_of(a, "b"), (Guards{"!(defined(X)) && (defined(Y) && Z > 1)"})) << "a continued line is one line";
+    EXPECT_EQ(guards_of(a, "c"), (Guards{"!(defined(X)) && !(defined(Y) && Z > 1) && (defined(W))"}));
+    EXPECT_EQ(guards_of(a, "d"), (Guards{"!(defined(X)) && !(defined(Y) && Z > 1) && !(defined(W)) && (!defined(V))"}));
+    EXPECT_EQ(guards_of(a, "e"), (Guards{"!(defined(X)) && !(defined(Y) && Z > 1) && !(defined(W)) && !(!defined(V))"}));
+}
+
+TEST(CodeFrontendGuards, NestedConditionsAreSeparateLevelsOutermostFirst) {
+    const Read r = read("class A {\npublic:\n#ifdef X\n#ifdef Y\n    void a();\n#else\n    void b();\n#endif\n    void c();\n#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_EQ(guards_of(a, "a"), (Guards{"defined(X)", "defined(Y)"}));
+    EXPECT_EQ(guards_of(a, "b"), (Guards{"defined(X)", "!(defined(Y))"}));
+    EXPECT_EQ(guards_of(a, "c"), (Guards{"defined(X)"}));
+}
+
+TEST(CodeFrontendGuards, TheGuardOfTheHeaderAgainstBeingIncludedTwiceIsNoCondition) {
+    const Read r = read("#ifndef A_H\n#define A_H\n// the class\nclass A {\npublic:\n    void a();\n#ifdef X\n    void b();\n#endif\n};\n#endif\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_TRUE(a.guards.empty());
+    EXPECT_TRUE(guards_of(a, "a").empty());
+    EXPECT_EQ(guards_of(a, "b"), (Guards{"defined(X)"}));
+
+    // Not a guard: another macro is defined, or nothing is.
+    const Read other = read("#ifndef A_H\n#define B_H\nclass A { public: void a(); };\n#endif\n#ifndef C\nclass C { public: void c(); };\n#endif\n");
+    EXPECT_EQ(the_class(other, "A").guards, (Guards{"!defined(A_H)"}));
+    EXPECT_EQ(the_class(other, "C").guards, (Guards{"!defined(C)"}));
+
+    // Nor is an `#ifdef` whose first line defines the macro it tests: only `#ifndef` guards a header.
+    const Read ifdef = read("#ifdef A_H\n#define A_H\nclass A { public: void a(); };\n#endif\n");
+    EXPECT_EQ(the_class(ifdef, "A").guards, (Guards{"defined(A_H)"}));
+}
+
+TEST(CodeFrontendGuards, AClassUnderAnIfIsUnderItAndItsMembersAreOnlyUnderWhatIsInsideIt) {
+    const Read r = read("#ifdef EXTRA\nclass A {\npublic:\n    void a();\n#ifdef MORE\n    void b();\n#endif\n};\n#endif\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_EQ(a.guards, (Guards{"defined(EXTRA)"}));
+    EXPECT_TRUE(guards_of(a, "a").empty()) << "the class is under it already";
+    EXPECT_EQ(guards_of(a, "b"), (Guards{"defined(MORE)"}));
+}
+
+TEST(CodeFrontendGuards, ANestedClassIsUnderWhatIsBetweenItAndTheClassAround) {
+    const Read r = read("#ifdef X\nclass A {\npublic:\n#ifdef Y\n    struct N {\n#ifdef Z\n        void n();\n#endif\n    };\n#endif\n};\n#endif\n");
+    const ir::Class& a = the_class(r, "A");
+    ASSERT_EQ(a.nested_classes.size(), 1u);
+    EXPECT_EQ(a.guards, (Guards{"defined(X)"}));
+    EXPECT_EQ(a.nested_classes[0].guards, (Guards{"defined(Y)"}));
+    EXPECT_EQ(guards_of(a.nested_classes[0], "n"), (Guards{"defined(Z)"}));
+}
+
+TEST(CodeFrontendGuards, AMemberDeclaredUnderTwoConditionsIsUnderNeither) {
+    const Read r = read("class A {\npublic:\n#ifdef X\n    int get();\n#else\n    int get();\n#endif\n#ifdef Y\n    void once();\n    void once();\n#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    ASSERT_EQ(a.methods.size(), 2u);
+    EXPECT_TRUE(guards_of(a, "get").empty()) << "it is there whenever one of the branches is taken";
+    EXPECT_EQ(guards_of(a, "once"), (Guards{"defined(Y)"})) << "declared twice under one condition: still under it";
+}
+
+TEST(CodeFrontendGuards, AlternativesWithDifferentSignaturesKeepTheirOwn) {
+    const Read r = read("class A {\npublic:\n#ifdef DMA\n    void go(int);\n#else\n    void go(double);\n#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    ASSERT_EQ(a.methods.size(), 2u);
+    EXPECT_EQ(guards_of(a, "go", 0), (Guards{"defined(DMA)"}));
+    EXPECT_EQ(guards_of(a, "go", 1), (Guards{"!(defined(DMA))"}));
+}
+

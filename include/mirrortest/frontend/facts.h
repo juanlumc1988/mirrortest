@@ -112,6 +112,10 @@ struct ResultUse {
     // The hint is the type of `Color::Red` (an index into TestFileFacts::enumerators), which is a
     // type only if Color is an enum: classification (7.7) says so, and then sets `hint`.
     std::optional<std::size_t> hint_enumerator;
+
+    // The result was given to a matcher that says nothing of its type (`EXPECT_THAT(f(), ElementsAre(1, 2))`): its name,
+    // for the note that says why the type is not known.
+    std::string matcher;
 };
 
 // One argument of a call or construction.

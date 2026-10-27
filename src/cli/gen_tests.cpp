@@ -61,16 +61,6 @@ std::vector<core::OutputFile> process_input(const Options& options, const Env& e
     const std::string include = include_path_for(options, env, input);
     const ir::Model model = read_header_with(options, env, *source, include, macros, diagnostics);
 
-    if (!model.functions.empty()) {
-        core::Diagnostic note;
-        note.severity = core::Severity::Note;
-        note.code = core::code::unsupported;
-        note.message = std::to_string(model.functions.size()) +
-                       " free function(s) in this header get no tests: gen-tests covers classes (docs/design.md, section 9.1)";
-        note.where = model.functions.front().where;
-        diagnostics.add(std::move(note));
-    }
-
     const ir::Framework framework = options.framework.value_or(ir::Framework::GTest);
     backend::PlannerOptions planner;
     planner.config = config;

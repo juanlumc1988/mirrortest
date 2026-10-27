@@ -1,0 +1,6 @@
+gen-tests
+${IN}/words.h
+--out
+${OUT}
+--framework
+qtest

@@ -212,6 +212,7 @@ TEST(GenTestsLibclang, AnIncludeNextToTheHeaderIsFoundWhateverTheProcessDirector
 
 TEST(GenTestsLibclang, CxxTwentyThreeIsTheStandardLibclangCallsTwentyThreeB) {
     SKIP_WITHOUT_LIBCLANG();
+    if (frontend::libclang_major_version() < 16) GTEST_SKIP() << "a static operator() is C++23 to libclang 16 and later";
     const TempDir dir;
     write_file(dir.path() / "functor.h", "struct Functor {\n    static int operator()(int x);\n};\n");
     const Outcome r = gen_tests(dir, {"functor.h", "--out", "tests", "--frontend", "libclang", "--std", "c++23"});
@@ -723,19 +724,25 @@ TEST(GenTestsFailures, AHeaderWithNothingToTestIsNotAnError) {
     EXPECT_FALSE(exists(dir, "tests"));
 }
 
-TEST(GenTestsFailures, FreeFunctionsAreSaidToGetNoTestsAndQuietHidesTheNote) {
+TEST(GenTestsFailures, FreeFunctionsGetAFileOfTheirOwnAndNoNoteAboutThem) {
     const TempDir dir;
     write_file(dir.path() / "math.h", "int add(int a, int b);\nint sub(int a, int b);\n");
     const Outcome r = gen_tests(dir, {"math.h", "--out", "tests"});
-    EXPECT_EQ(r.code, 0);
-    EXPECT_EQ(r.err, "math.h:1:5: note: 2 free function(s) in this header get no tests: gen-tests covers classes (docs/design.md, section 9.1) [mt-unsupported]\n");
-    EXPECT_EQ(gen_tests(dir, {"math.h", "--out", "tests", "--quiet"}).err, "");
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created tests/math_functions_test.cpp\n");
+    const std::string text = read_file(dir.path() / "tests" / "math_functions_test.cpp");
+    EXPECT_TRUE(contains(text, "TEST(MathFunctionsTest, add)")) << text;
+    EXPECT_TRUE(contains(text, "TEST(MathFunctionsTest, sub)")) << text;
+    EXPECT_FALSE(contains(r.err, "get no tests"));
+    EXPECT_EQ(gen_tests(dir, {"math.h", "--out", "tests", "--quiet"}).err, "") << "--quiet silences the second run's 'unchanged' lines too";
 }
 
-TEST(GenTestsFailures, OneFreeFunctionIsCountedToo) {
+TEST(GenTestsFailures, OneFreeFunctionIsEnoughForItsFile) {
     const TempDir dir;
     write_file(dir.path() / "math.h", "int add(int a, int b);\n");
-    EXPECT_TRUE(contains(gen_tests(dir, {"math.h", "--out", "tests"}).err, "1 free function(s) in this header"));
+    const Outcome r = gen_tests(dir, {"math.h", "--out", "tests"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created tests/math_functions_test.cpp\n");
 }
 
 TEST(GenTestsFailures, TheModelIsReadFromTheHeaderEvenWhenItIsBigAndTheFilesAreSortedByClass) {

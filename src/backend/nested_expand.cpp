@@ -46,13 +46,18 @@ ir::Type outside(const ir::Type& t, const std::vector<Around>& around, const ir:
     return out;
 }
 
-void add_nested(const ir::Class& holder, const std::string& path, std::vector<Around>& around, std::vector<ir::Class>& out) {
+// `holder_guards`: the `#if` conditions the holder is under, all the way from the file (a nested class has its own relative to
+// the class around it).
+void add_nested(const ir::Class& holder, const std::string& path, const std::vector<std::string>& holder_guards,
+                std::vector<Around>& around, std::vector<ir::Class>& out) {
     for (const ir::Class& n : holder.nested_classes) {
         if (n.nested_access != ir::Access::Public || n.template_params) continue;
 
         ir::Class flat = n;
         flat.name = path + "::" + n.name;
         flat.enclosing = path;
+        flat.guards = holder_guards;
+        flat.guards.insert(flat.guards.end(), n.guards.begin(), n.guards.end());
         for (ir::Method& m : flat.methods) {
             m.ret = outside(m.ret, around, n);
             for (ir::Param& p : m.params) p.type = outside(p.type, around, n);
@@ -61,9 +66,10 @@ void add_nested(const ir::Class& holder, const std::string& path, std::vector<Ar
         for (ir::BaseSpec& b : flat.bases) b.name = outside(b.name, around, n);
 
         const std::string flat_name = flat.name;
+        const std::vector<std::string> flat_guards = flat.guards;
         out.push_back(std::move(flat));
         around.push_back({flat_name, n.nested_types});
-        add_nested(n, flat_name, around, out);
+        add_nested(n, flat_name, flat_guards, around, out);
         around.pop_back();
     }
 }
@@ -77,7 +83,7 @@ ir::Model flatten_nested_classes(const ir::Model& model) {
         out.classes.push_back(c);
         std::vector<Around> around;
         around.push_back({c.name, c.nested_types});
-        add_nested(c, c.name, around, out.classes);
+        add_nested(c, c.name, c.guards, around, out.classes);
     }
     return out;
 }

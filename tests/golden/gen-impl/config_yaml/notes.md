@@ -1,1 +1,1 @@
-The configuration is a YAML file (`--config mt.yaml`): a comment, a plain scalar (`abort`, `acme`), a block scalar for the file header and a nested mapping for the names. The files are the ones the same keys in JSON give.
+The configuration is a YAML file (`--config mt.yaml`): a comment, a plain scalar (`abort`, `acme`), a block scalar for the file header and a nested mapping for the names. The files are the ones the same keys in JSON give. A merge key (`<<: *accessor`) gives the second accessor the keys of the first.

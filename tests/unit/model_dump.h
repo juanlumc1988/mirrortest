@@ -30,12 +30,20 @@ inline std::string dump_where(const mt::ir::SourceLoc& w) {
     return std::to_string(w.line) + ":" + std::to_string(w.column);
 }
 
+// The conditions of the #if branches a declaration is under: [defined(A)][!(defined(A))].
+inline std::string join_guards(const std::vector<std::string>& guards) {
+    std::string out;
+    for (const std::string& g : guards) out += "[" + g + "]";
+    return out;
+}
+
 inline void dump_class(std::ostringstream& out, const mt::ir::Class& c, const std::string& indent, bool with_positions) {
     out << indent << (c.is_struct ? "struct " : "class ") << c.name;
     for (const std::string& n : c.ns) out << " ns:" << n;
     if (c.template_params) out << " template<" << *c.template_params << ">";
     out << " header=" << c.header << " qobject=" << c.is_qobject << " gadget=" << c.is_gadget << " nocopy=" << c.disable_copy
         << " nested_access=" << name_of(c.nested_access);
+    if (!c.guards.empty()) out << " guards=" << join_guards(c.guards);
     if (with_positions) out << " @" << dump_where(c.where);
     out << "\n";
     for (const mt::ir::BaseSpec& b : c.bases) {
@@ -50,6 +58,7 @@ inline void dump_class(std::ostringstream& out, const mt::ir::Class& c, const st
             << (m.is_noexcept ? "noexcept," : "") << (m.is_explicit ? "explicit," : "") << (m.is_deleted ? "deleted," : "")
             << (m.is_defaulted ? "defaulted," : "") << (m.is_template ? "template," : "") << " ref=" << static_cast<int>(m.ref_qualifier)
             << " qt=" << static_cast<int>(m.qt_role);
+        if (!m.guards.empty()) out << " guards=" << join_guards(m.guards);
         if (with_positions) out << " @" << dump_where(m.where);
         out << "\n";
         for (const mt::ir::Param& p : m.params) {
@@ -87,6 +96,7 @@ inline std::string dump(const mt::ir::Model& model, bool with_positions = false)
         out << "function " << f.name;
         for (const std::string& n : f.ns) out << " ns:" << n;
         out << " ret=" << dump_type(f.ret) << " noexcept=" << f.is_noexcept << " header=" << f.header;
+        if (!f.guards.empty()) out << " guards=" << join_guards(f.guards);
         if (with_positions) out << " @" << dump_where(f.where);
         out << "\n";
         for (const mt::ir::Param& p : f.params) {

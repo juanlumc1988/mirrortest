@@ -897,15 +897,8 @@ private:
             case Assert::CString: {
                 const ValueInfo a = expr(arg(0));
                 const ValueInfo b = expr(arg(1));
-                const auto narrow_or_wide = [&](const ValueInfo& other) {
-                    const bool wide = other.type && other.type->base == "wchar_t";
-                    ir::Type t = ir::make_type(wide ? "wchar_t" : "char", true, ir::RefKind::None, 1);
-                    t.origin = ir::Origin::Inferred;
-                    t.reason = name;
-                    return t;
-                };
-                apply_use(a, use_of(Use::Compared, narrow_or_wide(b)));
-                apply_use(b, use_of(Use::Compared, narrow_or_wide(a)));
+                apply_use(a, use_of(Use::Compared, c_string_type(b, name)));
+                apply_use(b, use_of(Use::Compared, c_string_type(a, name)));
                 break;
             }
             case Assert::Float:
@@ -935,7 +928,7 @@ private:
                 break;
             case Assert::Matcher: {
                 const ValueInfo a = expr(arg(0));
-                (void)a;   // the matcher says what it says in gmock's own language
+                matcher(a, arg(1), call);
                 break;
             }
             case Assert::Opaque:
@@ -943,6 +936,61 @@ private:
                 break;
         }
         return true;
+    }
+
+    // `const char*`, or `const wchar_t*` when the other side is a wide string: what STREQ and StrEq compare.
+    ir::Type c_string_type(const ValueInfo& other, const std::string& reason) const {
+        const bool wide = other.type && other.type->base == "wchar_t";
+        ir::Type t = ir::make_type(wide ? "wchar_t" : "char", true, ir::RefKind::None, 1);
+        t.origin = ir::Origin::Inferred;
+        t.reason = reason;
+        return t;
+    }
+
+    // EXPECT_THAT(value, matcher). A matcher that says what the value is gives it that type, as the assertion macro of the
+    // same name would (`Eq(3)` is `EXPECT_EQ(value, 3)`, `StrEq("x")` is `EXPECT_STREQ`); `AllOf`, `AnyOf` and `Not` hand
+    // their matchers the same value. Any other matcher (`ElementsAre`, `Contains`, `SizeIs`, `IsEmpty`, one of the test's own)
+    // is not read, and its name goes with the value for the note that says why the type is not known.
+    void matcher(const ValueInfo& value, const Node& m, const Node& at) {
+        if (m.type() != "call_expression") return;
+        std::string name(m.child_by_field("function").text());
+        for (const std::string scope : {"::testing::", "testing::"}) {
+            if (name.compare(0, scope.size(), scope) == 0) {
+                name.erase(0, scope.size());
+                break;
+            }
+        }
+        const std::vector<Node> args = m.child_by_field("arguments").named_children();
+        const std::string reason = name + " matcher";
+
+        static const std::map<std::string, std::string> kComparisons = {
+            {"Eq", "=="}, {"Ne", "!="}, {"Lt", "<"}, {"Le", "<="}, {"Gt", ">"}, {"Ge", ">="}};
+        const auto comparison = kComparisons.find(name);
+        if (comparison != kComparisons.end() && args.size() == 1) {
+            const ValueInfo b = expr(args[0]);
+            compare(value, b, reason);
+            comparison_fact(value, b, comparison->second, at);
+        } else if ((name == "StrEq" || name == "StrNe" || name == "StrCaseEq" || name == "StrCaseNe") && args.size() == 1) {
+            const ValueInfo b = expr(args[0]);
+            apply_use(value, use_of(Use::Compared, c_string_type(b, reason)));
+        } else if ((name == "HasSubstr" || name == "StartsWith" || name == "EndsWith") && args.size() == 1) {
+            const ValueInfo b = expr(args[0]);
+            apply_use(value, use_of(Use::Compared, hint_from(b, reason)));
+        } else if ((name == "IsTrue" || name == "IsFalse") && args.empty()) {
+            apply_use(value, use_of(Use::Condition, bool_hint(reason)));
+        } else if ((name == "IsNull" || name == "NotNull") && args.empty()) {
+            apply_use(value, use_of(Use::Compared, inferred_type("void*", reason + " (a pointer, which one is not said)")));
+        } else if ((name == "DoubleEq" || name == "DoubleNear" || name == "FloatEq" || name == "FloatNear") && !args.empty()) {
+            const char* type = name.compare(0, 6, "Double") == 0 ? "double" : "float";
+            for (const Node& a : args) (void)expr(a);
+            apply_use(value, use_of(Use::Compared, inferred_type(type, reason)));
+        } else if (name == "AllOf" || name == "AnyOf" || name == "Not") {
+            for (const Node& a : args) matcher(value, a, at);
+        } else {
+            if (ResultUse* slot = slot_of(value.from)) {
+                if (slot->kind == Use::Unknown && slot->matcher.empty()) slot->matcher = name;
+            }
+        }
     }
 
     // EXPECT_THROW(stmt, E): `stmt` is a statement, possibly a {...} block.

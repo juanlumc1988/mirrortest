@@ -44,6 +44,8 @@ source line it came from.
 - the `static_assert`s of what the class declares: the bases it derives from
   and the copies and moves it deletes;
 - class templates, for the instantiations you list, and nested classes;
+- one more file, named after the header (`util.h` gives `util_functions_test.cpp`), for the free functions of the header,
+  and tests under the same `#if` as the member they test;
 - opt in: a fixture, gmock mocks of the interfaces, and tests over a table of
   arguments (`TEST_P`, or `_data()` and `QFETCH`).
 
@@ -174,7 +176,10 @@ Git checkouts given this way are still verified against the pinned commits.
 
 Two parts are optional. `-DMT_WITH_YAML=OFF` leaves out yaml-cpp (a `.yaml` configuration is then refused with
 a clear error). `-DMT_WITH_LIBCLANG=ON` adds the libclang frontend (`--frontend libclang`); it uses the system's
-libclang (`apt install libclang-dev`), or the one `MT_LIBCLANG_INCLUDE_DIR` and `MT_LIBCLANG_LIBRARY` point at.
+libclang (`apt install libclang-dev`; versions 14 to 22 are tested), or the one `MT_LIBCLANG_INCLUDE_DIR` and `MT_LIBCLANG_LIBRARY` point at.
+
+`cmake --install build --prefix DIR` installs the program and the documentation, and `cpack -G TGZ` in the build directory
+makes a tarball of the same tree (a `Release` build; docs/development.md says how it is checked).
 
 The generator runs on the development host and only writes text, so the code it
 generates does not depend on the target architecture: it defaults to

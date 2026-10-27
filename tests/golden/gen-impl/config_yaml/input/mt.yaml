@@ -7,3 +7,7 @@ stub_policy: abort
 naming:
   header: "{stem}.hpp"
   source: "{stem}.cc"
+# Two accessors that answer alike: said once, and merged into the second.
+overrides:
+  acme::Foo::size: &accessor { returns: unsigned int, const: true }
+  acme::Foo::length: { <<: *accessor }

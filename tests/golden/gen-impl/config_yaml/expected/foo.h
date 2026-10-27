@@ -12,10 +12,9 @@ public:
     // <mt:begin acme::Foo>
     // TODO(mt): parameter 1 of 'acme::Foo::Foo' inferred from literal 3 (in/foo_test.cpp:5)
     explicit Foo(int arg1);
-    // TODO(mt): return type inferred from literal 3u (in/foo_test.cpp:6)
-    // TODO(mt): consider making this const
-    unsigned int size();
-    // TODO(mt): result never used; assumed void (in/foo_test.cpp:7)
+    unsigned int size() const;
+    unsigned int length() const;
+    // TODO(mt): result never used; assumed void (in/foo_test.cpp:8)
     void run();
     // <mt:end acme::Foo>
 };

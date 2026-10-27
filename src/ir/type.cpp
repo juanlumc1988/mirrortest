@@ -137,14 +137,56 @@ void rtrim(std::string& s) {
     while (!s.empty() && s.back() == ' ') s.pop_back();
 }
 
+// The index of the bracket that closes the one at `open` (one of ( [ {), or the last index if nothing does.
+std::size_t closing_bracket(const std::string& s, std::size_t open) {
+    int depth = 0;
+    for (std::size_t i = open; i < s.size(); ++i) {
+        if (s[i] == '(' || s[i] == '[' || s[i] == '{') ++depth;
+        if ((s[i] == ')' || s[i] == ']' || s[i] == '}') && --depth == 0) return i;
+    }
+    return s.size() - 1;
+}
+
+// Whether the word that ends just before `at` is one whose parentheses hold an expression and are part of the type.
+bool follows_type_expression_keyword(const std::string& s, std::size_t at) {
+    std::size_t end = at;
+    while (end > 0 && s[end - 1] == ' ') --end;
+    std::size_t begin = end;
+    while (begin > 0 && (std::isalnum(static_cast<unsigned char>(s[begin - 1])) != 0 || s[begin - 1] == '_')) --begin;
+    const std::string word = s.substr(begin, end - begin);
+    return word == "decltype" || word == "typeof" || word == "__typeof__" || word == "__typeof";
+}
+
+// Whether a '(' or '[' stands outside every pair of angle brackets and is not the argument of a decltype or a typeof:
+// the spelling is then a function pointer, an array or a reference to one, which is kept whole. Parentheses inside
+// angle brackets (`std::function<void(int)>`) and the argument of a decltype belong to a name, not to a declarator.
+bool has_declarator_brackets(const std::string& s) {
+    int angles = 0;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (c == '<') {
+            ++angles;
+        } else if (c == '>' && angles > 0) {
+            --angles;
+        } else if (c == '(' || c == '[') {
+            if (angles > 0 || (c == '(' && follows_type_expression_keyword(s, i))) {
+                i = closing_bracket(s, i);
+                continue;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 Type type_from_spelling(std::string_view spelling) {
     Type t;
     t.spelling = normalize_spelling(spelling);
     if (t.spelling.empty()) return t;
-    if (t.spelling.find('(') != std::string::npos || t.spelling.find('[') != std::string::npos) {
-        t.base = t.spelling;       // a function pointer, an array: exact, and nothing finer
+    if (has_declarator_brackets(t.spelling) || ends_with(t.spelling, "...")) {
+        t.base = t.spelling;       // a function pointer, an array, a pack (`const Args&...`): exact, and nothing finer
         return t;
     }
 

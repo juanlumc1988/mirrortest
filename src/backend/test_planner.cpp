@@ -265,6 +265,8 @@ public:
             }
             plans.push_back(plan_class(c, testable, std::move(structure)));
         }
+        const std::vector<ir::Function> functions = testable_functions();
+        if (!functions.empty()) plans.push_back(plan_functions(functions));
         return plans;
     }
 
@@ -462,6 +464,7 @@ private:
         ir::TestCase tc;
         tc.name = name;
         tc.target = method_signature(c, m);
+        tc.guards = m.guards;
         Names names;
         names.reserve("sut");
         names.reserve("const_sut");
@@ -646,6 +649,146 @@ private:
         body.push_back(comment(returns_value ? "TODO(mt): compare result with the expected value" : "TODO(mt): check the effect of the call"));
     }
 
+    // ---- the free functions of a header --------------------------------------------------------------------------------------
+
+    // A function declared twice (the prototype and the definition, or in the two branches of an `#if`) is one; if the two
+    // declarations are under different conditions it is under neither (design 6.5).
+    std::vector<ir::Function> testable_functions() const {
+        std::vector<ir::Function> out;
+        for (const ir::Function& f : model_.functions) {
+            if (f.name.empty()) continue;
+            const auto same = std::find_if(out.begin(), out.end(), [&](const ir::Function& o) {
+                if (o.name != f.name || o.ns != f.ns || o.params.size() != f.params.size()) return false;
+                for (std::size_t i = 0; i < f.params.size(); ++i) {
+                    if (o.params[i].type.spelling != f.params[i].type.spelling) return false;
+                }
+                return true;
+            });
+            if (same == out.end()) {
+                out.push_back(f);
+            } else if (same->guards != f.guards) {
+                same->guards.clear();
+            }
+        }
+        return out;
+    }
+
+    // "my-util" -> "MyUtil": the words of a file name, each with its first letter up.
+    static std::string camel_case(const std::string& text) {
+        std::string out;
+        bool up = true;
+        for (char ch : text) {
+            if (std::isalnum(static_cast<unsigned char>(ch)) == 0) {
+                up = true;
+                continue;
+            }
+            out += up ? static_cast<char>(std::toupper(static_cast<unsigned char>(ch))) : ch;
+            up = false;
+        }
+        return out;
+    }
+
+    // One file for the functions of a header, named after the header and not after a class (design 9.1), with a suite for
+    // each namespace that has some.
+    ir::TestPlan plan_functions(const std::vector<ir::Function>& functions) {
+        const std::string header = core::file_stem(options_.header_include);
+        const std::string stem = (header.empty() ? std::string() : core::snake_case(identifier(header)) + "_") + "functions";
+        const std::string klass = camel_case(header) + "Functions";
+
+        std::vector<core::TestNameInput> inputs;
+        for (const ir::Function& f : functions) {
+            core::TestNameInput in;
+            in.base = core::test_base_name(f.name);
+            for (const ir::Param& p : f.params) in.param_types.push_back(p.type.spelling);
+            inputs.push_back(std::move(in));
+        }
+        std::vector<std::string> names = core::unique_test_names(inputs);
+        if (qtest()) names = without_qtest_special_names(std::move(names));
+
+        ir::TestPlan plan;
+        bool moves = false;
+        mock_headers_.clear();
+        for (std::size_t i = 0; i < functions.size(); ++i) {
+            auto suite = std::find_if(plan.suites.begin(), plan.suites.end(), [&](const ir::TestSuite& s) { return s.ns == functions[i].ns; });
+            if (suite == plan.suites.end()) {
+                ir::TestSuite fresh;
+                fresh.name = core::expand_pattern(qtest() ? options_.config.naming.qtest_class : options_.config.naming.suite, stem, klass);
+                fresh.target_class = klass;
+                fresh.ns = functions[i].ns;
+                plan.suites.push_back(std::move(fresh));
+                suite = plan.suites.end() - 1;
+            }
+            suite->cases.push_back(plan_function_case(functions[i], names[i]));
+            moves = moves || uses_move_;
+        }
+
+        plan.file = core::expand_pattern(qtest() ? options_.config.naming.qtest_file : options_.config.naming.gtest_file, stem, klass);
+        plan.includes.push_back({qtest() ? "QtTest" : "gtest/gtest.h", true, {}});
+        plan.includes.push_back({options_.header_include, false, {}});
+        if (moves) plan.includes.push_back({"utility", true, {}});
+        for (const std::string& mock : mock_headers_) plan.includes.push_back({mock, false, {}});
+        return plan;
+    }
+
+    // The case of a `static` method without the class: the arguments, the call, the result.
+    ir::TestCase plan_function_case(const ir::Function& f, const std::string& name) {
+        ir::TestCase tc;
+        tc.name = name;
+        tc.target = function_signature(f);
+        tc.guards = f.guards;
+        Names names;
+        names.reserve("result");
+        if (tabulating() && !qtest()) names.reserve("param");   // as in plan_case
+        uses_move_ = false;
+
+        tc.body.push_back(placeholder("TODO(mt): write the test for " + tc.target));
+        tc.body.push_back(blank());
+        tc.body.push_back(comment("Arrange"));
+        plan_function_call(f, names, tc.body, tc.target);
+        tc.data = std::move(data_);
+        data_.reset();
+        return tc;
+    }
+
+    void plan_function_call(const ir::Function& f, Names& names, std::vector<Stmt>& body, const std::string& target) {
+        ir::Class context;   // what the arguments are qualified against: the namespace of the function, no class
+        context.ns = f.ns;
+        const Args args = make_args(context, f.params, names);
+        use_mocks(args.mock_headers);
+        const bool buildable = args.ok;
+
+        if (!args.ok) body.push_back(comment("TODO(mt): " + args.why));
+        const bool tabulate = tabulating() && buildable && args.tabular && !args.columns.empty() &&
+                              std::all_of(args.columns.begin(), args.columns.end(), [&](const ir::Column& k) { return column_ok(k.type); });
+        if (tabulate) {
+            body.push_back(data_marker());
+            data_ = ir::DataTable{args.columns};
+        } else {
+            add_locals(body, args.locals, !buildable);
+        }
+        uses_move_ = uses_move_ || (buildable && args.uses_move);
+        if (!args.left_out.empty()) body.push_back(comment("TODO(mt): " + args.left_out));
+
+        body.push_back(comment("Act"));
+        const std::string callee = f.ns.empty() ? "::" + f.name : ir::qualified_name(f.ns, f.name);
+        const std::string call = callee + "(" + join(args.expressions, ", ") + ")";
+        const ir::Type ret = qualified(f.ret, context);
+        const bool returns_value = !ret.empty() && !ret.is_void();
+        if (returns_value) {
+            body.push_back(code(result_declaration(ret) + " = " + call, !buildable));
+            body.push_back(code("(void)result", !buildable));
+        } else {
+            body.push_back(code(call, !buildable));
+        }
+
+        body.push_back(comment("Assert"));
+        if (f.is_noexcept) {
+            body.push_back(static_assertion("noexcept(" + call + ")", target + " is declared noexcept"));
+            if (!buildable) body.back().commented_out = true;
+        }
+        body.push_back(comment(returns_value ? "TODO(mt): compare result with the expected value" : "TODO(mt): check the effect of the call"));
+    }
+
     // ---- one class ------------------------------------------------------------------------------------------------
 
     // A slot called init() is run before every test (design 9.5): a method of that name is
@@ -788,6 +931,7 @@ private:
                                           core::snake_case(c.name), identifier(c.name));
         suite.target_class = c.name;
         suite.ns = c.ns;
+        suite.guards = c.guards;
         bool moves = false;
         mock_headers_.clear();
         if (fixture()) suite.fixture = plan_fixture(c, suite.name);
