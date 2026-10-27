@@ -253,6 +253,48 @@ TEST_F(SpikeHeader, EnumsAndFreeFunctions) {
 
 // ---- scopes ------------------------------------------------------------------------------------
 
+// ---- what running it on real headers showed -------------------------------------------------------------------------
+
+TEST(CodeFrontendRealHeaders, ABracedDefaultHasNoBlankAroundIt) {
+    // The node of `= {}` starts at the blank after the `=`.
+    const Read r = read("template <typename S> class Fn {};\n"
+                        "class K { public: void run(Fn<void()> a = {}, Fn<int()> b =   { 1, 2 }  , int c = (3)); };\n");
+    const ir::Class& k = the_class(r, "K");
+    ASSERT_EQ(k.methods.size(), 1u);
+    const std::vector<ir::Param>& p = k.methods[0].params;
+    ASSERT_EQ(p.size(), 3u);
+    EXPECT_EQ(p[0].default_value, std::optional<std::string>("{}"));
+    EXPECT_EQ(p[1].default_value, std::optional<std::string>("{ 1, 2 }"));
+    EXPECT_EQ(p[2].default_value, std::optional<std::string>("(3)"));
+}
+
+TEST(CodeFrontendRealHeaders, WhatTheParserMadeOfTextItCouldNotReadIsNotAMember) {
+    // A comma expression with template-ids in a decltype: tree-sitter-cpp gives up on it and the recovery leaves
+    // pieces that look like declarations (a field called `std::declval<A>`).
+    const Read r = read("template <typename T> struct X {\n"
+                        "    template <typename A> static auto test(int) -> decltype(std::declval<A>().real(), std::declval<A>().imag(), std::true_type());\n"
+                        "    template <typename, typename> static auto other(...) -> std::false_type;\n"
+                        "    int real_member;\n"
+                        "    void real_method() const;\n"
+                        "};\n");
+    const ir::Class& x = the_class(r, "X");
+    for (const ir::Field& f : x.fields) {
+        EXPECT_EQ(f.name.find_first_of(":<> "), std::string::npos) << "field '" << f.name << "'";
+        EXPECT_FALSE(f.name.empty());
+    }
+    for (const ir::Method& m : x.methods) {
+        EXPECT_EQ(m.name.find_first_of(":<> "), std::string::npos) << "method '" << m.name << "'";
+        EXPECT_FALSE(m.name.empty());
+    }
+    bool has_real_member = false;
+    bool has_real_method = false;
+    for (const ir::Field& f : x.fields) has_real_member = has_real_member || f.name == "real_member";
+    for (const ir::Method& m : x.methods) has_real_method = has_real_method || m.name == "real_method";
+    EXPECT_TRUE(has_real_member);
+    EXPECT_TRUE(has_real_method);
+    EXPECT_FALSE(r.diagnostics.empty()) << "and the parser did say it could not make sense of the text";
+}
+
 TEST(CodeFrontendScopes, NestedAndCompactNamespaces) {
     const Read r = read("namespace a { namespace b { class X {}; } }\nnamespace c::d::e { class Y {}; }");
     EXPECT_EQ(the_class(r, "X").ns, (std::vector<std::string>{"a", "b"}));

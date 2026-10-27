@@ -4,6 +4,7 @@
 #include "mirrortest/frontend/code_frontend.h"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <optional>
 #include <utility>
@@ -30,6 +31,20 @@ bool is_class_like(std::string_view type) {
 bool is_conditional(std::string_view type) {
     return type == "preproc_if" || type == "preproc_ifdef" || type == "preproc_else" ||
            type == "preproc_elif" || type == "preproc_elifdef";
+}
+
+// What a member or a function can be called: an identifier, `~Identifier`, `operator…`. Anything else (`std::declval<A>`,
+// nothing at all) is what the parser made of text it could not read, which `report_parse_errors` has already said, and
+// would become a test of a member that does not exist.
+bool is_declarator_name(const std::string& name) {
+    if (ir::is_operator_name(name)) return true;
+    std::size_t i = !name.empty() && name[0] == '~' ? 1 : 0;
+    if (i >= name.size() || std::isdigit(static_cast<unsigned char>(name[i])) != 0) return false;
+    for (; i < name.size(); ++i) {
+        const char c = name[i];
+        if (std::isalnum(static_cast<unsigned char>(c)) == 0 && c != '_') return false;
+    }
+    return true;
 }
 
 ir::Access to_access(std::string_view text) {
@@ -265,6 +280,7 @@ private:
                 d.name.find("::") != std::string::npos) {
                 continue;   // a variable, or `int Foo::bar() {}`, which defines a member
             }
+            if (!is_declarator_name(ir::normalize_operator_name(d.name))) continue;
             const syntax::FunctionTraits traits = syntax::read_function_traits(d.function, file_);
             ir::Function f;
             f.name = ir::normalize_operator_name(d.name);
@@ -567,7 +583,7 @@ private:
                 continue;
             }
             const Declarator d = syntax::parse_declarator(declarator);
-            if (d.name_node.is_null()) {
+            if (d.name_node.is_null() || !is_declarator_name(ir::normalize_operator_name(d.name))) {
                 continue;
             }
             if (!d.function.is_null() && !d.is_function_pointer) {

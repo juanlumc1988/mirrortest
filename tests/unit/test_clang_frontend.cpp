@@ -209,6 +209,17 @@ public:
     class Deeper { public: struct Deepest {}; };
 };
 })"},
+    {"function_types",
+     R"(template <typename S> class Fn {};
+struct Option {};
+class Handlers {
+public:
+    void on(const Fn<void(int)>& cb);
+    void filter(const Fn<bool(const Option*)> f = {}, Fn<bool(Option*)>&& g = {});
+    Fn<int(int)> make() const;
+    Fn<void()>* pointer(Fn<int(int, int)> const& c);
+    Fn<void(int)> field_;
+};)"},
     {"default_values",
      R"(extern int x_;
 void assigned(decltype(x_ = 1) v = 3);

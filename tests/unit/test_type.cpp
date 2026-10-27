@@ -108,6 +108,19 @@ TEST(TypeFromSpelling, ReadsTheShapeFromTheEnd) {
         {"std::unique_ptr<const Item>", "std::unique_ptr<const Item>", "std::unique_ptr<const Item>", false, RefKind::None, 0},
         {"constant", "constant", "constant", false, RefKind::None, 0},
         {"const_iterator", "const_iterator", "const_iterator", false, RefKind::None, 0},
+        // Parentheses and brackets inside angle brackets, or as the argument of a decltype, belong to a name.
+        {"const std::function<void(const ArgType&)>&", "const std::function<void(const ArgType&)>&", "std::function<void(const ArgType&)>", true, RefKind::LValue, 0},
+        {"std::function<int(int)> const &", "std::function<int(int)>const&", "std::function<int(int)>", true, RefKind::LValue, 0},
+        {"std::function<bool(App*)>*", "std::function<bool(App*)>*", "std::function<bool(App*)>", false, RefKind::None, 1},
+        {"const std::function<std::string()>", "const std::function<std::string()>", "std::function<std::string()>", true, RefKind::None, 0},
+        {"std::map<int, void (*)(int)>&&", "std::map<int, void(*)(int)>&&", "std::map<int, void(*)(int)>", false, RefKind::RValue, 0},
+        {"Arr<int, (4 > 2 ? 4 : 2)>&", "Arr<int, (4>2?4:2)>&", "Arr<int, (4>2?4:2)>", false, RefKind::LValue, 0},
+        {"std::array<int[3], 2> const*", "std::array<int[3], 2>const*", "std::array<int[3], 2>", true, RefKind::None, 1},
+        {"const decltype(x_)&", "const decltype(x_)&", "decltype(x_)", true, RefKind::LValue, 0},
+        {"decltype(x_)*", "decltype(x_)*", "decltype(x_)", false, RefKind::None, 1},
+        {"decltype(sizeof(int))", "decltype(sizeof(int))", "decltype(sizeof(int))", false, RefKind::None, 0},
+        {"typeof (x_) &&", "typeof(x_)&&", "typeof(x_)", false, RefKind::RValue, 0},
+        {"__typeof__(x_)", "__typeof__(x_)", "__typeof__(x_)", false, RefKind::None, 0},
     };
     for (const SpellingCase& c : cases) {
         const Type t = type_from_spelling(c.text);
@@ -120,7 +133,8 @@ TEST(TypeFromSpelling, ReadsTheShapeFromTheEnd) {
 }
 
 TEST(TypeFromSpelling, FunctionPointersAndArraysAreKeptWhole) {
-    for (const char* text : {"void (*)(int)", "int[3]", "const char* names[]"}) {
+    for (const char* text : {"void (*)(int)", "int[3]", "const char* names[]", "int (&)[4]", "std::vector<int>[3]",
+                             "void (Widget::*)(int) const", "const decltype(x_) (*)(int)"}) {
         const Type t = type_from_spelling(text);
         EXPECT_EQ(t.base, t.spelling) << text;
         EXPECT_EQ(t.pointer_depth, 0u) << text;

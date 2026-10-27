@@ -4,6 +4,7 @@
 #include "mirrortest/syntax/extract.h"
 
 #include <algorithm>
+#include <cctype>
 #include <utility>
 
 #include "mirrortest/ir/type.h"
@@ -310,7 +311,11 @@ std::vector<ir::Param> read_parameters(const Node& parameter_list, std::string_v
             param.name = declarator.name;
             const Node value = p.child_by_field("default_value");
             if (!value.is_null()) {
-                param.default_value = std::string(value.text());
+                // The node of a braced default (`= {}`) starts at the blank after the `=`.
+                std::string_view text = value.text();
+                while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0) text.remove_prefix(1);
+                while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())) != 0) text.remove_suffix(1);
+                param.default_value = std::string(text);
             }
             params.push_back(std::move(param));
         }
