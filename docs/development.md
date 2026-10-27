@@ -41,7 +41,7 @@ again: pass `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<first>/_deps/<name>-src` for
 `TREE_SITTER`, `TREE_SITTER_CPP`, `NLOHMANN_JSON`, `INJA`, `CLI11`, `YAML_CPP` and
 `GOOGLETEST` (lower-case name in the path).
 
-The libclang frontend is tested by CI against libclang 14 to 20, one job each. To try one version by hand, install it
+The libclang frontend is tested by CI against libclang 14 to 22, one job each (the versions of Ubuntu 24.04 and 26.04). To try one version by hand, install it
 (`apt install libclang-17-dev` puts it in `/usr/lib/llvm-17`) and say which, since the CMake module takes the newest
 it finds otherwise:
 

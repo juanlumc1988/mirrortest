@@ -13,7 +13,7 @@
 #
 # Licence: Apache-2.0 with LLVM exceptions, compatible with this project's.
 
-set(MT_LIBCLANG_VERSIONS 21 20 19 18 17 16 15 14)
+set(MT_LIBCLANG_VERSIONS 22 21 20 19 18 17 16 15 14)
 
 set(mt_llvm_hints "")
 foreach(v IN LISTS MT_LIBCLANG_VERSIONS)

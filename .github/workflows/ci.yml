@@ -71,18 +71,28 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   # The libclang frontend (--frontend libclang): the same models as tree-sitter's, from the same headers, and every
-  # gen-tests and gen-impl golden case run again with it, against every libclang that Ubuntu 24.04 offers, from the
-  # oldest the code is expected to read to the newest. What libclang puts in the extent of a declaration, the kind of
-  # `extern "C" { }` and the name of a typedef'd anonymous struct change from one version to the next, and the one
-  # that is tried by hand is not the one that is installed on somebody else's machine. The runner is pinned to the
-  # release, because the versions that apt offers are the ones of a release (cmake/MtLibclang.cmake looks for 14 to 21).
+  # gen-tests and gen-impl golden case run again with it, against every libclang that the two Ubuntu LTS releases
+  # offer, from the oldest the code is expected to read to the newest. What libclang puts in the extent of a declaration,
+  # the kind of `extern "C" { }` and the name of a typedef'd anonymous struct change from one version to the next, and the
+  # one that is tried by hand is not the one that is installed on somebody else's machine. The runners are pinned to
+  # the release, because the versions that apt offers are the ones of a release: 14 to 20 are in 24.04, 17 to 22 in
+  # 26.04 (cmake/MtLibclang.cmake looks for 14 to 22).
   libclang:
-    name: libclang ${{ matrix.llvm }}
-    runs-on: ubuntu-24.04
+    name: libclang ${{ matrix.llvm }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        llvm: [14, 15, 16, 17, 18, 19, 20]
+        include:
+          - { llvm: 14, os: ubuntu-24.04 }
+          - { llvm: 15, os: ubuntu-24.04 }
+          - { llvm: 16, os: ubuntu-24.04 }
+          - { llvm: 17, os: ubuntu-24.04 }
+          - { llvm: 18, os: ubuntu-24.04 }
+          - { llvm: 19, os: ubuntu-24.04 }
+          - { llvm: 20, os: ubuntu-24.04 }
+          - { llvm: 21, os: ubuntu-26.04 }
+          - { llvm: 22, os: ubuntu-26.04 }
     steps:
       - uses: actions/checkout@v4
 
@@ -97,6 +107,39 @@ jobs:
                 -DMT_WITH_LIBCLANG=ON \
                 -DMT_LIBCLANG_INCLUDE_DIR=/usr/lib/llvm-${{ matrix.llvm }}/include \
                 -DMT_LIBCLANG_LIBRARY=/usr/lib/llvm-${{ matrix.llvm }}/lib/libclang-${{ matrix.llvm }}.so
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # The newest toolchains that Ubuntu ships (26.04 LTS: GCC 15, Clang 22, CMake 4): what breaks with them is what breaks on
+  # a user's machine within a year. A missing `#include <algorithm>`, which the standard library of GCC 14 gave for free
+  # and GCC 15's does not, was the first.
+  newest:
+    name: ${{ matrix.compiler }} on ubuntu 26.04
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ${{ matrix.compiler == 'clang' && 'clang-22' || 'g++' }}
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.compiler == 'gcc' && 'gcc' || 'clang-22' }}
+          CXX: ${{ matrix.compiler == 'gcc' && 'g++' || 'clang++-22' }}
+        run: |
+          cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DMT_WERROR=ON
 
       - name: Build
         run: cmake --build build -j

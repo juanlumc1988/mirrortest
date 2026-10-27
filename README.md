@@ -174,7 +174,7 @@ Git checkouts given this way are still verified against the pinned commits.
 
 Two parts are optional. `-DMT_WITH_YAML=OFF` leaves out yaml-cpp (a `.yaml` configuration is then refused with
 a clear error). `-DMT_WITH_LIBCLANG=ON` adds the libclang frontend (`--frontend libclang`); it uses the system's
-libclang (`apt install libclang-dev`; versions 14 to 20 are tested), or the one `MT_LIBCLANG_INCLUDE_DIR` and `MT_LIBCLANG_LIBRARY` point at.
+libclang (`apt install libclang-dev`; versions 14 to 22 are tested), or the one `MT_LIBCLANG_INCLUDE_DIR` and `MT_LIBCLANG_LIBRARY` point at.
 
 The generator runs on the development host and only writes text, so the code it
 generates does not depend on the target architecture: it defaults to

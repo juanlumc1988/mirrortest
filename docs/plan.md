@@ -311,7 +311,8 @@ past twice its size, stop at what is solid and say so instead of widening it.
   stay are in `design.md` 6.6, and every difference between the frontends is classified in `development.md` ("Running it on code
   that was not written for it").
 - [x] **9.2** *(S, high)* **libclang across versions.** The CI job builds and tests against a matrix of the libclang
-  versions that Ubuntu 24.04 offers, 14 to 20 (`cmake/MtLibclang.cmake` looks for 14 to 21; 21 is not in 24.04). Phase 8
+  versions that Ubuntu 24.04 and 26.04 offer, 14 to 22 (`cmake/MtLibclang.cmake` looks for the same; 21 and 22 are only in 26.04, and a
+  `newest` job builds with the GCC 15 and Clang 22 of 26.04, where a missing `#include <algorithm>` showed up). Phase 8
   showed why: a later version than the one tried locally keeps `alignas` in the extent of a declaration. Run locally
   against each of them, it found `extern "C" { }` (an `UnexposedDecl` before 17) and the name of a typedef'd anonymous
   struct or enum (not in the cursor's spelling before 16) read wrong by 14 to 16, a parity snippet that was not valid

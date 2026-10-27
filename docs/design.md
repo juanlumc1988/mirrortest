@@ -467,8 +467,8 @@ What it is for: a header is code that compiles, and a compiler knows what a synt
   twice, and each of its declarations would be a redefinition. What is read is what the header declares and what the
   macros it uses declare in it, wherever those macros are defined. Function bodies are skipped. Specialisations, function templates, member templates and inherited constructors
   are reported as `mt-unsupported` in the words of the other reader.
-- **Versions** (plan 9.2). libclang 14 to 20, the ones Ubuntu 24.04 offers, are built against and tested by CI, one
-  job each; `cmake/MtLibclang.cmake` looks for 14 to 21 and takes the newest it finds unless it is told which
+- **Versions** (plan 9.2). libclang 14 to 22, the ones Ubuntu 24.04 (14 to 20) and 26.04 (17 to 22) offer, are built against and tested by CI, one
+  job each; `cmake/MtLibclang.cmake` looks for 14 to 22 and takes the newest it finds unless it is told which
   (`MT_LIBCLANG_INCLUDE_DIR`, `MT_LIBCLANG_LIBRARY`). Nothing older than 14 is tried. Where a version reads
   something differently the reader makes up for it, so that the model is the same: `extern "C" { }` is an
   `UnexposedDecl` up to 16 and a `LinkageSpec` from 17; the name that a `typedef` gives an anonymous struct or enum
