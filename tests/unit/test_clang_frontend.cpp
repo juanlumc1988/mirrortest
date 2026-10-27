@@ -104,6 +104,9 @@ private:
     int& ref;
     long long big = 1;
     static const int kMax = 8;
+    int braced{5};
+    const char* text{"x"};
+    double empty{};
 };)"},
     {"operators",
      R"(class Num {
@@ -231,6 +234,7 @@ public:
 #include "local.h"
 # include <cstdint>
 #include "dir/other.h"
+    #include <indented>
 class A {};)"},
     {"friends_and_the_rest",
      R"(class A {
@@ -248,7 +252,12 @@ typedef A AliasTwo;)"},
     {"anonymous",
      R"(struct { int a; } variable;
 class Holder { public: struct { int x; } inner; union { int u; float f; }; };
-union Un { int i; float f; };)"},
+union Un { int i; float f; };
+struct Fields {
+    union { int i; float f; } bare_union;
+    class { public: int c; } bare_class;
+    enum { One, Two } bare_enum;
+};)"},
     {"trailing_returns",
      R"(template <typename T> struct Vec {};
 template <typename T, int N> struct Arr {};
@@ -278,6 +287,15 @@ struct S : B {
     static auto make(int n) -> decltype(x_);
     auto with_body(int n) const -> decltype(x_) { return x_ + n; }
 };)"},
+    {"comments_inside_declarations",
+     R"(class Annotated {
+public:
+    int /* the count */ count(int /* unused */, const /* mutable? */ char* name /* trailing */) const /* after */;
+    // a line comment between members
+    void f(); // and one after
+    unsigned long /* wide */ x_ /* field */;
+};
+void /* free */ g(/* nothing */);)"},
     {"inline_definitions",
      R"(class Impl {
 public:
@@ -385,6 +403,33 @@ TEST(ClangFrontend, AnExportMacroNeedsNoIgnoreMacrosBecauseItIsExpanded) {
     EXPECT_TRUE(r.diagnostics.empty());
 }
 
+TEST(ClangFrontend, ATagDefinedInTheDeclarationOfAMemberIsPartOfItsTypeAndAlsoAMemberType) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(struct Fields {
+    struct Tag { int a; } tagged;
+    union Named { int i; } named_union;
+    enum Colour { Red, Blue } named_enum;
+    int braced{5};
+};)";
+    const Read r = clang(text);
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    const ir::Class& c = r.model.classes[0];
+    ASSERT_EQ(c.fields.size(), 4u);
+    EXPECT_EQ(c.fields[0].type.spelling, "struct Tag{int a;}");
+    EXPECT_EQ(c.fields[1].type.spelling, "union Named{int i;}");
+    EXPECT_EQ(c.fields[2].type.spelling, "enum Colour{Red, Blue}");
+    EXPECT_EQ(c.fields[3].type.spelling, "int") << "the braces of an initialiser are not part of the type";
+    EXPECT_EQ(c.nested_types, (std::vector<std::string>{"Tag", "Named", "Colour"})) << "which the other reader does not see";
+}
+
+TEST(ClangFrontend, ACommentInsideAFundamentalTypeIsNotPartOfIt) {
+    SKIP_WITHOUT_LIBCLANG();
+    const Read r = clang("struct S { unsigned /* flags */ long /* wide */ x_; };");
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    ASSERT_EQ(r.model.classes[0].fields.size(), 1u);
+    EXPECT_EQ(r.model.classes[0].fields[0].type.spelling, "unsigned long");
+}
+
 TEST(ClangFrontend, AFunctionThatReturnsAFunctionPointerHasItsOwnParametersOnly) {
     SKIP_WITHOUT_LIBCLANG();
     const char* text = R"(auto trailing() -> void (*)(int);
@@ -409,6 +454,25 @@ struct Holder {
     EXPECT_EQ(r.model.classes[0].methods[0].params[0].name, "a");
     EXPECT_TRUE(r.model.classes[0].methods[1].params.empty());
     EXPECT_TRUE(r.model.classes[0].methods[1].is_const);
+}
+
+TEST(ClangFrontendParity, ADynamicExceptionSpecificationIsNotQualifiers) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(struct E {};
+struct Legacy {
+    void a() throw();
+    void b() const throw(const E&);
+    void c() throw(E, int);
+    void d() throw(const E&&) ;
+};)";
+    const Read a = tree_sitter(text);
+    const Read b = clang(text, {"-std=c++14"});
+    EXPECT_EQ(test::dump(b.model, true), test::dump(a.model, true));
+    ASSERT_EQ(b.model.classes.size(), 2u);
+    const std::vector<ir::Method>& m = b.model.classes[1].methods;
+    ASSERT_EQ(m.size(), 4u);
+    EXPECT_TRUE(m[1].is_const);
+    for (const ir::Method& made : m) EXPECT_EQ(made.ref_qualifier, ir::RefKind::None) << made.name << ": the & is inside the throw()";
 }
 
 TEST(ClangFrontend, WhatFollowsARequiresClauseIsNotAQualifier) {
