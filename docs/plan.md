@@ -324,14 +324,12 @@ past twice its size, stop at what is solid and say so instead of widening it.
   (nested parentheses, `decltype(auto)`, the argument inside angle brackets, the GNU spellings) and the parity battery has
   a snippet of them, so both frontends make the same model. The one form the syntax-tree reader cannot read is the GNU
   `typeof`/`__typeof__` as a declaration's type: the grammar has no such type (`design.md` 6.6).
-- [ ] **9.4** *(M, medium)* **Matchers in `gen-impl`** (§7.6: "matchers: later phase"). `EXPECT_THAT(v, m)` gives
-  `v` the type its matcher implies when the matcher says it: `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge` with a literal
-  (the literal's type, as `EXPECT_EQ` does), `StrEq`, `StrNe`, `HasSubstr`, `StartsWith`, `EndsWith`
-  (`const char*`/string by the literal), `IsTrue`/`IsFalse` (`bool`), `IsNull`/`NotNull` (a pointer, which one is
-  not said), `DoubleEq`, `FloatEq`, `DoubleNear`, `FloatNear`, and `AllOf`/`AnyOf`/`Not` over those. Matchers over
-  containers (`ElementsAre`, `Contains`, `SizeIs`, `IsEmpty`) stay `mt-unknown-return`, with the matcher named in
-  the note. Done when: a golden case and a round trip for the scalar and the string matchers, unit tests of the
-  facts and of the inference, and the table in §7.6 says which matchers are read and which are not.
+- [x] **9.4** *(M, medium)* **Matchers in `gen-impl`** (§7.6). `EXPECT_THAT(v, m)` gives `v` the type its matcher implies when
+  the matcher says it: `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`, `StrEq`, `StrNe`, `StrCaseEq`, `StrCaseNe`, `HasSubstr`, `StartsWith`,
+  `EndsWith`, `IsTrue`, `IsFalse`, `IsNull`, `NotNull`, `DoubleEq`, `FloatEq`, `DoubleNear`, `FloatNear`, and `AllOf`/`AnyOf`/`Not`
+  over those. Matchers over containers stay `mt-unknown-return`, now with the matcher named. Golden cases `matchers` (with a
+  round trip that compiles the stubs and the test against gmock and requires every test red) and `matchers_unknown`; unit
+  tests of the facts; the table is in §7.6.
 - [ ] **9.5** *(L, high)* **Free functions in `gen-tests`** (§9.1: "an extension for a later phase"). Today a header's
   free functions get one `mt-unsupported` note. They get tests: one suite per header (the stem of the header, as
   `{stem}` in the naming rules) holding a test per function in its namespace, an overload set as one test per

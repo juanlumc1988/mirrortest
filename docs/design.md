@@ -692,7 +692,7 @@ the position of the type. Details settled while implementing it:
 | `EXPECT_/ASSERT_STREQ, STRNE, STRCASEEQ, STRCASENE` | `const char*` (`const wchar_t*` if the literal is `L"…"`) |
 | `EXPECT_/ASSERT_FLOAT_EQ` · `DOUBLE_EQ` · `NEAR(a,b,eps)` | `float` · `double` · `double` |
 | `EXPECT_/ASSERT_THROW(stmt, E)`, `ANY_THROW`, `NO_THROW`, `EXPECT_DEATH(stmt, re)` | `stmt` is analysed (it can be a `{…}` block); its result is `Discarded` |
-| `EXPECT_THAT(v, matcher)` | no hint (`mt-unknown-return`); matchers: later phase |
+| `EXPECT_/ASSERT_THAT(v, matcher)` | by the matcher, below; any other matcher gives no hint (`mt-unknown-return`, with the matcher named) |
 | `… << "msg"` | the left operand is unwrapped |
 | `QCOMPARE(a, b)`, `QCOMPARE_EQ/NE/LT/LE/GT/GE`, `QTRY_COMPARE`, `QTRY_COMPARE_WITH_TIMEOUT` | each side the other's; string → `QString`. The timeout is code too |
 | `QVERIFY(c)`, `QVERIFY2(c, m)`, `QTRY_VERIFY*` | `bool`; the message and the timeout are code too |
@@ -705,6 +705,24 @@ the position of the type. Details settled while implementing it:
 | `auto v = call;` (also `auto&`, `const auto&`) | `AutoBound` → `auto` policy (D5) |
 | expression statement `call;` | `Discarded` → `void` + `mt-unused-result` warning |
 | `GTEST_SKIP`, `FAIL`, `SUCCEED`, `ADD_FAILURE`, `QFAIL`, `QSKIP`, `QEXPECT_FAIL`, `QWARN` | ignored |
+
+**Matchers** (`EXPECT_THAT`, `ASSERT_THAT`; the name may be written `testing::X` or `::testing::X`). A matcher that
+says what `v` is gives it the type its argument has, as the assertion of the same name would; the arguments are read
+as code, and what is compared with a call takes the type of `v`:
+
+| Matcher | Hint for `v` |
+|---|---|
+| `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge` `(x)` | as `EXPECT_EQ(v, x)` and the like: the type of `x`; a string literal gives `std::string` |
+| `StrEq`, `StrNe`, `StrCaseEq`, `StrCaseNe` `(s)` | `const char*` (`const wchar_t*` for a wide literal), as `EXPECT_STREQ` |
+| `HasSubstr`, `StartsWith`, `EndsWith` `(s)` | the type of `s`; a string literal gives `std::string` |
+| `IsTrue()`, `IsFalse()` | `bool` |
+| `IsNull()`, `NotNull()` | `void*`: a pointer, which one is not said (the note says so) |
+| `DoubleEq`, `DoubleNear` · `FloatEq`, `FloatNear` | `double` · `float` |
+| `AllOf(m…)`, `AnyOf(m…)`, `Not(m)` | each `m` is read against the same `v`; the first that says a type wins |
+| anything else (`ElementsAre`, `Contains`, `SizeIs`, `IsEmpty`, a matcher of the test's own, `Eq<int>(…)`) | none: the arguments are not read, and the `mt-unknown-return` error names the matcher |
+
+A matcher with another number of arguments than the table says is not read either. Like any context, a matcher
+yields to the one that came first: `EXPECT_EQ(f(), 3u)` before `EXPECT_THAT(f(), Eq(2.5))` leaves `unsigned int`.
 
 ### 7.7 Name classification
 

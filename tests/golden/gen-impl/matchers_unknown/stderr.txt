@@ -1,0 +1,2 @@
+in/gauge_test.cpp:9:23: error: the return type of 'Gauge::history' cannot be inferred: the matcher 'ElementsAre' does not say its type; annotate it: '// @mt: returns TYPE' [mt-unknown-return]
+in/gauge_test.cpp:10:23: error: the return type of 'Gauge::sizes' cannot be inferred: the matcher 'SizeIs' does not say its type; annotate it: '// @mt: returns TYPE' [mt-unknown-return]
