@@ -933,9 +933,32 @@ private:
         return any ? ir::collapse_spaces(slice(all.begin, all.end)) : std::string();
     }
 
+    // The name after the `class` or `struct` of a definition, as it was written (`Outer::Inner`, `Tpl<T>::Node`).
+    std::string written_class_name(CXCursor c) const {
+        const std::vector<Tok> t = tokens(c);
+        std::size_t first = 0;
+        while (first < t.size() && t[first].text != "class" && t[first].text != "struct" && t[first].text != "union") ++first;
+        ++first;
+        std::size_t last = first;
+        int angles = 0;
+        for (; last < t.size(); ++last) {
+            const std::string& x = t[last].text;
+            if (x == "<") ++angles;
+            if (x == ">") --angles;
+            if (x == ">>") angles -= 2;
+            if (angles <= 0 && (x == "{" || x == ":" || x == "final")) break;
+        }
+        return first < last ? ir::normalize_spelling(written(t, first, last - 1)) : to_string(clang_getCursorSpelling(c));
+    }
+
     void class_definition(CXCursor c, const std::optional<std::string>& template_params) {
         const std::string name = to_string(clang_getCursorSpelling(c));
         if (is_unnamed(name)) return;
+        if (clang_equalCursors(clang_getCursorSemanticParent(c), clang_getCursorLexicalParent(c)) == 0) {
+            // `struct Outer::Inner { ... };`: defined outside the class that declares it.
+            unsupported("the class '" + written_class_name(c) + "' is defined outside the class that declares it, which is not supported; it is skipped", c);
+            return;
+        }
         read_class(find_or_add_class(name), c, template_params);
     }
 

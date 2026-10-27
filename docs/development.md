@@ -67,6 +67,51 @@ compiled, linked and run. A new gen-tests golden case is a new
 `roundtrip.gen_tests.*` test as soon as `tests/roundtrip/gen-tests/<case>.cpp`
 exists (CMake finds it when it configures).
 
+## Running it on code that was not written for it
+
+Unit tests and goldens only say that the tool reads what its authors thought of. `tools/corpus.sh` runs it
+on other people's headers (and, for `gen-impl`, on other people's tests) and reports what a unit test would
+not: a crash, a hang, a sanitizer report, the `error` messages, and the headers the two frontends read
+differently. It is a development tool: the corpus is not vendored, and nothing here is part of the build
+or of CI.
+
+```sh
+cmake -S . -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMT_BUILD_TOOLS=ON -DMT_WITH_LIBCLANG=ON \
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+cmake --build build-san --target mirrortest mt_dump_model
+
+tools/corpus.sh --bin build-san/mirrortest --dump build-san/mt_dump_model --out /tmp/corpus \
+    -I build/_deps/cli11-src/include --config cli11.json build/_deps/cli11-src/include
+tools/corpus.sh --tests --bin build-san/mirrortest --out /tmp/corpus-tests \
+    build/_deps/googletest-src/googletest/test        # gen-impl on a project's own tests
+```
+
+`/tmp/corpus/report.txt` is the answer. The first three sections must be empty (crashes and hangs;
+sanitizer reports, with the function-type check of tree-sitter's generated C left out; models that could not
+be made). The messages of the errors are for reading: some are the tool saying no on purpose. The last
+section lists the headers whose models differ, and each difference is one of these:
+
+- **A branch of an `#if`.** The syntax-tree reader keeps every branch (design 6.5), libclang only the one
+  that builds, so an `#include`, a member or a function under `_WIN32` is in one model and not in the other.
+  Expected.
+- **A macro of the project.** A syntax tree cannot see through `MYLIB_API` or `DECLARE_THING(x)` and needs
+  it in `ignore_macros` (`--config`); a compiler needs nothing. With the project's macros listed, the
+  differences left are the interesting ones.
+- **Text the grammar cannot read** (an SFINAE `decltype(a, b)` return type with template-ids in it,
+  `typename T::type* = nullptr`, a pointer to member as a field): the syntax-tree reader says
+  "the parser could not make sense of this text (a macro of the project? list it in ignore_macros)" and
+  the model around it is partial; libclang is right.
+- **Anything else is a bug** of one of the two readers: reduce the header to the smallest one that shows it
+  (`mt_dump_model --frontend … FILE` writes the model, `--tree` the syntax tree), fix it and add the
+  reduced header to `tests/unit/test_clang_frontend.cpp` (the parity battery, if both readers can read
+  it) or to the test file of the reader at fault.
+
+`mt_dump_model` writes the model in the form the parity tests compare, so the same two commands that
+`corpus.sh` runs can be run by hand on one file: `mt_dump_model --frontend tree-sitter F` and
+`mt_dump_model --frontend libclang -I dir F`, and `diff` the two.
+
 ## Conventions
 
 - Every source, CMake and workflow file starts with

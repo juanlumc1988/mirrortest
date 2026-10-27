@@ -125,7 +125,7 @@ private:
                 ++reported;
                 diagnostics_.warning(core::code::parse,
                                      "the parser could not make sense of this text; declarations "
-                                     "around it may be missing",
+                                     "around it may be missing (a macro of the project? list it in ignore_macros)",
                                      syntax::location(n, file_));
             } else {
                 ++more;
@@ -314,6 +314,12 @@ private:
         const Node body = spec.child_by_field("body");
         if (name.is_null() || body.is_null()) {
             return;   // anonymous, or a forward declaration
+        }
+        if (name.text().find("::") != std::string_view::npos) {
+            // `struct Outer::Inner { ... };`: a class defined outside the one that declares it. Read as a class called
+            // 'Outer::Inner' it would get tests that do not compile.
+            unsupported("the class '" + std::string(name.text()) + "' is defined outside the class that declares it, which is not supported; it is skipped", name);
+            return;
         }
 
         ir::Class& cls = find_or_add_class(std::string(name.text()));
