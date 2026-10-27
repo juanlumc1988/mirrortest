@@ -41,6 +41,17 @@ again: pass `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<first>/_deps/<name>-src` for
 `TREE_SITTER`, `TREE_SITTER_CPP`, `NLOHMANN_JSON`, `INJA`, `CLI11`, `YAML_CPP` and
 `GOOGLETEST` (lower-case name in the path).
 
+The libclang frontend is tested by CI against libclang 14 to 20, one job each. To try one version by hand, install it
+(`apt install libclang-17-dev` puts it in `/usr/lib/llvm-17`) and say which, since the CMake module takes the newest
+it finds otherwise:
+
+```sh
+cmake -S . -B build-llvm17 -G Ninja -DMT_WITH_LIBCLANG=ON \
+  -DMT_LIBCLANG_INCLUDE_DIR=/usr/lib/llvm-17/include -DMT_LIBCLANG_LIBRARY=/usr/lib/llvm-17/lib/libclang-17.so
+```
+
+`frontend::libclang_major_version()` tells a test which version it runs with, for the few that depend on it.
+
 Clang's sanitizer runtime may be missing on minimal images
 (`libclang-rt-18-dev` on Ubuntu 24.04).
 

@@ -51,6 +51,15 @@ std::vector<std::string> messages(const Read& r, const char* code) {
 
 // ---- the build without libclang ------------------------------------------------------------------
 
+TEST(ClangFrontendBuild, ThereIsAVersionExactlyWhenThereIsALibclang) {
+    if (frontend::libclang_supported()) {
+        EXPECT_GE(frontend::libclang_major_version(), 14) << "the oldest this reads (cmake/MtLibclang.cmake)";
+        EXPECT_LT(frontend::libclang_major_version(), 100);
+    } else {
+        EXPECT_EQ(frontend::libclang_major_version(), 0);
+    }
+}
+
 TEST(ClangFrontendBuild, WithoutLibclangItRefusesAndSaysHowToHaveIt) {
     if (frontend::libclang_supported()) GTEST_SKIP() << "built with libclang";
     const Read r = clang("class A {};");
@@ -250,7 +259,7 @@ public:
 };)"},
     {"default_values",
      R"(extern int x_;
-void assigned(decltype(x_ = 1) v = 3);
+void assigned(decltype(static_cast<int>(x_ = 1)) v = 3);
 void ternary(int a = x_ == 1 ? 2 : 3, int b = (x_ > 1) ? 4 : 5);)"},
     {"parameters",
      R"(struct V {};
@@ -840,6 +849,22 @@ TEST(ClangFrontend, AStructGivenANameByATypedefIsReadWhichTheSyntaxTreeReaderDoe
     EXPECT_EQ(r.model.classes[0].fields[0].name, "b");
     EXPECT_EQ(r.model.classes[1].name, "Tagged");
     EXPECT_TRUE(tree_sitter("typedef struct { int b; } Named;\n").model.classes.empty());
+}
+
+TEST(ClangFrontend, ATypedefThatNamesAnAnonymousTypeInANamespaceGivesItsUnqualifiedName) {
+    // libclang 14 and 15 have the name only in the spelling of the type, as `n::Named`.
+    SKIP_WITHOUT_LIBCLANG();
+    const Read r = clang("namespace n {\n"
+                         "typedef struct { int b; } Named;\n"
+                         "typedef enum { X, Y } Kind;\n"
+                         "struct { int hidden; } variable;\n"
+                         "}\n");
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    EXPECT_EQ(r.model.classes[0].name, "Named");
+    EXPECT_EQ(r.model.classes[0].ns, (std::vector<std::string>{"n"}));
+    ASSERT_EQ(r.model.enums.size(), 1u);
+    EXPECT_EQ(r.model.enums[0].name, "Kind");
+    EXPECT_EQ(r.model.enums[0].ns, (std::vector<std::string>{"n"}));
 }
 
 TEST(ClangFrontend, APointerToMemberIsReadWhichTheSyntaxTreeReaderDoesNot) {

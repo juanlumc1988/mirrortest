@@ -465,6 +465,15 @@ What it is for: a header is code that compiles, and a compiler knows what a synt
   twice, and each of its declarations would be a redefinition. What is read is what the header declares and what the
   macros it uses declare in it, wherever those macros are defined. Function bodies are skipped. Specialisations, function templates, member templates and inherited constructors
   are reported as `mt-unsupported` in the words of the other reader.
+- **Versions** (plan 9.2). libclang 14 to 20, the ones Ubuntu 24.04 offers, are built against and tested by CI, one
+  job each; `cmake/MtLibclang.cmake` looks for 14 to 21 and takes the newest it finds unless it is told which
+  (`MT_LIBCLANG_INCLUDE_DIR`, `MT_LIBCLANG_LIBRARY`). Nothing older than 14 is tried. Where a version reads
+  something differently the reader makes up for it, so that the model is the same: `extern "C" { }` is an
+  `UnexposedDecl` up to 16 and a `LinkageSpec` from 17; the name that a `typedef` gives an anonymous struct or enum
+  (`typedef struct { int b; } Named;`) is not in the spelling of the cursor up to 15, only in that of its type; and
+  `alignas` is in the extent of a declaration in some versions and not in others. What it cannot make up for is
+  listed: up to 17 a default value that does not compile (`decltype(x = 1) v = 3`, or a default whose type is
+  unknown) is dropped, where 18 and later keep it as written; and `static operator()` (C++23) is an error before 16.
 
 ---
 

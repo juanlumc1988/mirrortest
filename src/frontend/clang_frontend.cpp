@@ -30,6 +30,20 @@ bool libclang_supported() { return MT_WITH_LIBCLANG != 0; }
 
 #if MT_WITH_LIBCLANG
 
+int libclang_major_version() {
+    CXString text = clang_getClangVersion();
+    const std::string version = clang_getCString(text) != nullptr ? clang_getCString(text) : "";
+    clang_disposeString(text);
+    static const std::string marker = "clang version ";
+    const std::size_t at = version.find(marker);
+    if (at == std::string::npos) return 0;
+    int major = 0;
+    for (std::size_t i = at + marker.size(); i < version.size() && std::isdigit(static_cast<unsigned char>(version[i])) != 0; ++i) {
+        major = major * 10 + (version[i] - '0');
+    }
+    return major;
+}
+
 namespace {
 
 using syntax::QtMarker;
@@ -705,6 +719,7 @@ private:
                 break;
             }
             case CXCursor_LinkageSpec:
+            case CXCursor_UnexposedDecl:   // `extern "C" { ... }` in libclang 14, which has no kind for it
                 declarations(c);
                 break;
             case CXCursor_InclusionDirective:
@@ -774,7 +789,7 @@ private:
     // ---- enums ------------------------------------------------------------------------------------
 
     void enum_definition(CXCursor c) {
-        const std::string name = to_string(clang_getCursorSpelling(c));
+        const std::string name = declared_name(c);
         if (is_unnamed(name) || clang_isCursorDefinition(c) == 0) return;   // anonymous, or a forward declaration
         ir::Enum e;
         e.name = name;
@@ -941,6 +956,16 @@ private:
         return any ? ir::collapse_spaces(slice(all.begin, all.end)) : std::string();
     }
 
+    // The name of a class or an enum. libclang 14 and 15 leave the name that a typedef gives an anonymous one
+    // (`typedef struct { int b; } Named;`) out of the spelling of its cursor and keep it in the spelling of its type, qualified.
+    std::string declared_name(CXCursor c) const {
+        const std::string name = to_string(clang_getCursorSpelling(c));
+        if (!name.empty()) return name;
+        const std::string type = to_string(clang_getTypeSpelling(clang_getCursorType(c)));
+        const std::size_t scope = type.rfind("::");
+        return is_unnamed(type) || scope == std::string::npos ? type : type.substr(scope + 2);
+    }
+
     // The name after the `class` or `struct` of a definition, as it was written (`Outer::Inner`, `Tpl<T>::Node`).
     std::string written_class_name(CXCursor c) const {
         const std::vector<Tok> t = tokens(c);
@@ -960,7 +985,7 @@ private:
     }
 
     void class_definition(CXCursor c, const std::optional<std::string>& template_params) {
-        const std::string name = to_string(clang_getCursorSpelling(c));
+        const std::string name = declared_name(c);
         if (is_unnamed(name)) return;
         if (clang_equalCursors(clang_getCursorSemanticParent(c), clang_getCursorLexicalParent(c)) == 0) {
             // `struct Outer::Inner { ... };`: defined outside the class that declares it.
@@ -1316,6 +1341,8 @@ ir::Model read_header_clang(const core::SourceFile& source, const std::string& i
 }
 
 #else  // !MT_WITH_LIBCLANG
+
+int libclang_major_version() { return 0; }
 
 ir::Model read_header_clang(const core::SourceFile& source, const std::string&, const syntax::MacroTable&, const ClangOptions&,
                             core::Diagnostics& diagnostics) {

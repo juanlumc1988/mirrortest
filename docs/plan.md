@@ -310,11 +310,13 @@ past twice its size, stop at what is solid and say so instead of widening it.
   readers that it found were fixed, each with a unit test made from the smallest header that showed it; the limits that
   stay are in `design.md` 6.6, and every difference between the frontends is classified in `development.md` ("Running it on code
   that was not written for it").
-- [ ] **9.2** *(S, high)* **libclang across versions.** The CI job builds and tests against a matrix of the libclang
-  versions that `apt` offers on the runner image, from the oldest the code is expected to support up to the newest
-  (`cmake/MtLibclang.cmake` already looks for 14 to 21). Phase 8 showed why: a later version than the one tried
-  locally keeps `alignas` in the extent of a declaration. Done when: the matrix is green, or the lowest
-  supported version is raised and written in `design.md` §6.7 and in the user documentation, with the reason.
+- [x] **9.2** *(S, high)* **libclang across versions.** The CI job builds and tests against a matrix of the libclang
+  versions that Ubuntu 24.04 offers, 14 to 20 (`cmake/MtLibclang.cmake` looks for 14 to 21; 21 is not in 24.04). Phase 8
+  showed why: a later version than the one tried locally keeps `alignas` in the extent of a declaration. Run locally
+  against each of them, it found `extern "C" { }` (an `UnexposedDecl` before 17) and the name of a typedef'd anonymous
+  struct or enum (not in the cursor's spelling before 16) read wrong by 14 to 16, a parity snippet that was not valid
+  C++ and was read only because 18 keeps an invalid default, and a C++23 test that needs 16: all fixed, and written in
+  `design.md` 6.7 with what cannot be made up for.
 - [ ] **9.3** *(S, medium)* **Types written with parentheses.** `ir::type_from_spelling` stops analysing a
   spelling that has parentheses, so `const decltype(x)&` has no base, no `const` and no reference; the
   syntax-tree reader reads it right, and the two frontends differ (found while pinning the parity battery of

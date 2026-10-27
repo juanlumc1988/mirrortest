@@ -563,7 +563,8 @@ By default the header is read by tree-sitter, which needs nothing and tolerates 
 header that does not compile. If the project's headers do compile, `--frontend
 libclang` (or `"frontend": "libclang"`) has a compiler front end read them instead.
 It is in the build only if it was asked for (`-DMT_WITH_LIBCLANG=ON`, needs
-libclang: `apt install libclang-dev`); otherwise the option says so and stops.
+libclang: `apt install libclang-dev`, any version from 14 to 20, which are the ones tested); otherwise the
+option says so and stops.
 
 ```console
 $ mirrortest gen-tests include/acme/port.h --out tests/ -I include \

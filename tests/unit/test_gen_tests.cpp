@@ -212,6 +212,7 @@ TEST(GenTestsLibclang, AnIncludeNextToTheHeaderIsFoundWhateverTheProcessDirector
 
 TEST(GenTestsLibclang, CxxTwentyThreeIsTheStandardLibclangCallsTwentyThreeB) {
     SKIP_WITHOUT_LIBCLANG();
+    if (frontend::libclang_major_version() < 16) GTEST_SKIP() << "a static operator() is C++23 to libclang 16 and later";
     const TempDir dir;
     write_file(dir.path() / "functor.h", "struct Functor {\n    static int operator()(int x);\n};\n");
     const Outcome r = gen_tests(dir, {"functor.h", "--out", "tests", "--frontend", "libclang", "--std", "c++23"});

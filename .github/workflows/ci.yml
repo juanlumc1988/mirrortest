@@ -71,23 +71,32 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   # The libclang frontend (--frontend libclang): the same models as tree-sitter's, from the same headers, and every
-  # gen-tests and gen-impl golden case run again with it. libclang is the distribution's, so it is the one that matches
-  # the compiler that finds the standard headers.
+  # gen-tests and gen-impl golden case run again with it, against every libclang that Ubuntu 24.04 offers, from the
+  # oldest the code is expected to read to the newest. What libclang puts in the extent of a declaration, the kind of
+  # `extern "C" { }` and the name of a typedef'd anonymous struct change from one version to the next, and the one
+  # that is tried by hand is not the one that is installed on somebody else's machine. The runner is pinned to the
+  # release, because the versions that apt offers are the ones of a release (cmake/MtLibclang.cmake looks for 14 to 21).
   libclang:
-    name: libclang frontend
-    runs-on: ubuntu-latest
+    name: libclang ${{ matrix.llvm }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: [14, 15, 16, 17, 18, 19, 20]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build tools and libclang
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libclang-dev
+      - name: Install build tools and libclang ${{ matrix.llvm }}
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libclang-${{ matrix.llvm }}-dev
 
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
                 -DCMAKE_BUILD_TYPE=Debug \
                 -DMT_WERROR=ON \
-                -DMT_WITH_LIBCLANG=ON
+                -DMT_WITH_LIBCLANG=ON \
+                -DMT_LIBCLANG_INCLUDE_DIR=/usr/lib/llvm-${{ matrix.llvm }}/include \
+                -DMT_LIBCLANG_LIBRARY=/usr/lib/llvm-${{ matrix.llvm }}/lib/libclang-${{ matrix.llvm }}.so
 
       - name: Build
         run: cmake --build build -j

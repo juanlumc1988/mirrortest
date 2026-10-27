@@ -42,6 +42,11 @@ namespace mt::frontend {
 // Whether this build has the libclang frontend (MT_WITH_LIBCLANG).
 bool libclang_supported();
 
+// The major version of the libclang this program runs with (18 for "clang version 18.1.3"), or 0 when the build has none
+// or its version cannot be read. What libclang reads differs between versions, and a test of the behaviour of one of them
+// needs to know which it is.
+int libclang_major_version();
+
 struct ClangOptions {
     // Passed to libclang as the compiler's command line, in this order, after `-x c++`:
     // -I and -D, -std=..., whatever `clang_args` in the configuration says. Paths in them
