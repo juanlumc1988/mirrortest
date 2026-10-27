@@ -118,6 +118,9 @@ about a type). The last section lists the headers whose models differ, and each 
   reduced header to `tests/unit/test_clang_frontend.cpp` (the parity battery, if both readers can read
   it) or to the test file of the reader at fault.
 
+The script exits with a non-zero status when one of those two sections is not empty, and with `-DMT_BUILD_TOOLS=ON` and
+`-DMT_WITH_LIBCLANG=ON` the test `tools.corpus` runs it over the header of a golden case, which keeps the script itself working.
+
 `mt_dump_model` writes the model in the form the parity tests compare, so the same two commands that
 `corpus.sh` runs can be run by hand on one file: `mt_dump_model --frontend tree-sitter F` and
 `mt_dump_model --frontend libclang -I dir F`, and `diff` the two.
