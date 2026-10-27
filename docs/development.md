@@ -15,6 +15,15 @@ see [design.md](design.md); for the order of work, [plan.md](plan.md).
   kept for traceability. Where it disagrees with `design.md`, `design.md` wins
   (section 1 lists why).
 
+## Setting up a machine
+
+`tools/setup-mirrortest.sh` prepares an Ubuntu 24.04 WSL2 distro (the one CI's runners use): `apt` packages for the
+build (`build-essential`, CMake, Ninja, git, gdb), a check of the toolchain, the VS Code extensions for Remote - WSL, and
+the build and test run of the section below. It is idempotent and edits no dotfile. Optional parts are asked for:
+`--with-libclang` (libclang 20 and its resource headers, and the build with `-DMT_WITH_LIBCLANG=ON` pointing at them),
+`--with-qt` (Qt 6 with Test and moc, for the Qt round trips) and `--with-clang` (Clang 20 and its sanitizer runtime).
+Run from a checkout it uses it; standalone, `--clone[=DIR]` clones into `~/mirrortest`.
+
 ## Build and test
 
 ```sh
