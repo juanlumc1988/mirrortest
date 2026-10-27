@@ -44,6 +44,8 @@ source line it came from.
 - the `static_assert`s of what the class declares: the bases it derives from
   and the copies and moves it deletes;
 - class templates, for the instantiations you list, and nested classes;
+- one more file, named after the header (`util.h` gives `util_functions_test.cpp`), for the free functions of the header,
+  and tests under the same `#if` as the member they test;
 - opt in: a fixture, gmock mocks of the interfaces, and tests over a table of
   arguments (`TEST_P`, or `_data()` and `QFETCH`).
 

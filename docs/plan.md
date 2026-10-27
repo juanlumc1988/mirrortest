@@ -365,5 +365,6 @@ past twice its size, stop at what is solid and say so instead of widening it.
   an abstract declarator in a trailing return type). They are rare, `--frontend libclang` reads them right, and 9.1
   will say if the corpus shows them often enough to change that.
 - **Windows and macOS builds.** Nothing in the project needs them yet, and each is a CI job to keep green.
-- **Matchers over containers** (9.4) and **templates and operators as free functions** (9.5): they need
-  decisions about which instantiation to test, which the design leaves to the configuration (`template_instantiations`, §9.1).
+- **Matchers over containers** (9.4) and **function templates** (9.5): they need decisions about which instantiation
+  to test, which the design leaves to the configuration (`template_instantiations`, §9.1); a function template still gets
+  an `mt-unsupported` warning and no test.
