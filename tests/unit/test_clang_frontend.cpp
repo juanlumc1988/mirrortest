@@ -109,6 +109,18 @@ private:
     const char* text{"x"};
     double empty{};
 };)"},
+    {"several_declarators",
+     R"(template <typename T> struct Box {};
+struct Marks {
+    int line, column;
+    unsigned char *p1, p2, **p3;
+    long a1 = 1, a2{2}, a3[3];
+    const char *const names[2], *single;
+    Box<int> first, second;
+    std::size_t m_row, m_col;
+    static int count_a, count_b;
+    unsigned flag_a : 1, flag_b : 2;
+};)"},
     {"operators",
      R"(class Num {
 public:
@@ -614,6 +626,64 @@ TEST(ClangFrontend, TheLocationOfAParseWarningIsThatOfTheHeaderAsGivenNotOfTheAb
     EXPECT_EQ(all[0].where.file, "t.h");
     EXPECT_EQ(all[0].where.line, 3u);
     EXPECT_EQ(all[0].where.column, 5u);
+}
+
+TEST(ClangFrontend, ACommentOrAPreprocessorLineInTheMiddleOfATypeIsNotPartOfIt) {
+    SKIP_WITHOUT_LIBCLANG();
+    // From CLI11's TypeTools.hpp, where a pragma sits inside a decltype.
+    const char* text = R"(extern int x_;
+struct True {};
+struct S {
+    template <typename TT>
+    static auto test(int) -> decltype(
+        // NVCC warns about narrowing conversions here
+#ifdef __CUDACC__
+#pragma nv_diag_suppress 2361
+#endif
+        x_ /* the value */,
+#ifdef __CUDACC__
+#pragma nv_diag_default 2361
+#endif
+        True());
+};)";
+    const Read r = clang(text);
+    ASSERT_EQ(r.model.classes.size(), 2u);
+    ASSERT_EQ(r.model.classes[1].methods.size(), 1u);
+    const std::string ret = r.model.classes[1].methods[0].ret.spelling;
+    EXPECT_EQ(ret.find('#'), std::string::npos) << ret;
+    EXPECT_EQ(ret.find("//"), std::string::npos) << ret;
+    EXPECT_EQ(ret.find("/*"), std::string::npos) << ret;
+    EXPECT_EQ(ret, "decltype(x_, True())");
+}
+
+TEST(ClangFrontend, AMacroInTheMiddleOfATypeIsExpandedByLibclangNotKeptInTheType) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(#define API
+#define WORD unsigned
+struct Holder {
+    static API long counter_;
+    API static long other_;
+    WORD flags_;
+    void f(API long n, WORD m);
+    API long g();
+    long API h();
+    static WORD i();
+};)";
+    const Read r = clang(text);
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    const ir::Class& c = r.model.classes[0];
+    ASSERT_EQ(c.fields.size(), 3u);
+    EXPECT_EQ(c.fields[0].type.spelling, "long");
+    EXPECT_EQ(c.fields[1].type.spelling, "long");
+    EXPECT_EQ(c.fields[2].type.spelling, "unsigned int") << "what the macro stands for is libclang's to say";
+    ASSERT_EQ(c.methods.size(), 4u);
+    ASSERT_EQ(c.methods[0].params.size(), 2u);
+    EXPECT_EQ(c.methods[0].params[0].type.spelling, "long");
+    EXPECT_EQ(c.methods[0].params[1].type.spelling, "unsigned int");
+    EXPECT_EQ(c.methods[1].ret.spelling, "long");
+    EXPECT_EQ(c.methods[2].ret.spelling, "long");
+    EXPECT_EQ(c.methods[3].ret.spelling, "unsigned int");
+    EXPECT_TRUE(c.methods[3].is_static);
 }
 
 TEST(ClangFrontend, AnAttributeInTheMiddleOfAReturnTypeIsNotPartOfIt) {

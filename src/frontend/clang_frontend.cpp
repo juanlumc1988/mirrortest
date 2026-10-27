@@ -95,7 +95,7 @@ struct Shape {
     bool is_deleted = false;
     bool is_defaulted = false;
     ir::RefKind ref = ir::RefKind::None;
-    std::optional<std::pair<unsigned, unsigned>> trailing_return;   // the span after `->`, if there is one
+    std::optional<std::pair<std::size_t, std::size_t>> trailing_return;   // the tokens after `->` (first, last), if there are any
 };
 
 bool is_specifier(const std::string& x) {
@@ -189,7 +189,7 @@ Shape read_shape(const std::vector<Tok>& t, unsigned name_offset) {
                 if (inner <= 0 && (y == ";" || y == "{" || y == "=" || y == "override" || y == "final" || y == "requires")) break;
                 ++last;
             }
-            if (last > k + 1) s.trailing_return = std::make_pair(t[k + 1].begin, t[last - 1].end);
+            if (last > k + 1) s.trailing_return = std::make_pair(k + 1, last - 1);
             k = last - 1;
             continue;
         }
@@ -237,6 +237,7 @@ public:
         for (CXCursor c : children(clang_getTranslationUnitCursor(tu_))) {
             if (clang_getCursorKind(c) == CXCursor_MacroExpansion && in_main_file(c)) macro_expansions_.push_back(span_of(c).begin);
         }
+        std::sort(macro_expansions_.begin(), macro_expansions_.end());
         declarations(clang_getTranslationUnitCursor(tu_));
     }
 
@@ -311,12 +312,28 @@ private:
         return text_.substr(begin, std::min<std::size_t>(end, text_.size()) - begin);
     }
 
-    // The tokens of the text between two offsets, comments left out.
+    // Whether the first thing on its line before `offset` is a '#': the offset is where a preprocessor line starts.
+    bool starts_a_directive(unsigned offset) const {
+        std::size_t i = offset;
+        while (i > 0 && (text_[i - 1] == ' ' || text_[i - 1] == '\t')) --i;
+        return (i == 0 || text_[i - 1] == '\n') && offset < text_.size() && text_[offset] == '#';
+    }
+
+    // The end of the preprocessor line that starts at `offset`: the first line break that is not escaped.
+    unsigned directive_end(unsigned offset) const {
+        std::size_t i = offset;
+        while (i < text_.size() && !(text_[i] == '\n' && (i == 0 || text_[i - 1] != '\\'))) ++i;
+        return static_cast<unsigned>(i);
+    }
+
+    // The tokens of the text between two offsets, comments and preprocessor lines left out (a declaration can have an
+    // `#ifdef` in the middle of an expression of its own).
     std::vector<Tok> tokens_in(CXSourceRange range, unsigned limit) const {
         std::vector<Tok> out;
         CXToken* raw = nullptr;
         unsigned count = 0;
         clang_tokenize(tu_, range, &raw, &count);
+        unsigned directive_until = 0;
         for (unsigned i = 0; i < count; ++i) {
             if (clang_getTokenKind(raw[i]) == CXToken_Comment) continue;
             const CXSourceRange r = clang_getTokenExtent(tu_, raw[i]);
@@ -324,10 +341,29 @@ private:
             t.begin = offset_of(clang_getRangeStart(r));
             t.end = offset_of(clang_getRangeEnd(r));
             if (t.begin >= limit) continue;   // some versions return one token past the range
+            if (t.begin < directive_until) continue;
             t.text = to_string(clang_getTokenSpelling(tu_, raw[i]));
+            if (t.text == "#" && starts_a_directive(t.begin)) {
+                directive_until = directive_end(t.begin);
+                continue;
+            }
             out.push_back(std::move(t));
         }
         clang_disposeTokens(tu_, raw, count);
+        return out;
+    }
+
+    // Tokens `first` to `last` (inclusive) as they were written: the text between them as it is, except where it holds
+    // more than blanks (a comment, a preprocessor line in the middle of an expression), which becomes one space.
+    std::string written(const std::vector<Tok>& t, std::size_t first, std::size_t last) const {
+        if (first > last || last >= t.size()) return {};
+        std::string out = slice(t[first].begin, t[first].end);
+        for (std::size_t i = first + 1; i <= last; ++i) {
+            const std::string gap = slice(t[i - 1].end, t[i].begin);
+            const bool blank = std::all_of(gap.begin(), gap.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; });
+            out += blank ? gap : std::string(" ");
+            out += slice(t[i].begin, t[i].end);
+        }
         return out;
     }
 
@@ -367,7 +403,19 @@ private:
         unsigned expanded = 0;
         clang_getSpellingLocation(where, nullptr, nullptr, nullptr, &spelled);
         clang_getExpansionLocation(where, nullptr, nullptr, nullptr, &expanded);
-        return spelled != expanded || std::find(macro_expansions_.begin(), macro_expansions_.end(), expanded) != macro_expansions_.end();
+        return spelled != expanded || is_macro_use(expanded);
+    }
+
+    // Whether a macro is used at this offset of the text.
+    bool is_macro_use(unsigned offset) const { return std::binary_search(macro_expansions_.begin(), macro_expansions_.end(), offset); }
+
+    // Whether a macro is used in tokens [from, to): a type with a macro in it (`static YAML_CPP_API std::atomic<size_t> x;`)
+    // is for libclang to spell, because the macro may stand for a word of the type or for nothing at all.
+    bool has_macro_use(const std::vector<Tok>& t, std::size_t from, std::size_t to) const {
+        for (std::size_t i = from; i < to && i < t.size(); ++i) {
+            if (is_macro_use(t[i].begin)) return true;
+        }
+        return false;
     }
 
     ir::Type make(const std::string& spelling, CXSourceLocation where) const {
@@ -442,6 +490,70 @@ private:
         return ir::normalize_spelling(out);
     }
 
+    // For a declaration with several declarators, `int line, column;`: whether the tokens `t` are those of a declarator
+    // after the first (`later`), whether the specifiers could be read (`read`: not when the first declarator is a function
+    // pointer) and where they end (`end`): before the name of the first declarator, less the stars and references that
+    // belong to it. `name_at` is the token that names the declarator the tokens are of.
+    struct SharedSpecifiers {
+        bool        later = false;
+        bool        read = false;
+        std::size_t end = 0;         // the specifiers are tokens [0, end)
+        std::size_t own_start = 0;   // the declarator the tokens are of starts here (after the last comma before its name)
+    };
+
+    static SharedSpecifiers shared_specifiers(const std::vector<Tok>& t, std::size_t name_at) {
+        SharedSpecifiers result;
+        if (name_at == std::string::npos) return result;
+        std::size_t comma = std::string::npos;   // the first comma, which ends the first declarator
+        std::size_t last = std::string::npos;    // the last before the name, which starts this declarator
+        int depth = 0;
+        int angles = 0;
+        for (std::size_t i = 0; i < name_at && i < t.size(); ++i) {
+            const std::string& x = t[i].text;
+            if (x == "(" || x == "[" || x == "{") ++depth;
+            if (x == ")" || x == "]" || x == "}") --depth;
+            if (depth == 0 && x == "<") ++angles;
+            if (depth == 0 && x == ">" && angles > 0) --angles;
+            if (depth == 0 && x == ">>" && angles > 0) angles = std::max(0, angles - 2);
+            if (depth == 0 && angles == 0 && x == ",") {
+                if (comma == std::string::npos) comma = i;
+                last = i;
+            }
+        }
+        if (comma == std::string::npos) return result;
+        result.later = true;
+        result.own_start = last + 1;
+        // The first declarator ends at the comma; its name is the last identifier before whatever follows the name.
+        std::size_t stop = comma;
+        for (std::size_t i = 0; i < comma; ++i) {
+            const std::string& x = t[i].text;
+            if (x == "(") return result;                      // a function pointer, or a function: not read
+            if (x == "=" || x == "{" || x == "[" || x == ":") {
+                stop = i;
+                break;
+            }
+        }
+        std::size_t name = std::string::npos;
+        for (std::size_t i = stop; i-- > 0;) {
+            const char first = t[i].text.empty() ? ' ' : t[i].text[0];
+            if (std::isalpha(static_cast<unsigned char>(first)) != 0 || first == '_') {
+                name = i;
+                break;
+            }
+        }
+        if (name == std::string::npos || name == 0) return result;
+        std::size_t end = name;
+        while (end > 0) {
+            const std::string& x = t[end - 1].text;
+            const bool qualifier = (x == "const" || x == "volatile") && end >= 2 && (t[end - 2].text == "*" || t[end - 2].text == "&" || t[end - 2].text == "&&");
+            if (x == "*" || x == "&" || x == "&&" || qualifier) --end;
+            else break;
+        }
+        result.read = end > 0;
+        result.end = end;
+        return result;
+    }
+
     // The type a parameter or a field declares, as written: its declaration without the name and
     // without what follows it (= initialiser, {initialiser}, : bits). A declaration libclang cannot
     // make sense of (a type it does not know) is still read this way, which is the point.
@@ -471,21 +583,45 @@ private:
                 break;
             }
         }
-        const std::string written = spelled(t, 0, end, skip);
-        return written.empty() ? type_of(clang_getCursorType(c), where) : make(written, where);
+        // `int line, column;` and `unsigned char *p, q, **r[2];`: the cursor of the second starts where the whole
+        // declaration does, so its tokens hold the declarators before it. Its type is the specifiers, then what is
+        // written around its own name: the stars before it, the array after it.
+        const SharedSpecifiers shared = shared_specifiers(t, skip);
+        if (shared.later) {
+            if (!shared.read) return type_of(clang_getCursorType(c), where);
+            std::vector<Tok> own(t.begin(), t.begin() + static_cast<std::ptrdiff_t>(shared.end));
+            own.insert(own.end(), t.begin() + static_cast<std::ptrdiff_t>(shared.own_start), t.begin() + static_cast<std::ptrdiff_t>(skip));
+            int nesting = 0;
+            for (std::size_t i = skip + 1; i < t.size(); ++i) {
+                const std::string& x = t[i].text;
+                if (x == "(" || x == "[") ++nesting;
+                if (x == ")" || x == "]") --nesting;
+                if (nesting == 0 && (x == "=" || x == "{" || x == ":" || x == ",")) break;
+                own.push_back(t[i]);
+            }
+            if (has_macro_use(own, 0, own.size())) return type_of(clang_getCursorType(c), where);
+            const std::string text = spelled(own, 0, own.size(), std::string::npos);
+            return text.empty() ? type_of(clang_getCursorType(c), where) : make(text, where);
+        }
+        if (has_macro_use(t, 0, end)) return type_of(clang_getCursorType(c), where);
+        const std::string text = spelled(t, 0, end, skip);
+        return text.empty() ? type_of(clang_getCursorType(c), where) : make(text, where);
     }
 
     // What a function returns, as written: the declaration before its name, or what follows `->`.
     ir::Type return_type(CXCursor c, const std::vector<Tok>& t, const Shape& shape) const {
         const CXSourceLocation where = clang_getRangeStart(clang_getCursorExtent(c));
         if (!from_macro(c)) {
-            if (shape.trailing_return) return make(ir::normalize_spelling(slice(shape.trailing_return->first, shape.trailing_return->second)), where);
+            if (shape.trailing_return) {
+                if (has_macro_use(t, shape.trailing_return->first, shape.trailing_return->second + 1)) return type_of(clang_getCursorResultType(c), where);
+                return make(ir::normalize_spelling(written(t, shape.trailing_return->first, shape.trailing_return->second)), where);
+            }
             const std::size_t name_at = index_at(t, name_offset(c));
             if (name_at != std::string::npos) {
                 // `void (*get())(int)` has its name inside its own type: that is for libclang to spell.
-                const bool nested = has_declarator_parentheses(t, name_at);
-                const std::string written = nested ? std::string() : spelled(t, 0, name_at, std::string::npos);
-                if (!written.empty()) return make(written, where);
+                const bool nested = has_declarator_parentheses(t, name_at) || has_macro_use(t, 0, name_at);
+                const std::string text = nested ? std::string() : spelled(t, 0, name_at, std::string::npos);
+                if (!text.empty()) return make(text, where);
             }
         }
         return type_of(clang_getCursorResultType(c), where);
@@ -607,7 +743,7 @@ private:
             if (t[i].text == "<") ++depth;
             if (t[i].text == ">") --depth;
             if (t[i].text == ">>") depth -= 2;
-            if (depth <= 0) return ir::normalize_spelling(slice(t[at].begin, t[i].end));
+            if (depth <= 0) return ir::normalize_spelling(written(t, at, i));
         }
         return name;
     }
@@ -655,7 +791,7 @@ private:
         std::size_t last = i + 1;
         while (last < t.size() && t[last].text != "{" && t[last].text != ";") ++last;
         if (last == i + 1) return std::nullopt;
-        return ir::normalize_spelling(slice(t[i + 1].begin, t[last - 1].end));
+        return ir::normalize_spelling(written(t, i + 1, last - 1));
     }
 
     // ---- free functions ----------------------------------------------------------------------------
@@ -765,7 +901,7 @@ private:
             const std::string& x = t[i].text;
             if (x == "(" || x == "[" || x == "{") ++depth;
             if (x == ")" || x == "]" || x == "}") --depth;
-            if (depth == 0 && x == "=" && i + 1 < t.size()) return slice(t[i + 1].begin, t.back().end);
+            if (depth == 0 && x == "=" && i + 1 < t.size()) return written(t, i + 1, t.size() - 1);
         }
         return std::nullopt;
     }
@@ -841,7 +977,7 @@ private:
         const auto flush = [&] {
             if (first != std::string::npos) {
                 ir::BaseSpec base;
-                base.name = ir::normalize_spelling(slice(t[first].begin, t[last].end));
+                base.name = ir::normalize_spelling(written(t, first, last));
                 base.access = access;
                 base.is_virtual = is_virtual;
                 cls.bases.push_back(std::move(base));
