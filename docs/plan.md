@@ -301,15 +301,15 @@ by usefulness for their size and risk, so that the first ones also find the bugs
 otherwise meet by accident. Size: **S** under a day of work, **M** a few days, **L** a week. If a task grows
 past twice its size, stop at what is solid and say so instead of widening it.
 
-- [ ] **9.1** *(M, high)* **Run it on real headers.** A development script (`tools/corpus.sh`, not part of the
-  build or of CI: the corpus is other people's code) runs `gen-tests` with both frontends over the public
-  headers of the dependencies already fetched into the build tree (CLI11, GoogleTest, inja, nlohmann/json,
-  yaml-cpp, tree-sitter) and over a sample of the standard library's. A first probe over the 26 headers of CLI11
-  found no crash or hang but different output from the two frontends for 5 of them, which is what this task is to
-  explain. Done when: no crash, hang (>60 s) or sanitizer report over the corpus with either frontend; every
-  `error` is either fixed (with a unit test made from the smallest header that shows it) or documented as a
-  limit in `design.md`; every difference between the two frontends is classified (a bug of one of them, or
-  something only a compiler knows); the script and the classification are described in `development.md`.
+- [x] **9.1** *(M, high)* **Run it on real headers.** `tools/corpus.sh` (a development script, not part of the build
+  or of CI: the corpus is other people's code) runs `gen-tests` with both frontends over the public headers of the
+  dependencies already fetched into the build tree (CLI11, GoogleTest and GoogleMock, inja, nlohmann/json, yaml-cpp,
+  tree-sitter) and a sample of libstdc++'s, compares the models with `mt_dump_model` (`-DMT_BUILD_TOOLS=ON`), and runs
+  `gen-impl` over the tests of GoogleTest and GoogleMock. 200 headers and 75 test files, with the address and
+  undefined-behaviour sanitizers: no crash, hang or sanitizer report and no `error`. The defects of the two
+  readers that it found were fixed, each with a unit test made from the smallest header that showed it; the limits that
+  stay are in `design.md` 6.6, and every difference between the frontends is classified in `development.md` ("Running it on code
+  that was not written for it").
 - [ ] **9.2** *(S, high)* **libclang across versions.** The CI job builds and tests against a matrix of the libclang
   versions that `apt` offers on the runner image, from the oldest the code is expected to support up to the newest
   (`cmake/MtLibclang.cmake` already looks for 14 to 21). Phase 8 showed why: a later version than the one tried

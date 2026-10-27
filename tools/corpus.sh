@@ -24,6 +24,9 @@
 #
 # ROOT is a directory (every file with a listed extension below it, in sorted order) or a file.
 #
+# The exit status is 0 when the sections of the report that must be empty are (a crash, a hang, a sanitizer report, a
+# model that could not be made), 1 when they are not, 2 for a wrong command line.
+#
 # Files in DIR: summary.tsv (one line per file and frontend), report.txt, and for every file the
 # diagnostics (*.err), the output (*.out) and, for headers, the two models (*.ts.model, *.cl.model).
 
@@ -44,7 +47,7 @@ while [ $# -gt 0 ]; do
         --frontends) frontends=$2; shift 2 ;;
         --config) config=$(realpath "$2"); shift 2 ;;
         --tests) tests=1; shift ;;
-        -h|--help) sed -n '5,32p' "$0"; exit 0 ;;
+        -h|--help) sed -n '5,34p' "$0"; exit 0 ;;
         -*) echo "corpus.sh: unknown option $1" >&2; exit 2 ;;
         *) roots+=("$1"); shift ;;
     esac
@@ -161,3 +164,6 @@ report="$out/report.txt"
     fi
 } > "$report"
 cat "$report"
+
+bad=$(awk -F'\t' '($2 != "models" && ($3 > 3 || $7 > 0)) || ($2 == "models" && $3 == "failed") { n++ } END { print n + 0 }' "$out/summary.tsv")
+[ "$bad" -eq 0 ]

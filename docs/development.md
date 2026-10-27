@@ -88,21 +88,31 @@ tools/corpus.sh --tests --bin build-san/mirrortest --out /tmp/corpus-tests \
     build/_deps/googletest-src/googletest/test        # gen-impl on a project's own tests
 ```
 
-`/tmp/corpus/report.txt` is the answer. The first three sections must be empty (crashes and hangs;
-sanitizer reports, with the function-type check of tree-sitter's generated C left out; models that could not
-be made). The messages of the errors are for reading: some are the tool saying no on purpose. The last
-section lists the headers whose models differ, and each difference is one of these:
+`/tmp/corpus/report.txt` is the answer. Its sections "crashes, hangs, usage errors, sanitizer reports" (the
+function-type check of tree-sitter's generated C is left out of it) and "models that could not be made" must be
+empty; the slowest runs are for seeing a hang coming. The messages of the errors are for reading: some are the
+tool saying no on purpose (`mt-unknown-return`, `mt-unknown-param`, `mt-chained-call` when a test says nothing
+about a type). The last section lists the headers whose models differ, and each difference is one of these:
 
 - **A branch of an `#if`.** The syntax-tree reader keeps every branch (design 6.5), libclang only the one
-  that builds, so an `#include`, a member or a function under `_WIN32` is in one model and not in the other.
-  Expected.
+  that builds, so an `#include`, a member, a class of a platform or a block under `#if 0` is in one model and not
+  in the other. Expected.
 - **A macro of the project.** A syntax tree cannot see through `MYLIB_API` or `DECLARE_THING(x)` and needs
-  it in `ignore_macros` (`--config`); a compiler needs nothing. With the project's macros listed, the
-  differences left are the interesting ones.
+  it in `ignore_macros` (`--config`); a compiler needs nothing. A macro that opens or closes a namespace
+  (`NLOHMANN_JSON_NAMESPACE_BEGIN`) cannot be helped that way: listed, the declarations are read but without the
+  namespace. Without the right list, a standard library's headers differ almost all (`_GLIBCXX_*`). The
+  warning says so, and when the parser loses most of a file because of one, it says that too. A way to find
+  the macros is to read the places of the `mt-parse` warnings: the same few names come out.
+- **Something only a compiler knows.** What a macro defined in another header declares (`MATCHER(IsTrue, "")`),
+  a macro that is a type (`GTEST_FLAG_SAVER_`, which libclang spells as what it expands to), and the world outside
+  the header: libclang says "libclang: …" for what it cannot find, and a header that is not self-contained
+  (nlohmann's `detail/` headers use what the file that includes them brought) loses what depends on it. Those
+  warnings are in the `.cl.model.err` of the header.
 - **Text the grammar cannot read** (an SFINAE `decltype(a, b)` return type with template-ids in it,
-  `typename T::type* = nullptr`, a pointer to member as a field): the syntax-tree reader says
-  "the parser could not make sense of this text (a macro of the project? list it in ignore_macros)" and
-  the model around it is partial; libclang is right.
+  `typename T::type* = nullptr`, a pointer to member as a field, a struct that a `typedef` gives its name to,
+  design 6.6): the syntax-tree reader says "the parser could not make sense of this text (a macro of the project?
+  list it in ignore_macros)" for most of them, and the model around it is partial; libclang is right.
+- **Cosmetic.** A parameter `void* const` without a name is spelled `void*` by libclang.
 - **Anything else is a bug** of one of the two readers: reduce the header to the smallest one that shows it
   (`mt_dump_model --frontend … FILE` writes the model, `--tree` the syntax tree), fix it and add the
   reduced header to `tests/unit/test_clang_frontend.cpp` (the parity battery, if both readers can read
@@ -111,6 +121,42 @@ section lists the headers whose models differ, and each difference is one of the
 `mt_dump_model` writes the model in the form the parity tests compare, so the same two commands that
 `corpus.sh` runs can be run by hand on one file: `mt_dump_model --frontend tree-sitter F` and
 `mt_dump_model --frontend libclang -I dir F`, and `diff` the two.
+
+### What the first run found (plan 9.1)
+
+The headers of CLI11, GoogleTest and GoogleMock, inja, nlohmann/json, yaml-cpp and tree-sitter at the versions
+pinned in `cmake/MtDependencies.cmake` (the project's macros in `ignore_macros` where there are any), 36 headers of
+GCC 13's libstdc++, and `gen-impl` over the 75 test files of GoogleTest and GoogleMock: 200 headers with both
+readers, 75 test files, built with Clang and the address and undefined-behaviour sanitizers. **No crash, no hang
+(the slowest run took 1.5 s), no sanitizer report and no `error`** in the headers; the errors of the test files are
+the tool asking for a type.
+
+| | headers | same model | differ |
+|---|---|---|---|
+| CLI11 | 26 | 18 | 8 |
+| GoogleTest, GoogleMock | 38 | 21 | 17 |
+| inja | 15 | 14 | 1 |
+| nlohmann/json | 46 | 24 | 22 |
+| yaml-cpp | 38 | 37 | 1 |
+| tree-sitter | 1 | 0 | 1 |
+| libstdc++ (a sample) | 36 | 3 | 33 |
+
+Every difference of CLI11, GoogleTest and GoogleMock, inja, yaml-cpp and tree-sitter was read in the two models and
+is one of the kinds above; nlohmann's and libstdc++'s were classified by what either reader said about the header
+(the macros behind the warnings, the "libclang: …" diagnostics) and by reading a sample. What the run turned into
+fixes, each with a unit test made from the smallest header that showed it:
+
+- *libclang*: the extent of a declaration with a trailing `decltype`, of a member that starts with an export
+  macro, of one declared by a macro, and of a function template (no parameter count); comments and `#` lines
+  inside a declaration; several declarators sharing a type; defaults written by a macro; conversion function
+  templates; function-pointer returns; `requires` and dynamic exception specifications; and a header that is
+  included back from the end of the file it includes (CLI11's `_inl.hpp` files), which was read twice.
+- *tree-sitter*: a destructor `= 0`, a braced default, a declarator that is no name, a class defined outside its
+  class (skipped by both readers in the same words), a field `override` that was a macro, a function with a
+  pointer-to-member parameter (skipped with a warning), parse errors inside a preprocessor directive (not
+  reported: they hide nothing), and the warning for a parse error that takes most of the file with it (a project
+  macro such as `CMP_HELPER(LT, <)` at namespace scope had made GoogleTest's `gtest.h` an empty model behind a
+  warning that read as a small thing).
 
 ## Conventions
 

@@ -954,6 +954,72 @@ TEST(ClangFrontend, AnIncludeNextToTheFileIsFoundWhateverTheProcessDirectoryIs) 
     ASSERT_EQ(model.classes.size(), 1u);
 }
 
+TEST(ClangFrontend, AHeaderIncludedBackFromTheFileItIncludesIsNotReadTwice) {
+    // CLI11's `Validators.hpp` and `impl/Validators_inl.hpp`: the first includes the second at its end, and the second
+    // includes the first at its beginning. As the file libclang parses, `#pragma once` is ignored and every
+    // declaration of the first is a redefinition; as a file that is included, it is what a program sees.
+    SKIP_WITHOUT_LIBCLANG();
+    test::TempDir dir;
+    const std::string foo = "#pragma once\nstruct Foo { int get() const; };\n#include \"foo_inl.h\"\n";
+    const std::string inl = "#pragma once\n#include \"foo.h\"\ninline int Foo::get() const { return 1; }\nstruct Inl { int one; };\n";
+    test::write_file(dir.path() / "foo.h", foo);
+    test::write_file(dir.path() / "foo_inl.h", inl);
+
+    frontend::ClangOptions options;
+    options.arguments = {"-std=c++17"};
+    options.absolute_path = (dir.path() / "foo.h").string();
+    core::Diagnostics first;
+    const ir::Model a = frontend::read_header_clang({"foo.h", foo}, "foo.h", {}, options, first);
+    EXPECT_TRUE(first.empty()) << (first.empty() ? "" : first.all()[0].message);
+    ASSERT_EQ(a.classes.size(), 1u);
+    EXPECT_EQ(a.classes[0].name, "Foo");
+
+    options.absolute_path = (dir.path() / "foo_inl.h").string();
+    core::Diagnostics second;
+    const ir::Model b = frontend::read_header_clang({"foo_inl.h", inl}, "foo_inl.h", {}, options, second);
+    EXPECT_TRUE(second.empty()) << (second.empty() ? "" : second.all()[0].message);
+    ASSERT_EQ(b.classes.size(), 1u) << "Foo is declared in the other file";
+    EXPECT_EQ(b.classes[0].name, "Inl");
+}
+
+TEST(ClangFrontend, WhatAMacroOfAnotherHeaderDeclaresIsReadWhereTheMacroIsUsed) {
+    // GoogleMock's `MATCHER(IsTrue, "")` is defined in a header of its own and declares a class and a function where it
+    // is used: they are the declarations of the header that uses it.
+    SKIP_WITHOUT_LIBCLANG();
+    test::TempDir dir;
+    test::write_file(dir.path() / "macros.h", "#define DECLARE_COUNTER(name) struct name { int value; int next() const; };\n");
+    const std::string text = "#include \"macros.h\"\nDECLARE_COUNTER(Made)\nclass Plain {};\n";
+    test::write_file(dir.path() / "user.h", text);
+    frontend::ClangOptions options;
+    options.arguments = {"-std=c++17"};
+    options.absolute_path = (dir.path() / "user.h").string();
+    core::Diagnostics diagnostics;
+    const ir::Model model = frontend::read_header_clang({"user.h", text}, "user.h", {}, options, diagnostics);
+    EXPECT_TRUE(diagnostics.empty());
+    ASSERT_EQ(model.classes.size(), 2u);
+    EXPECT_EQ(model.classes[0].name, "Made");
+    EXPECT_EQ(model.classes[0].where.line, 2u);
+    EXPECT_EQ(model.classes[0].methods.size(), 1u);
+    EXPECT_EQ(model.classes[0].fields.size(), 1u);
+    EXPECT_EQ(model.classes[1].name, "Plain");
+}
+
+TEST(ClangFrontend, AFileNameThatCannotBeWrittenInAnIncludeIsParsedAsTheMainFile) {
+    SKIP_WITHOUT_LIBCLANG();
+    test::TempDir dir;
+    const std::string text = "class Odd { public: int one() const; };\n";
+    const std::filesystem::path path = dir.path() / "od\"d.h";
+    test::write_file(path, text);
+    frontend::ClangOptions options;
+    options.arguments = {"-std=c++17"};
+    options.absolute_path = path.string();
+    core::Diagnostics diagnostics;
+    const ir::Model model = frontend::read_header_clang({"od\"d.h", text}, "odd.h", {}, options, diagnostics);
+    EXPECT_TRUE(diagnostics.empty());
+    ASSERT_EQ(model.classes.size(), 1u);
+    EXPECT_EQ(model.classes[0].name, "Odd");
+}
+
 TEST(ClangFrontend, TheStandardIsTheOneItIsGiven) {
     SKIP_WITHOUT_LIBCLANG();
     const char* text = "void f(auto x);\n";   // an abbreviated function template: C++20

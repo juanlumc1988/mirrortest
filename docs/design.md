@@ -381,7 +381,15 @@ conditionals) are ordinary overloads and say nothing.
 The parser always gives a tree. Every `ERROR` node (the outermost; up to 10,
 then a note "and N more parse errors") is an `mt-parse` warning with its
 position, and what surrounds it is read: a header that almost parses is far more
-useful than none.
+useful than none. Two kinds of `ERROR` are told apart:
+
+- one that lies inside a preprocessor directive (`#elif HAS_INCLUDE(<any>)`, with its continuation lines) is not
+  reported: every branch is read whatever its condition says (§6.5), so it hides nothing;
+- one that covers at least half of the file is reported with a message of its own ("lost the structure of most of
+  this file from here on, and the declarations in it are not read"): what is inside an `ERROR` node is never read,
+  and the recovery can make one of a whole namespace. The usual cause is a macro of the project at namespace scope
+  whose arguments are not C++ (`CMP_HELPER(LT, <)`: the `<` opens a template argument list), and listing it in
+  `ignore_macros` is the cure.
 
 What the recovery leaves is partial, and what is known to need it (found by running the tool on real headers,
 plan 9.1; `libclang` reads all of these right):
@@ -393,8 +401,12 @@ plan 9.1; `libclang` reads all of these right):
 - a parameter `typename T::type* = nullptr`: the `*` is in the `ERROR` node and the type loses it;
 - a field that is a pointer to member (`const T C::* field_;`), and a free function whose default argument is
   braced (`void f(Fn<void()> a = {});` at namespace scope), which are not read;
+- a parameter that is a pointer to member (`int S::*p`, `int (S::*f)(int)`): the grammar reads a parameter called
+  `S::*p` of type `int`. The function or method is skipped with an `mt-unsupported` warning;
 - a macro that stands for a declaration or a qualifier and is not in `ignore_macros`: the declarations around it
-  are read as if the macro were a type, or not at all.
+  are read as if the macro were a type, or not at all. A macro in front of `override` or `final`
+  (`~X() MYLIB_NOEXCEPT override;`) makes a field called `override`: it is skipped with an `mt-parse` warning that
+  names the likely cause.
 
 Everything above is reported as `mt-parse` at the place where the parser gave up.
 
@@ -443,8 +455,12 @@ What it is for: a header is code that compiles, and a compiler knows what a synt
 - **How it is called** (`cli::read_header_with`): `-x c++`, `-std=` of `--std` (`c++2b` for 23), the `-I`
   of the run (and those of `--compile-commands`) made absolute against the run's directory, then the
   `clang_args` of the configuration and the `--clang-arg`s of the command line, in that order. The header is given
-  from memory under its absolute path, so an `#include "next_to_it.h"` is found whatever the process's directory is.
-  Function bodies are skipped. Specialisations, function templates, member templates and inherited constructors
+  from memory under its absolute path, so an `#include "next_to_it.h"` is found whatever the process's directory is,
+  and it is not the file that libclang parses but the one that a one-line file of its own includes
+  (`#include "header.h"`): a compiler ignores `#pragma once` in the main file, so a header that is included back
+  from the end of the file it includes at the beginning (CLI11's `Foo.hpp` and `impl/Foo_inl.hpp`) would be read
+  twice, and each of its declarations would be a redefinition. What is read is what the header declares and what the
+  macros it uses declare in it, wherever those macros are defined. Function bodies are skipped. Specialisations, function templates, member templates and inherited constructors
   are reported as `mt-unsupported` in the words of the other reader.
 
 ---

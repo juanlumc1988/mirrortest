@@ -33,6 +33,27 @@ bool is_conditional(std::string_view type) {
            type == "preproc_elif" || type == "preproc_elifdef";
 }
 
+// Whether [begin, end) lies inside one preprocessor directive, with its continuation lines: `#elif HAS_INCLUDE(<any>)` is
+// no C++ to the parser, but it hides no declaration, because every branch is read whatever the condition says (design 6.5).
+bool within_directive(std::string_view text, std::size_t begin, std::size_t end) {
+    auto line_break = [&](std::size_t at) { return text[at] == '\n' && (at == 0 || text[at - 1] != '\\'); };
+    std::size_t start = begin;
+    while (start > 0 && !line_break(start - 1)) --start;
+    while (start < text.size() && (text[start] == ' ' || text[start] == '\t')) ++start;
+    if (start >= text.size() || text[start] != '#') return false;
+    std::size_t stop = begin;
+    while (stop < text.size() && !line_break(stop)) ++stop;
+    return end <= stop;
+}
+
+// The grammar reads `int S::*p` and `int (S::*f)(int)` as a parameter called `S::*p` of type `int`: there is no declaration
+// to make a test from, and no way to say it in a stub. (libclang reads them.)
+bool has_pointer_to_member_parameter(const std::vector<ir::Param>& params) {
+    return std::any_of(params.begin(), params.end(), [](const ir::Param& p) {
+        return p.name.find_first_of(":*&") != std::string::npos;
+    });
+}
+
 // What a member or a function can be called: an identifier, `~Identifier`, `operator…`. Anything else (`std::declval<A>`,
 // nothing at all) is what the parser made of text it could not read, which `report_parse_errors` has already said, and
 // would become a test of a member that does not exist.
@@ -117,15 +138,25 @@ private:
             if (!n.is_error()) {
                 return true;
             }
+            if (within_directive(tree_.source(), n.start_byte(), n.end_byte())) {
+                return false;
+            }
             // QFETCH(int, v) is no C++ to a parser, and the test frontend reads it by text.
             if (syntax::parse_qfetch(n.text())) {
                 return false;
             }
             if (reported < kMaxParseWarnings) {
                 ++reported;
+                // A call such as `MACRO(LT, <)` at namespace scope makes the parser give up on everything after it, and
+                // what is inside such an error is not read: the generic text would understate it.
+                const bool most_of_the_file = 2 * (n.end_byte() - n.start_byte()) >= tree_.root().end_byte();
                 diagnostics_.warning(core::code::parse,
-                                     "the parser could not make sense of this text; declarations "
-                                     "around it may be missing (a macro of the project? list it in ignore_macros)",
+                                     most_of_the_file
+                                         ? "the parser lost the structure of most of this file from here on, and the "
+                                           "declarations in it are not read; a macro of the project whose arguments are "
+                                           "not C++ is the usual cause (list it in ignore_macros)"
+                                         : "the parser could not make sense of this text; declarations "
+                                           "around it may be missing (a macro of the project? list it in ignore_macros)",
                                      syntax::location(n, file_));
             } else {
                 ++more;
@@ -288,6 +319,10 @@ private:
             f.ret = traits.has_trailing_return ? traits.trailing_return
                                                : syntax::make_declared_type(spec, d, file_);
             f.params = syntax::read_parameters(d.function.child_by_field("parameters"), file_);
+            if (has_pointer_to_member_parameter(f.params)) {
+                unsupported("'" + f.name + "' has a pointer-to-member parameter, which this reader cannot read; it is skipped", d.name_node);
+                continue;
+            }
             f.is_noexcept = traits.is_noexcept;
             f.header = header_;
             f.where = syntax::location(d.name_node, file_);
@@ -594,6 +629,12 @@ private:
             }
             if (!d.function.is_null() && !d.is_function_pointer) {
                 method(node, spec, d, state, is_template, invokable);
+            } else if (d.name == "override" || d.name == "final") {
+                // `~X() NOEXCEPT_MACRO override;` is a field called `override` to a parser that does not know the macro.
+                diagnostics_.warning(core::code::parse,
+                                     "'" + d.name + "' is read as the name of a field, which is most likely a macro of the "
+                                     "project in front of the keyword; it is skipped (list the macro in ignore_macros)",
+                                     syntax::location(d.name_node, file_));
             } else {
                 field(spec, d, state);
             }
@@ -659,6 +700,10 @@ private:
                                                : syntax::make_declared_type(spec, d, file_);
         }
         m.params = syntax::read_parameters(d.function.child_by_field("parameters"), file_);
+        if (has_pointer_to_member_parameter(m.params)) {
+            unsupported("'" + m.name + "' has a pointer-to-member parameter, which this reader cannot read; it is skipped", d.name_node);
+            return;
+        }
         m.access = state.access;
         m.qt_role = role_for(state, invokable);
         m.is_template = is_template;

@@ -449,4 +449,14 @@ if(MT_BUILD_TESTS)
     # and round-trip suites, which drive the real binary.
     add_test(NAME cli.version COMMAND mirrortest --version)
     set_tests_properties(cli.version PROPERTIES PASS_REGULAR_EXPRESSION "mirrortest ${PROJECT_VERSION}")
+
+    # The script that runs the tool over code nobody wrote for it (docs/development.md) runs, and finds nothing wrong
+    # in the headers of the golden cases: its exit status is non-zero when a crash, a hang or a sanitizer report is.
+    if(MT_BUILD_TOOLS AND MT_WITH_LIBCLANG AND UNIX)
+        add_test(NAME tools.corpus
+            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/corpus.sh"
+                --bin $<TARGET_FILE:mirrortest> --dump $<TARGET_FILE:mt_dump_model> --jobs 2
+                --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-smoke"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-tests/abstract/input")
+    endif()
 endif()

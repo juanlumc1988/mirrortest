@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <filesystem>
 #include <iterator>
 #include <optional>
 
@@ -227,15 +228,18 @@ Shape read_shape(const std::vector<Tok>& t, unsigned name_offset) {
 
 class Reader {
 public:
-    Reader(CXTranslationUnit tu, const std::string& text, const std::vector<QtMarker>& markers, const std::string& main_file,
-           const std::string& file, const std::string& header, ir::Model& model, core::Diagnostics& diagnostics)
-        : tu_(tu), text_(text), markers_(markers), main_file_(main_file), file_(file), header_(header), model_(model),
-          diagnostics_(diagnostics) {}
+    // `opened` is the header as libclang names it; `wrapper`, if not empty, is the file that includes it (see
+    // read_header_clang).
+    Reader(CXTranslationUnit tu, const std::string& text, const std::vector<QtMarker>& markers, const std::string& opened,
+           const std::string& wrapper, const std::string& file, const std::string& header, ir::Model& model,
+           core::Diagnostics& diagnostics)
+        : tu_(tu), text_(text), markers_(markers), main_file_(opened), wrapper_(wrapper), header_file_(clang_getFile(tu, opened.c_str())),
+          file_(file), header_(header), model_(model), diagnostics_(diagnostics) {}
 
     void run() {
         report_diagnostics();
         for (CXCursor c : children(clang_getTranslationUnitCursor(tu_))) {
-            if (clang_getCursorKind(c) == CXCursor_MacroExpansion && in_main_file(c)) macro_expansions_.push_back(span_of(c).begin);
+            if (clang_getCursorKind(c) == CXCursor_MacroExpansion && in_header(c)) macro_expansions_.push_back(span_of(c).begin);
         }
         std::sort(macro_expansions_.begin(), macro_expansions_.end());
         declarations(clang_getTranslationUnitCursor(tu_));
@@ -275,7 +279,12 @@ private:
 
     static unsigned name_offset(CXCursor c) { return offset_of(clang_getCursorLocation(c)); }
 
-    static bool in_main_file(CXCursor c) { return clang_Location_isFromMainFile(clang_getCursorLocation(c)) != 0; }
+    // Whether the cursor is in the header being read and not in one it includes.
+    bool in_header(CXCursor c) const {
+        CXFile file = nullptr;
+        clang_getExpansionLocation(clang_getCursorLocation(c), &file, nullptr, nullptr, nullptr);
+        return file != nullptr && header_file_ != nullptr && clang_File_isEqual(file, header_file_) != 0;
+    }
 
     ir::SourceLoc location_of(CXSourceLocation where) const {
         unsigned line = 0;
@@ -376,10 +385,9 @@ private:
     std::vector<Tok> function_tokens(CXCursor c) const {
         std::vector<Tok> t = tokens(c);
         if (has_parameter_list(t, name_offset(c))) return t;
-        const CXFile file = clang_getFile(tu_, main_file_.c_str());
-        if (file == nullptr) return t;
+        if (header_file_ == nullptr) return t;
         const CXSourceRange rest = clang_getRange(clang_getRangeStart(clang_getCursorExtent(c)),
-                                                  clang_getLocationForOffset(tu_, file, static_cast<unsigned>(text_.size())));
+                                                  clang_getLocationForOffset(tu_, header_file_, static_cast<unsigned>(text_.size())));
         std::vector<Tok> longer;
         int depth = 0;
         for (Tok& x : tokens_in(rest, static_cast<unsigned>(text_.size()))) {
@@ -644,7 +652,7 @@ private:
                     clang_getExpansionLocation(clang_getDiagnosticLocation(d), &file, &line, &column, nullptr);
                     ir::SourceLoc where;
                     where.file = file == nullptr ? std::string() : to_string(clang_getFileName(file));
-                    if (where.file == main_file_) where.file = file_;
+                    if (where.file == main_file_ || (!wrapper_.empty() && where.file == wrapper_)) where.file = file_;
                     where.line = line;
                     where.column = column;
                     diagnostics_.warning(core::code::parse, "libclang: " + to_string(clang_getDiagnosticSpelling(d)) + "; declarations around it may be missing or have wrong types", where);
@@ -686,7 +694,7 @@ private:
     }
 
     void declaration(CXCursor c) {
-        if (!in_main_file(c)) return;
+        if (!in_header(c)) return;
         switch (clang_getCursorKind(c)) {
             case CXCursor_Namespace: {
                 const std::string name = to_string(clang_getCursorSpelling(c));
@@ -1241,6 +1249,8 @@ private:
     const std::string&           text_;
     const std::vector<QtMarker>& markers_;
     const std::string&           main_file_;
+    const std::string&           wrapper_;
+    CXFile                       header_file_;
     const std::string&           file_;
     const std::string&           header_;
     ir::Model&                   model_;
@@ -1255,22 +1265,41 @@ ir::Model read_header_clang(const core::SourceFile& source, const std::string& i
                             const ClangOptions& options, core::Diagnostics& diagnostics) {
     ir::Model model;
     const syntax::Preprocessed pre = syntax::preprocess(source.text, macros);
-    const std::string opened = options.absolute_path.empty() ? source.path : options.absolute_path;
+    std::string opened = options.absolute_path;
+    if (opened.empty()) {
+        // libclang finds the file that a wrapper includes by its directory, which a bare name does not have.
+        std::error_code ec;
+        const std::filesystem::path absolute = std::filesystem::absolute(source.path, ec);
+        opened = ec ? source.path : absolute.lexically_normal().string();
+    }
 
     std::vector<std::string> arguments = {"-x", "c++"};
     arguments.insert(arguments.end(), options.arguments.begin(), options.arguments.end());
     std::vector<const char*> argv;
     for (const std::string& a : arguments) argv.push_back(a.c_str());
 
-    CXUnsavedFile unsaved;
-    unsaved.Filename = opened.c_str();
-    unsaved.Contents = pre.text.c_str();
-    unsaved.Length = static_cast<unsigned long>(pre.text.size());
+    // The header is not the file libclang parses but one that a file of its own includes, as it is in a program. Parsed as
+    // the main file, a `#pragma once` is ignored (a compiler warns about it), and a header that is included back from the
+    // end of the file it includes at the beginning (CLI11's `Foo.hpp` and `impl/Foo_inl.hpp`) is read twice, and each of its
+    // declarations is a redefinition. A name that cannot be written in an `#include` is the exception.
+    const std::string name = std::filesystem::path(opened).filename().string();
+    const bool wrapped = !name.empty() && name.find_first_of("\"\n\r") == std::string::npos;
+    const std::string wrapper = wrapped ? opened + ".mirrortest.cpp" : std::string();
+    const std::string wrapper_text = "#include \"" + name + "\"\n";
+
+    CXUnsavedFile unsaved[2];
+    unsaved[0].Filename = opened.c_str();
+    unsaved[0].Contents = pre.text.c_str();
+    unsaved[0].Length = static_cast<unsigned long>(pre.text.size());
+    unsaved[1].Filename = wrapper.c_str();
+    unsaved[1].Contents = wrapper_text.c_str();
+    unsaved[1].Length = static_cast<unsigned long>(wrapper_text.size());
 
     CXIndex index = clang_createIndex(0, 0);
     CXTranslationUnit tu = nullptr;
     const unsigned flags = CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_SkipFunctionBodies;
-    const CXErrorCode error = clang_parseTranslationUnit2(index, opened.c_str(), argv.data(), static_cast<int>(argv.size()), &unsaved, 1, flags, &tu);
+    const CXErrorCode error = clang_parseTranslationUnit2(index, wrapped ? wrapper.c_str() : opened.c_str(), argv.data(),
+                                                          static_cast<int>(argv.size()), unsaved, wrapped ? 2 : 1, flags, &tu);
     if (error != CXError_Success || tu == nullptr) {
         ir::SourceLoc where;
         where.file = source.path;
@@ -1280,7 +1309,7 @@ ir::Model read_header_clang(const core::SourceFile& source, const std::string& i
         return model;
     }
 
-    Reader(tu, pre.text, pre.markers, opened, source.path, include_path, model, diagnostics).run();
+    Reader(tu, pre.text, pre.markers, opened, wrapper, source.path, include_path, model, diagnostics).run();
     clang_disposeTranslationUnit(tu);
     clang_disposeIndex(index);
     return model;
