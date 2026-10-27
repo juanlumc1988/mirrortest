@@ -142,6 +142,8 @@ inline namespace v1 { enum class E { X, Y }; }
 }
 namespace a::b::c { struct Deep { int x; }; }
 namespace { class Hidden {}; }
+namespace same_a { class Same { public: int from_a; }; }
+namespace same_b { class Same { public: int from_b; }; }
 extern "C" { int c_function(int); }
 namespace outer { void again(); })"},
     {"enums",
@@ -178,7 +180,7 @@ template <typename T = Pair<Pair<int>>> class Defaulted { public: T get() const;
 class Counter {
 public:
     template <typename U> unsigned count(U u) const;
-    template <typename U, typename V = Pair<Pair<int>>> unsigned long long total(U u, V v);
+    template <typename U, typename V = Pair<Pair<int>>> unsigned total(U u, V v);
     [[nodiscard]] unsigned checked() const;
     [[nodiscard, deprecated("x")]] unsigned long both() const;
     __attribute__((unused)) unsigned plain();
@@ -297,7 +299,8 @@ struct Fields {
     enum { One, Two } bare_enum;
 };
 struct Deep {
-    struct { struct { int a; } in; int b; } outer;
+    struct { struct { int a = 1; } in; int b{2}; } outer;
+    struct { int a; } initialised = {1};
     int after;
 };)"},
     {"trailing_returns",
@@ -584,6 +587,49 @@ TEST(ClangFrontend, TheLocationOfAParseWarningIsThatOfTheHeaderAsGivenNotOfTheAb
     EXPECT_EQ(all[0].where.column, 5u);
 }
 
+TEST(ClangFrontend, AnAttributeInTheMiddleOfAReturnTypeIsNotPartOfIt) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(struct S {
+    static int [[nodiscard]] st();
+    void [[deprecated]] g();
+    unsigned [[maybe_unused]] h(unsigned [[maybe_unused]] x);
+};)";
+    const Read r = clang(text);
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    const std::vector<ir::Method>& m = r.model.classes[0].methods;
+    ASSERT_EQ(m.size(), 3u);
+    EXPECT_EQ(m[0].ret.spelling, "int");
+    EXPECT_TRUE(m[0].is_static);
+    EXPECT_EQ(m[1].ret.spelling, "void");
+    EXPECT_EQ(m[2].ret.spelling, "unsigned");
+}
+
+TEST(ClangFrontend, TheExtensionsThatTakeParenthesesBeforeTheNameAreReadAsWritten) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(extern int x_;
+__typeof__(x_) with_typeof();
+typeof(x_) with_plain_typeof();
+__declspec(dllexport) unsigned with_declspec();
+__attribute__((noinline)) unsigned with_attribute();
+)";
+    const Read r = clang(text, {"-std=gnu++17", "-fdeclspec"});
+    ASSERT_EQ(r.model.functions.size(), 4u);
+    EXPECT_EQ(r.model.functions[0].ret.spelling, "__typeof__(x_)");
+    EXPECT_EQ(r.model.functions[1].ret.spelling, "typeof(x_)");
+    EXPECT_EQ(r.model.functions[2].ret.spelling, "unsigned");
+    EXPECT_EQ(r.model.functions[3].ret.spelling, "unsigned");
+}
+
+TEST(ClangFrontend, TheEllipsisOfAFunctionIsWhereTheFunctionIs) {
+    SKIP_WITHOUT_LIBCLANG();
+    const Read r = clang("\n\nint log_all(const char* fmt, ...);\n");
+    ASSERT_EQ(r.model.functions.size(), 1u);
+    ASSERT_EQ(r.model.functions[0].params.size(), 2u);
+    EXPECT_EQ(r.model.functions[0].params[1].type.spelling, "...");
+    EXPECT_EQ(r.model.functions[0].params[1].type.where.line, 3u);
+    EXPECT_EQ(r.model.functions[0].params[1].type.where.column, 5u);
+}
+
 TEST(ClangFrontend, AFunctionThatReturnsAFunctionPointerHasItsOwnParametersOnly) {
     SKIP_WITHOUT_LIBCLANG();
     const char* text = R"(auto trailing() -> void (*)(int);
@@ -595,6 +641,7 @@ struct Holder {
     const Read r = clang(text);
     ASSERT_TRUE(r.diagnostics.empty());
     ASSERT_EQ(r.model.functions.size(), 2u);
+    EXPECT_EQ(r.model.functions[1].ret.spelling, "void(*)(int)") << "a declarator of its own: libclang spells it";
     EXPECT_EQ(r.model.functions[0].name, "trailing");
     EXPECT_EQ(r.model.functions[0].ret.spelling, "void(*)(int)");
     EXPECT_TRUE(r.model.functions[0].params.empty()) << "the (int) belongs to the pointer";

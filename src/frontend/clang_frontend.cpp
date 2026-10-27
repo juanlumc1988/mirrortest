@@ -350,11 +350,11 @@ private:
     }
 
     // Whether a parenthesis before the name (token `name_at`) opens a declarator, as in `void (*get())(int)`, and not a
-    // decltype, an attribute or an alignas, whose parentheses are part of a type that can be read as written.
+    // decltype or an attribute, whose parentheses are part of a type that can be read as written.
     static bool has_declarator_parentheses(const std::vector<Tok>& t, std::size_t name_at) {
         for (std::size_t i = 0; i < name_at && i < t.size(); ++i) {
             const std::string& x = t[i].text;
-            const bool own_parentheses = x == "decltype" || x == "typeof" || x == "__typeof__" || x == "__attribute__" || x == "alignas" || x == "__declspec";
+            const bool own_parentheses = x == "decltype" || x == "typeof" || x == "__typeof__" || x == "__attribute__" || x == "__declspec";
             if (own_parentheses && i + 1 < t.size() && t[i + 1].text == "(") {
                 i = closing(t, i + 1);
             } else if (x == "(") {
@@ -388,7 +388,7 @@ private:
                 ++i;
                 continue;
             }
-            if ((x == "__attribute__" || x == "alignas" || x == "__declspec") && i + 1 < to && t[i + 1].text == "(") {
+            if ((x == "__attribute__" || x == "__declspec") && i + 1 < to && t[i + 1].text == "(") {
                 i = closing(t, i + 1);
                 continue;
             }
