@@ -268,7 +268,8 @@ if(MT_BUILD_TESTS)
     # in tests/roundtrip/gen-tests/ named after the golden case, plus an optional
     # <case>.prelude.h forced into every translation unit for the types the header
     # relies on and the tool cannot know, and an optional <case>.mocks.cpp: one more
-    # translation unit, compiled against the generated mock headers (gtest.mocks).
+    # translation unit, compiled against the generated mock headers (gtest.mocks); and an optional <case>.configs, one
+    # configuration of the header a line (compiler flags, or `none`), for a header that has `#if`: the case is then run in each.
     if(NOT MSVC)
         file(GLOB mt_gen_tests_impls RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests"
              "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/*.cpp")
@@ -290,9 +291,14 @@ if(MT_BUILD_TESTS)
             if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.mocks.cpp")
                 set(mocks "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.mocks.cpp")
             endif()
+            set(configs "")
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.configs")
+                set(configs "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${case}.configs")
+            endif()
             add_test(NAME roundtrip.gen_tests.${case}
                 COMMAND "${CMAKE_COMMAND}"
                     -DMT_BIN=$<TARGET_FILE:mirrortest>
+                    "-DMT_CONFIGS=${configs}"
                     -DMT_CASE_DIR=${case_dir}
                     -DMT_IMPL=${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/gen-tests/${impl}
                     "-DMT_PRELUDE=${prelude}"

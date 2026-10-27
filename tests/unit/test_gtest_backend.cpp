@@ -745,3 +745,38 @@ TEST(GtestBackendTable, ASecondCaseFollowsAfterABlankLine) {
     EXPECT_NE(r.plan.files[0].content.find("::testing::Values(FooTest_a_Params{}));\n\nTEST(FooTest, b) {\n}\n"), std::string::npos)
         << r.plan.files[0].content;
 }
+
+// ---- the conditions a test is under (plan 9.6) ----------------------------------------------------------------------
+
+TEST(GtestBackendGuards, ATestIsBetweenAnIfAndAnEndifForEachConditionOutermostFirst) {
+    ir::TestCase guarded = test_case("transfer", {stmt(Stmt::Kind::Code, "int x")});
+    guarded.guards = {"defined(DMA)", "!(defined(PIO))"};
+    const Built b = build({plan_of({test_case("open", {stmt(Stmt::Kind::Code, "int y")}), guarded})});
+    EXPECT_EQ(body_lines(b, 0), (std::vector<std::string>{"TEST(FooTest, open) {", "    int y;", "}"})) << "no condition: no #if";
+    EXPECT_EQ(body_lines(b, 1), (std::vector<std::string>{"#if defined(DMA)", "#if !(defined(PIO))", "TEST(FooTest, transfer) {", "    int x;", "}",
+                                                          "#endif", "#endif"}));
+}
+
+TEST(GtestBackendGuards, ASuiteUnderAConditionHasItsFixtureAndItsTestsUnderIt) {
+    ir::TestPlan plan = plan_of({test_case("a", {})});
+    plan.suites[0].guards = {"defined(EXTRA)"};
+    plan.suites[0].cases[0].guards = {"defined(MORE)"};
+    plan.suites[0].fixture = ir::Fixture{};
+    plan.suites[0].fixture->name = "FooTest";
+    const Built b = build({plan});
+    const nlohmann::json& section = b.views.at(0).view["sections"].at(0);
+    const std::vector<std::string> fixture = lines_of(section["fixtures"].at(0));
+    ASSERT_GE(fixture.size(), 3u);
+    EXPECT_EQ(fixture.front(), "#if defined(EXTRA)");
+    EXPECT_EQ(fixture.back(), "#endif");
+    EXPECT_EQ(body_lines(b, 0), (std::vector<std::string>{"#if defined(EXTRA)", "#if defined(MORE)", "TEST_F(FooTest, a) {", "}", "#endif", "#endif"}));
+}
+
+TEST(GtestBackendGuards, TheGeneratedFileHasTheGuardsInPlace) {
+    ir::TestCase guarded = test_case("transfer", {});
+    guarded.guards = {"defined(DMA)"};
+    const Rendered r = render({plan_of({test_case("open", {}), guarded})});
+    ASSERT_EQ(r.plan.files.size(), 1u);
+    EXPECT_NE(r.plan.files[0].content.find("}\n\n#if defined(DMA)\nTEST(FooTest, transfer) {\n}\n#endif\n"), std::string::npos) << r.plan.files[0].content;
+}
+

@@ -1202,3 +1202,101 @@ TEST(CodeFrontendUnsupported, FunctionTemplatesStillWarn) {
     EXPECT_EQ(with_code(r, "mt-unsupported").size(), 1u);
     EXPECT_EQ(r.model.functions.size(), 1u);
 }
+
+// ---- the conditions a member is under (plan 9.6) -----------------------------------------------------------------------
+
+namespace {
+
+using Guards = std::vector<std::string>;
+
+Guards guards_of(const ir::Class& c, const char* method, std::size_t which = 0) {
+    std::size_t seen = 0;
+    for (const ir::Method& m : c.methods) {
+        if (m.name == method && seen++ == which) return m.guards;
+    }
+    ADD_FAILURE() << "no method " << method << " #" << which;
+    return {};
+}
+
+}  // namespace
+
+TEST(CodeFrontendGuards, AMemberUnderAnIfdefIsUnderTheDefinitionOfItsName) {
+    const Read r = read("class A {\npublic:\n    void always();\n#ifdef X\n    void with_x();\n#endif\n#ifndef Y\n    void without_y();\n#endif\n#if Z > 2\n    void big_z();\n#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_TRUE(guards_of(a, "always").empty());
+    EXPECT_EQ(guards_of(a, "with_x"), (Guards{"defined(X)"}));
+    EXPECT_EQ(guards_of(a, "without_y"), (Guards{"!defined(Y)"}));
+    EXPECT_EQ(guards_of(a, "big_z"), (Guards{"Z > 2"}));
+    EXPECT_TRUE(a.guards.empty());
+}
+
+TEST(CodeFrontendGuards, TheBranchesOfAChainAreUnderTheNegationOfTheOnesBefore) {
+    const Read r = read("class A {\npublic:\n"
+                        "#ifdef X\n    void a();\n"
+                        "#elif defined(Y) && \\\n      Z > 1\n    void b();\n"
+                        "#elifdef W\n    void c();\n"
+                        "#elifndef V\n    void d();\n"
+                        "#else\n    void e();\n"
+                        "#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_EQ(guards_of(a, "a"), (Guards{"defined(X)"}));
+    EXPECT_EQ(guards_of(a, "b"), (Guards{"!(defined(X)) && (defined(Y) && Z > 1)"})) << "a continued line is one line";
+    EXPECT_EQ(guards_of(a, "c"), (Guards{"!(defined(X)) && !(defined(Y) && Z > 1) && (defined(W))"}));
+    EXPECT_EQ(guards_of(a, "d"), (Guards{"!(defined(X)) && !(defined(Y) && Z > 1) && !(defined(W)) && (!defined(V))"}));
+    EXPECT_EQ(guards_of(a, "e"), (Guards{"!(defined(X)) && !(defined(Y) && Z > 1) && !(defined(W)) && !(!defined(V))"}));
+}
+
+TEST(CodeFrontendGuards, NestedConditionsAreSeparateLevelsOutermostFirst) {
+    const Read r = read("class A {\npublic:\n#ifdef X\n#ifdef Y\n    void a();\n#else\n    void b();\n#endif\n    void c();\n#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_EQ(guards_of(a, "a"), (Guards{"defined(X)", "defined(Y)"}));
+    EXPECT_EQ(guards_of(a, "b"), (Guards{"defined(X)", "!(defined(Y))"}));
+    EXPECT_EQ(guards_of(a, "c"), (Guards{"defined(X)"}));
+}
+
+TEST(CodeFrontendGuards, TheGuardOfTheHeaderAgainstBeingIncludedTwiceIsNoCondition) {
+    const Read r = read("#ifndef A_H\n#define A_H\n// the class\nclass A {\npublic:\n    void a();\n#ifdef X\n    void b();\n#endif\n};\n#endif\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_TRUE(a.guards.empty());
+    EXPECT_TRUE(guards_of(a, "a").empty());
+    EXPECT_EQ(guards_of(a, "b"), (Guards{"defined(X)"}));
+
+    // Not a guard: another macro is defined, or nothing is.
+    const Read other = read("#ifndef A_H\n#define B_H\nclass A { public: void a(); };\n#endif\n#ifndef C\nclass C { public: void c(); };\n#endif\n");
+    EXPECT_EQ(the_class(other, "A").guards, (Guards{"!defined(A_H)"}));
+    EXPECT_EQ(the_class(other, "C").guards, (Guards{"!defined(C)"}));
+}
+
+TEST(CodeFrontendGuards, AClassUnderAnIfIsUnderItAndItsMembersAreOnlyUnderWhatIsInsideIt) {
+    const Read r = read("#ifdef EXTRA\nclass A {\npublic:\n    void a();\n#ifdef MORE\n    void b();\n#endif\n};\n#endif\n");
+    const ir::Class& a = the_class(r, "A");
+    EXPECT_EQ(a.guards, (Guards{"defined(EXTRA)"}));
+    EXPECT_TRUE(guards_of(a, "a").empty()) << "the class is under it already";
+    EXPECT_EQ(guards_of(a, "b"), (Guards{"defined(MORE)"}));
+}
+
+TEST(CodeFrontendGuards, ANestedClassIsUnderWhatIsBetweenItAndTheClassAround) {
+    const Read r = read("#ifdef X\nclass A {\npublic:\n#ifdef Y\n    struct N {\n#ifdef Z\n        void n();\n#endif\n    };\n#endif\n};\n#endif\n");
+    const ir::Class& a = the_class(r, "A");
+    ASSERT_EQ(a.nested_classes.size(), 1u);
+    EXPECT_EQ(a.guards, (Guards{"defined(X)"}));
+    EXPECT_EQ(a.nested_classes[0].guards, (Guards{"defined(Y)"}));
+    EXPECT_EQ(guards_of(a.nested_classes[0], "n"), (Guards{"defined(Z)"}));
+}
+
+TEST(CodeFrontendGuards, AMemberDeclaredUnderTwoConditionsIsUnderNeither) {
+    const Read r = read("class A {\npublic:\n#ifdef X\n    int get();\n#else\n    int get();\n#endif\n#ifdef Y\n    void once();\n    void once();\n#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    ASSERT_EQ(a.methods.size(), 2u);
+    EXPECT_TRUE(guards_of(a, "get").empty()) << "it is there whenever one of the branches is taken";
+    EXPECT_EQ(guards_of(a, "once"), (Guards{"defined(Y)"})) << "declared twice under one condition: still under it";
+}
+
+TEST(CodeFrontendGuards, AlternativesWithDifferentSignaturesKeepTheirOwn) {
+    const Read r = read("class A {\npublic:\n#ifdef DMA\n    void go(int);\n#else\n    void go(double);\n#endif\n};\n");
+    const ir::Class& a = the_class(r, "A");
+    ASSERT_EQ(a.methods.size(), 2u);
+    EXPECT_EQ(guards_of(a, "go", 0), (Guards{"defined(DMA)"}));
+    EXPECT_EQ(guards_of(a, "go", 1), (Guards{"!(defined(DMA))"}));
+}
+

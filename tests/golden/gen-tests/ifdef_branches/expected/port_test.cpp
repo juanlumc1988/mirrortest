@@ -14,6 +14,7 @@ TEST(PortTest, open) {
     // TODO(mt): check the effect of the call
 }
 
+#if defined(USE_DMA)
 TEST(PortTest, transfer_char_ptr_unsigned) {
     FAIL() << "TODO(mt): write the test for Port::transfer(const char*, unsigned)";
 
@@ -26,7 +27,25 @@ TEST(PortTest, transfer_char_ptr_unsigned) {
     // Assert
     // TODO(mt): check the effect of the call
 }
+#endif
 
+#if !(defined(USE_DMA)) && (defined(USE_PIO) && PIO_WIDTH > 8)
+TEST(PortTest, transfer_char_ptr_unsigned_int) {
+    FAIL() << "TODO(mt): write the test for Port::transfer(const char*, unsigned, int)";
+
+    // Arrange
+    Port sut;
+    const char* data{};
+    unsigned size{};
+    int width{};
+    // Act
+    sut.transfer(data, size, width);
+    // Assert
+    // TODO(mt): check the effect of the call
+}
+#endif
+
+#if !(defined(USE_DMA)) && !(defined(USE_PIO) && PIO_WIDTH > 8)
 TEST(PortTest, transfer_char_ptr) {
     FAIL() << "TODO(mt): write the test for Port::transfer(const char*)";
 
@@ -38,3 +57,21 @@ TEST(PortTest, transfer_char_ptr) {
     // Assert
     // TODO(mt): check the effect of the call
 }
+#endif
+
+#if !defined(NO_STATS)
+#if defined(VERBOSE)
+TEST(PortTest, stats) {
+    FAIL() << "TODO(mt): write the test for Port::stats() const";
+
+    // Arrange
+    Port sut;
+    // Act
+    const Port& const_sut = sut;
+    const int result = const_sut.stats();
+    (void)result;
+    // Assert
+    // TODO(mt): compare result with the expected value
+}
+#endif
+#endif

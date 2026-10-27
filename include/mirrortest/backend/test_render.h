@@ -36,6 +36,12 @@ std::string statement_line(const ir::Stmt& statement, const PlaceholderStyle& pl
 std::vector<std::string> body_lines(const std::vector<ir::Stmt>& body, const PlaceholderStyle& placeholder,
                                     const std::vector<std::string>& data_lines);
 
+// `lines` between `#if <condition>` and `#endif`, once for each condition of `outer` and then of `inner` (outermost first): the test
+// of a member that exists only in some configurations is compiled only in those (design 6.5). The lines themselves, if there
+// is no condition.
+nlohmann::json guarded_lines(const nlohmann::json& lines, const std::vector<std::string>& outer,
+                             const std::vector<std::string>& inner = {});
+
 // `#include <...>` lines, then `#include "..."`, each sorted and once.
 nlohmann::json include_lines(const std::vector<ir::Include>& includes);
 

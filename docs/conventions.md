@@ -703,8 +703,12 @@ the name (`init_call`).
 
 Not tested, and why: signals; deleted, protected and private members; inherited members (see Inheritance and refused copies); member
 templates, and class templates you do not list in `template_instantiations`; free functions (the
-run prints a note). A member declared under `#if` is tested as if it always
-existed, so the test builds only in a configuration that declares it. Existing
+run prints a note). A member declared under `#if` has its test under the same `#if`
+(`#if defined(USE_DMA)` … `#endif`; in the `#else` of it `#if !(defined(USE_DMA))`), so the tests build in every configuration
+and a configuration has the tests of the members it declares; a class under `#if` has all its tests under it, and the
+`#ifndef X_H` / `#define X_H` that guards a header against being included twice is no condition. The conditions
+use the macros of the header, which is included first, and the compiler flags of the build that has the tests.
+`--frontend libclang` reads the branch that builds, so it writes no `#if`. Existing
 files are never overwritten: a differing one gets a `.new` beside it, and
 `--overwrite merge` does the same for tests for now.
 

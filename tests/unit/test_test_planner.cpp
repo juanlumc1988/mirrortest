@@ -1858,3 +1858,40 @@ TEST(TestPlannerDeleted, AFixtureDoesNotChangeTheCase) {
 }
 
 }  // namespace
+
+// ---- the conditions a test is under (plan 9.6) ----------------------------------------------------------------------
+
+TEST(TestPlannerGuards, ACaseIsUnderTheConditionsOfItsMethodAndTheSuiteUnderThoseOfItsClass) {
+    const Planned p = plan("#ifdef EXTRA\nclass A {\npublic:\n    void a();\n#ifdef MORE\n    void b();\n#endif\n};\n#endif\n");
+    EXPECT_EQ(suite(p).guards, (std::vector<std::string>{"defined(EXTRA)"}));
+    EXPECT_TRUE(the_case(p, "a").guards.empty()) << "the suite is under it already";
+    EXPECT_EQ(the_case(p, "b").guards, (std::vector<std::string>{"defined(MORE)"}));
+}
+
+TEST(TestPlannerGuards, TheOverloadsOfTwoAlternativesAreEachUnderTheirOwnCondition) {
+    const Planned p = plan("class A {\npublic:\n#ifdef DMA\n    void go(int v);\n#else\n    void go(double v);\n#endif\n};\n");
+    ASSERT_EQ(suite(p).cases.size(), 2u);
+    EXPECT_EQ(suite(p).cases[0].guards, (std::vector<std::string>{"defined(DMA)"}));
+    EXPECT_EQ(suite(p).cases[1].guards, (std::vector<std::string>{"!(defined(DMA))"}));
+}
+
+TEST(TestPlannerGuards, ANestedClassIsUnderTheConditionsOfTheClassAroundItAndItsOwn) {
+    const Planned p = plan("#ifdef X\nclass A {\npublic:\n#ifdef Y\n    struct N {\n        void n();\n#ifdef Z\n        void z();\n#endif\n    };\n#endif\n};\n#endif\n");
+    const ir::TestSuite* nested = nullptr;
+    for (const ir::TestPlan& plan_of : p.plans) {
+        for (const ir::TestSuite& s : plan_of.suites) {
+            if (s.target_class == "A::N") nested = &s;
+        }
+    }
+    ASSERT_NE(nested, nullptr);
+    EXPECT_EQ(nested->guards, (std::vector<std::string>{"defined(X)", "defined(Y)"}));
+    for (const ir::TestCase& c : nested->cases) {
+        if (c.name == "z") {
+            EXPECT_EQ(c.guards, (std::vector<std::string>{"defined(Z)"}));
+        }
+        if (c.name == "n") {
+            EXPECT_TRUE(c.guards.empty());
+        }
+    }
+}
+

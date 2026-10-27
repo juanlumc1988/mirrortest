@@ -425,3 +425,40 @@ TEST(QtestBackendTable, TheWholeFile) {
               std::string::npos)
         << r.plan.files[0].content;
 }
+
+// ---- the conditions a test is under (plan 9.6) ----------------------------------------------------------------------
+
+TEST(QtestBackendGuards, ASlotAndItsDefinitionAreUnderTheConditionsOfTheTest) {
+    ir::TestCase guarded = test_case("transfer", {stmt(Stmt::Kind::Code, "int x")});
+    guarded.guards = {"defined(DMA)", "!(defined(PIO))"};
+    const Built b = build({plan_of({test_case("open", {}), guarded})});
+    EXPECT_EQ(strings(first_class(b)["head"]), (Lines{"class TestFoo : public QObject {", "    Q_OBJECT", "private slots:", "    void open();",
+                                                      "#if defined(DMA)", "#if !(defined(PIO))", "    void transfer();", "#endif", "#endif", "};"}));
+    EXPECT_EQ(test_lines(b, 1), (Lines{"#if defined(DMA)", "#if !(defined(PIO))", "void TestFoo::transfer() {", "    int x;", "}", "#endif", "#endif"}));
+}
+
+TEST(QtestBackendGuards, AClassUnderAConditionHasItsHeadItsDefinitionsAndItsMainUnderIt) {
+    ir::TestPlan plan = plan_of({test_case("a", {})});
+    plan.suites[0].guards = {"defined(EXTRA)"};
+    const Built b = build({plan});
+    const Lines head = strings(first_class(b)["head"]);
+    EXPECT_EQ(head.front(), "#if defined(EXTRA)");
+    EXPECT_EQ(head.back(), "#endif");
+    EXPECT_EQ(test_lines(b, 0).front(), "#if defined(EXTRA)");
+    const Lines main = strings(b.views.at(0).view["main"]);
+    ASSERT_GE(main.size(), 3u);
+    EXPECT_EQ(main.front(), "#if defined(EXTRA)");
+    EXPECT_EQ(main.back(), "#endif");
+}
+
+TEST(QtestBackendGuards, ACaseThatRunsOverATableHasItsDataSlotUnderTheSameConditions) {
+    ir::TestCase guarded = test_case("transfer", {});
+    guarded.guards = {"defined(DMA)"};
+    guarded.data = ir::DataTable{};
+    guarded.data->columns.push_back({ir::make_type("int"), "size"});
+    const Built b = build({plan_of({guarded})});
+    EXPECT_EQ(strings(first_class(b)["head"]), (Lines{"class TestFoo : public QObject {", "    Q_OBJECT", "private slots:", "#if defined(DMA)",
+                                                      "    void transfer_data();", "    void transfer();", "#endif", "};"}));
+    EXPECT_EQ(test_lines(b, 0).front(), "#if defined(DMA)");
+}
+

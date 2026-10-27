@@ -338,13 +338,13 @@ past twice its size, stop at what is solid and say so instead of widening it.
   plan without a class) and the naming. Design first: the file name and suite name rules go into §9.1 and §10
   before the code. Done when: golden cases for both frameworks, a round trip that compiles and runs the generated
   tests against the header's implementation, and the `mt-unsupported` note is gone from the free-function path.
-- [ ] **9.6** *(M, medium)* **Tests guarded like the members they test** (§6.5). Under the syntax-tree reader every
-  member under `#if` is tested, so the generated test compiles only in a configuration that declares it. The model
-  keeps the condition of each alternative (the text of the `#if`/`#ifdef` chain, outermost first), and the
-  backend wraps the test in the same `#if … #endif`, in both frameworks. The libclang frontend is unaffected (it
-  reads the branch that builds). Done when: the `ifdef_branches` golden shows the guards, and has a round trip
-  that compiles the generated test in each of the configurations; a member under `#else`/`#elif` is guarded by
-  the negation or the chain, never by a guess.
+- [x] **9.6** *(M, medium)* **Tests guarded like the members they test** (§6.5). Under the syntax-tree reader every member under `#if`
+  was tested, so the generated test compiled only in a configuration that declares it. The model keeps the condition of
+  each branch (`#if`/`#elif` as written, `defined(X)`, `!defined(X)`, and for the branches after the first the negation of the
+  ones before it), and both backends write the test between the same `#if … #endif`; a class under `#if` has all its tests
+  under it; an include guard is no condition; libclang writes none. The `ifdef_branches` golden shows the guards and its
+  round trip compiles, links and runs the tests in six configurations (`tests/roundtrip/gen-tests/ifdef_branches.configs`),
+  where the number of tests changes with the configuration.
 - [x] **9.7** *(S, low)* **YAML merge keys** (`<<: *base`). The converter merges a mapping, or a list of mappings, into the one that
   holds the key; the keys written in the mapping win over the merged ones, and earlier mappings in a list win over later
   ones, as in YAML 1.1. A merge key whose value is not a mapping is an `mt-config` error with line and column. The reader of

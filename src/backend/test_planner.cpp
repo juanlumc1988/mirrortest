@@ -462,6 +462,7 @@ private:
         ir::TestCase tc;
         tc.name = name;
         tc.target = method_signature(c, m);
+        tc.guards = m.guards;
         Names names;
         names.reserve("sut");
         names.reserve("const_sut");
@@ -788,6 +789,7 @@ private:
                                           core::snake_case(c.name), identifier(c.name));
         suite.target_class = c.name;
         suite.ns = c.ns;
+        suite.guards = c.guards;
         bool moves = false;
         mock_headers_.clear();
         if (fixture()) suite.fixture = plan_fixture(c, suite.name);

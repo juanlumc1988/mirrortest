@@ -17,6 +17,17 @@ const char* const kIndent = "    ";
 
 }  // namespace
 
+nlohmann::json guarded_lines(const nlohmann::json& lines, const std::vector<std::string>& outer, const std::vector<std::string>& inner) {
+    if (outer.empty() && inner.empty()) return lines;
+    nlohmann::json out = nlohmann::json::array();
+    for (const std::vector<std::string>* level : {&outer, &inner}) {
+        for (const std::string& condition : *level) out.push_back("#if " + condition);
+    }
+    for (const nlohmann::json& line : lines) out.push_back(line);
+    for (std::size_t i = 0; i < outer.size() + inner.size(); ++i) out.push_back("#endif");
+    return out;
+}
+
 std::string statement_line(const ir::Stmt& s, const PlaceholderStyle& placeholder) {
     switch (s.kind) {
         case ir::Stmt::Kind::Blank:

@@ -119,8 +119,16 @@ json view_of(const ir::TestPlan& plan, const GtestOptions& options) {
             fixtures_of.push_back(json::array());
             tests_of.push_back(json::array());
         }
-        if (suite.fixture) fixtures_of[at].push_back(fixture_view(*suite.fixture, options.config.placeholder));
-        for (const ir::TestCase& test : suite.cases) tests_of[at].push_back(test_view(suite, test, options.config.placeholder));
+        if (suite.fixture) {
+            json fixture = fixture_view(*suite.fixture, options.config.placeholder);
+            fixture["lines"] = guarded_lines(fixture["lines"], suite.guards);
+            fixtures_of[at].push_back(std::move(fixture));
+        }
+        for (const ir::TestCase& test : suite.cases) {
+            json view = test_view(suite, test, options.config.placeholder);
+            view["lines"] = guarded_lines(view["lines"], suite.guards, test.guards);
+            tests_of[at].push_back(std::move(view));
+        }
     }
 
     json sections = json::array();

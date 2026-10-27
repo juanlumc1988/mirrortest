@@ -376,6 +376,21 @@ who knows which configuration applies. Overloads that are not alternatives (both
 unconditional, in the same branch, one conditional and one not, or in different
 conditionals) are ordinary overloads and say nothing.
 
+**Tests under the same conditions** (plan 9.6). Each class and each method keeps the conditions of the `#if` branches it is
+declared in (`Class::guards`, `Method::guards`; for a nested class and a member, those inside the class around it, since the
+class is under its own). One condition is the text of an `#if` that is true when the branch is taken, outermost first: the
+condition as written for `#if` and `#elif` (a continued line is one line), `defined(NAME)` for `#ifdef` and
+`!defined(NAME)` for `#ifndef`; a branch after the first of its conditional is also under the negation of each before it
+(`!(A) && (B)` for the `#elif B` of `#if A`, `!(A) && !(B)` for the `#else`), never a guess. The planner copies them to the
+test case and the suite, and the backends write the test between `#if <condition>` and `#endif`, once for each condition,
+the outermost first: the `TEST`, the fixture, the `TEST_P` and its instantiation for GoogleTest; for Qt Test the
+declaration of the slot (and of its `_data` slot) in the class, the definitions, and, for a class under a condition,
+the class, the entry point and the include of moc's file. Two rules keep it honest. The `#ifndef X_H` whose first line
+inside is `#define X_H`, the guard of a header against being included twice, is not a condition: the tests come after
+the include, when `X_H` is defined, and would never be compiled. A member declared by two branches with the same
+signature is under neither condition (it is there whenever one of them is taken), so its test is not guarded. The
+libclang frontend reads the branch that builds and so writes no condition.
+
 ### 6.6 Parse errors
 
 The parser always gives a tree. Every `ERROR` node (the outermost; up to 10,

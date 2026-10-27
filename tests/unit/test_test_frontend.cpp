@@ -816,6 +816,18 @@ TEST(TestFrontendAssert, AWideStringMatcherHintsWideCStrings) {
     EXPECT_EQ(hint(method(r, 1).use), "const char*");
 }
 
+TEST(TestFrontendAssert, TheArgumentsOfAFloatingPointMatcherAreCodeToo) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), DoubleNear(foo.b(), 0.5));\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Foo::a", "Foo::b"}));
+}
+
+TEST(TestFrontendAssert, OfSeveralMatchersThatSayNothingTheFirstIsTheOneNamed) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(1));\nEXPECT_THAT(foo.a(), Contains(2));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(method(r, 0).use.matcher, "ElementsAre");
+    EXPECT_EQ(method(r, 1).use.matcher, "Contains");
+}
+
 TEST(TestFrontendAssert, ABareMatcherThatIsNotACallIsNotRead) {
     const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), _);\nEXPECT_THAT(foo.b(), some_matcher);\n");
     ASSERT_EQ(r.facts.method_calls.size(), 2u);

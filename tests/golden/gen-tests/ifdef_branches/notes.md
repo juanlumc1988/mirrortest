@@ -1,1 +1,1 @@
-Both branches of an #if are read; the member that differs is tested once.
+Both branches of an #if are read, and each test is written under the condition of its member: a chain with `#elif` and `#else` (the negation of the branches before), a nested `#if`, a class under `#if`, and the header's own include guard, which is no condition. The round trip builds the tests in six configurations of the header.
