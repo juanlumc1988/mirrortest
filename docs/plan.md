@@ -317,12 +317,12 @@ past twice its size, stop at what is solid and say so instead of widening it.
   struct or enum (not in the cursor's spelling before 16) read wrong by 14 to 16, a parity snippet that was not valid
   C++ and was read only because 18 keeps an invalid default, and a C++23 test that needs 16: all fixed, and written in
   `design.md` 6.7 with what cannot be made up for.
-- [ ] **9.3** *(S, medium)* **Types written with parentheses.** `ir::type_from_spelling` stops analysing a
-  spelling that has parentheses, so `const decltype(x)&` has no base, no `const` and no reference; the
-  syntax-tree reader reads it right, and the two frontends differ (found while pinning the parity battery of
-  phase 8). `decltype(...)`, `typeof(...)` and `__typeof__(...)` are one word for the analysis; function-pointer
-  and array-reference types stay as they are. Done when: both frontends make the same model of the cases in
-  `kSnippets` that today are left out of the parity battery, and `ir/type` has unit tests for each form.
+- [x] **9.3** *(S, medium)* **Types written with parentheses.** `decltype(...)`, `typeof(...)` and `__typeof__(...)` are one
+  word for `ir::type_from_spelling` (done while running the corpus, 9.1): `const decltype(x)&` has its base, its `const` and
+  its reference; function-pointer, array and array-reference types stay whole. `test_type.cpp` has a row for each form
+  (nested parentheses, `decltype(auto)`, the argument inside angle brackets, the GNU spellings) and the parity battery has
+  a snippet of them, so both frontends make the same model. The one form the syntax-tree reader cannot read is the GNU
+  `typeof`/`__typeof__` as a declaration's type: the grammar has no such type (`design.md` 6.6).
 - [ ] **9.4** *(M, medium)* **Matchers in `gen-impl`** (§7.6: "matchers: later phase"). `EXPECT_THAT(v, m)` gives
   `v` the type its matcher implies when the matcher says it: `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge` with a literal
   (the literal's type, as `EXPECT_EQ` does), `StrEq`, `StrNe`, `HasSubstr`, `StartsWith`, `EndsWith`

@@ -384,6 +384,23 @@ struct S : B {
     template <typename T> auto operator()(T t) const -> decltype(x_);
     auto with_body(int n) const -> decltype(x_) { return x_ + n; }
 };)"},
+    {"parenthesised_types",
+     R"(extern int x_;
+struct P {
+    const decltype(x_)& a() const;
+    decltype(x_)* b(const decltype(x_)& v, decltype(x_) const* w, decltype(x_)&& r);
+    decltype(x_)& d;
+    const decltype(x_) e;
+    volatile decltype(x_)* const f;
+    decltype(sizeof(int)) g();
+    decltype(x_) const& h(decltype(x_) (*cb)(int), int (&arr)[3]);
+    decltype(auto) i();
+    void (*fp)(int);
+    int (*ap)[3];
+    int (&ar)[3];
+    const decltype(x_) (*fp2)(int);
+};
+const decltype(x_)& free_a(decltype(x_) const* p);)"},
     {"comments_inside_declarations",
      R"(class Annotated {
 public:
