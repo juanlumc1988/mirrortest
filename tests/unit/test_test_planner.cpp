@@ -2004,3 +2004,129 @@ TEST(TestPlannerFunctions, AnArgumentThatCannotBeBuiltCommentsTheCallOutAsForAMe
     EXPECT_NE(std::find(use.begin(), use.end(), "// ::use(h);"), use.end());
 }
 
+
+TEST(TestPlannerFunctions, AnRvalueArgumentNeedsTheUtilityHeaderOnlyWhereTheCallIsWritten) {
+    const Planned p = plan("void take(std::string&& s);\n");
+    EXPECT_EQ(body(p, "take").at(3), "std::string s{};");
+    EXPECT_EQ(body(p, "take").at(5), "::take(std::move(s));");
+    ASSERT_EQ(p.plans.size(), 1u);
+    ASSERT_EQ(p.plans[0].includes.size(), 3u);
+    EXPECT_EQ(p.plans[0].includes[2].path, "utility");
+    EXPECT_TRUE(p.plans[0].includes[2].is_system);
+
+    const Planned commented = plan("void take(Mystery m, std::string&& s);\n");
+    EXPECT_EQ(commented.plans.at(0).includes.size(), 2u) << "a call commented out needs no <utility>";
+
+    const Planned later = plan("void first(int v);\nvoid second(std::string&& s);\nvoid third(int v);\n");
+    EXPECT_EQ(later.plans.at(0).includes.size(), 3u) << "one function that moves is enough, wherever it is";
+}
+
+TEST(TestPlannerFunctions, TheFileIncludesTheFrameworkAndThenTheHeader) {
+    const Planned g = plan("int f();\n", {}, "acme/util.h");
+    ASSERT_EQ(g.plans.at(0).includes.size(), 2u);
+    EXPECT_EQ(g.plans[0].includes[0].path, "gtest/gtest.h");
+    EXPECT_TRUE(g.plans[0].includes[0].is_system);
+    EXPECT_EQ(g.plans[0].includes[1].path, "acme/util.h");
+    EXPECT_FALSE(g.plans[0].includes[1].is_system);
+
+    const Planned q = plan_qt("int f();\n");
+    ASSERT_EQ(q.plans.at(0).includes.size(), 2u);
+    EXPECT_EQ(q.plans[0].includes[0].path, "QtTest");
+    EXPECT_TRUE(q.plans[0].includes[0].is_system);
+    EXPECT_EQ(q.plans[0].includes[1].path, "foo.h");
+}
+
+namespace {
+
+Lines paths_of(const ir::TestPlan& plan) {
+    Lines out;
+    for (const ir::Include& i : plan.includes) out.push_back(i.path);
+    return out;
+}
+
+}  // namespace
+
+TEST(TestPlannerFunctions, ADeclarationWithoutANameIsLeftOut) {
+    ir::Model model;
+    model.functions.emplace_back();
+    ir::Function named;
+    named.name = "f";
+    model.functions.push_back(named);
+    const Planned p = plan_model(model);
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(case_names(p), Lines{"f"});
+}
+
+TEST(TestPlannerFunctions, OverloadsThatDifferOnlyInALaterParameterAreTwoFunctions) {
+    const Planned p = plan("void put(int key, int value);\nvoid put(int key, double value);\nvoid put(int key, int value);\n");
+    EXPECT_EQ(case_names(p), (Lines{"put_int_int", "put_int_double"}));
+}
+
+TEST(TestPlannerFunctions, QtTestNeverNamesACaseLikeOneOfItsOwnSlots) {
+    const Planned p = plan_qt("void init();\nvoid cleanup();\nvoid init_call();\n");
+    EXPECT_EQ(case_names(p), (Lines{"init_call_2", "cleanup_call", "init_call"}));
+}
+
+TEST(TestPlannerFunctions, ThePlanOfTheFunctionsDoesNotInheritWhatTheLastClassNeeded) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "class Controller { public: explicit Controller(Sensor& s); void run(std::string&& s); };\nint plain(int v);\n");
+    const std::size_t at = p.plans.size() - 1;
+    ASSERT_EQ(p.plans[at].suites.at(0).target_class, "FooFunctions");
+    EXPECT_EQ(paths_of(p.plans.at(at)), (Lines{"gtest/gtest.h", "foo.h"})) << "no mock header, no <utility>";
+    EXPECT_EQ(body(p, "plain", at).at(3), "int v{};");
+}
+
+TEST(TestPlannerFunctions, AnInterfaceArgumentIsAMockAsForAMethod) {
+    const Planned p = plan_mocks_on(std::string(kSensorAndLogger) + "void use(Sensor& s);\n");
+    const std::size_t at = p.plans.size() - 1;
+    EXPECT_EQ(body(p, "use", at), (Lines{"placeholder: TODO(mt): write the test for use(Sensor&)", "blank", "// Arrange",
+                                         "testing::NiceMock<MockSensor> s;", "// Act", "::use(s);", "// Assert",
+                                         "// TODO(mt): check the effect of the call"}));
+    EXPECT_EQ(paths_of(p.plans.at(at)), (Lines{"gtest/gtest.h", "foo.h", "mock_sensor.h"}));
+    EXPECT_FALSE(p.plans[at].includes[2].is_system);
+}
+
+TEST(TestPlannerFunctions, AParameterCalledResultOrParamKeepsClearOfTheNamesTheTestUses) {
+    const Planned p = plan("int f(int result, int param);\n");
+    EXPECT_EQ(body(p, "f").at(3), "int result2{};");
+    EXPECT_EQ(body(p, "f").at(4), "int param{};") << "a plain test has no table, so no 'param'";
+    EXPECT_EQ(body(p, "f").at(6), "const int result = ::f(result2, param);");
+
+    const Planned table = plan_table("int f(int param);\n");
+    EXPECT_EQ(column_names(the_case(table, "f")), Lines{"int param2"}) << "GoogleTest's TEST_P owns the name";
+    const Planned qt = plan_table("int f(int param);\n", {}, ir::Framework::QTest);
+    EXPECT_EQ(column_names(the_case(qt, "f")), Lines{"int param"}) << "Qt Test does not";
+}
+
+TEST(TestPlannerFunctions, ATableBelongsToTheCaseItWasMadeFor) {
+    const Planned p = plan_table("int f(int a);\nvoid g();\nint h(int b);\n");
+    EXPECT_TRUE(the_case(p, "f").data.has_value());
+    EXPECT_FALSE(the_case(p, "g").data.has_value());
+    EXPECT_TRUE(the_case(p, "h").data.has_value());
+    EXPECT_EQ(column_names(the_case(p, "h")), Lines{"int b"});
+    EXPECT_EQ(body(p, "f").at(3), "data");
+}
+
+TEST(TestPlannerFunctions, TheArgumentsAreLookedUpInTheNamespaceOfTheFunction) {
+    const Planned p = plan("namespace acme { struct Point { Point(); }; void draw(const Point& p); }\n");
+    ASSERT_EQ(p.plans.size(), 2u) << "the struct, then its namespace's functions";
+    EXPECT_EQ(body(p, "draw", 1).at(3), "Point p{};") << "found in acme, where the test is written, so built";
+    EXPECT_EQ(body(p, "draw", 1).at(5), "acme::draw(p);");
+}
+
+TEST(TestPlannerFunctions, ANoexceptCheckOverAnArgumentThatCannotBeBuiltIsCommentedOutWithTheCall) {
+    const Planned p = plan("struct Handle { Handle(int); };\nvoid use(Handle h) noexcept;\n");
+    const Lines use = body(p, "use", 1);
+    EXPECT_EQ(use, (Lines{"placeholder: TODO(mt): write the test for use(Handle)", "blank", "// Arrange",
+                          "// TODO(mt): an argument of type 'Handle' cannot be built here", "// Handle h{};", "// Act", "// ::use(h);", "// Assert",
+                          "// static_assert(noexcept(::use(h)), \"use(Handle) is declared noexcept\")", "// TODO(mt): check the effect of the call"}));
+}
+
+TEST(TestPlannerFunctions, AMockIsNamedFromTheNamespaceOfTheFunctionThatTakesIt) {
+    const Planned p = plan_mocks_on("namespace acme {\nclass Sensor { public: virtual ~Sensor() = default; virtual int read() = 0; };\nvoid use(Sensor& s);\n}\n"
+                                    "void outside(acme::Sensor& s);\n");
+    const std::size_t at = p.plans.size() - 1;
+    ASSERT_EQ(p.plans[at].suites.size(), 2u);
+    EXPECT_EQ(body(p, "use", at).at(3), "testing::NiceMock<MockSensor> s;") << "in acme, as the mock is";
+    ASSERT_EQ(p.plans[at].suites[1].cases.size(), 1u);
+    EXPECT_EQ(show(p.plans[at].suites[1].cases[0].body.at(3)), "testing::NiceMock<acme::MockSensor> s;");
+}
