@@ -122,13 +122,45 @@ private:
         return out;
     }
 
+    // YAML 1.1's merge key: `<<: *base`, or `<<: [*one, *two]`, puts the keys of a mapping, or of each mapping of a list, into
+    // the one that holds the key. What the mapping says itself wins over what it merges, whatever the order they are written in,
+    // and of several merged mappings the first wins.
+    static bool is_merge_key(const YAML::Node& key) { return key.Scalar() == "<<" && key.Tag() == "?"; }
+
+    bool collect_merged(const YAML::Node& value, int depth, std::vector<json>& merged) {
+        const auto one = [&](const YAML::Node& item) {
+            if (item.Type() != YAML::NodeType::Map) {
+                fail(item, "a merge key '<<' takes a mapping or a list of mappings");
+                return false;
+            }
+            merged.push_back(convert(item, depth + 1));
+            return !failed_;
+        };
+        if (value.Type() != YAML::NodeType::Sequence) return one(value);
+        for (const YAML::Node& item : value) {
+            if (!one(item)) return false;
+        }
+        return true;
+    }
+
     json mapping(const YAML::Node& node, int depth) {
         json out = json::object();
+        std::vector<json> merged;
+        bool merges = false;
         for (auto it = node.begin(); it != node.end(); ++it) {
             const YAML::Node key = it->first;
             if (key.Type() != YAML::NodeType::Scalar) {
                 fail(key, "a key must be a plain word or a string");
                 return nullptr;
+            }
+            if (is_merge_key(key)) {
+                if (merges) {
+                    fail(key, "the key '<<' appears twice in the same mapping");
+                    return nullptr;
+                }
+                merges = true;
+                if (!collect_merged(it->second, depth, merged)) return nullptr;
+                continue;
             }
             const std::string& name = key.Scalar();
             if (out.contains(name)) {
@@ -137,6 +169,11 @@ private:
             }
             out[name] = convert(it->second, depth + 1);
             if (failed_) return nullptr;
+        }
+        for (const json& from : merged) {
+            for (auto field = from.begin(); field != from.end(); ++field) {
+                if (!out.contains(field.key())) out[field.key()] = field.value();
+            }
         }
         return out;
     }

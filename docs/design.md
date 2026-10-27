@@ -2255,13 +2255,20 @@ cannot drift from the JSON one.
   booleans (they were in YAML 1.1): `no_stl: yes` is the error "must be true or false" instead of a
   guess. A float or a hex number is text.
 - **YAML features.** Comments, flow style, block scalars (`file_header: |` is the natural way to write a
-  multi-line header), anchors and aliases, `---`/`...`. An empty document, one with only comments, `~`
-  or `null` changes nothing.
+  multi-line header), anchors and aliases, merge keys, `---`/`...`. An empty document, one with only comments,
+  `~` or `null` changes nothing.
+- **Merge keys** (YAML 1.1, plan 9.7). `<<: *base` puts the keys of the mapping `base` into the mapping that holds the key, and
+  `<<: [*one, *two]` those of each mapping of the list. The keys the mapping writes itself win over the merged ones,
+  wherever the `<<` stands among them, and of several merged mappings the earlier wins, as in YAML 1.1. A merged
+  mapping may merge another. A merge key whose value is not a mapping or a list of mappings is an `mt-config` error at the
+  value; `<<` twice in one mapping is the key twice; a quoted `"<<"` is an ordinary key, so an unknown one. A shared
+  fragment has to live in a place the configuration has a key for (a member of `overrides`, say), since the reader
+  refuses unknown keys: `overrides: { a::B::x: &getter { returns: int, const: true }, a::B::y: { <<: *getter } }`. The
+  JSON reader is not touched.
 - **Refused**, each with an `mt-config` error at the line and column: a syntax error
   (`invalid YAML: ...`, yaml-cpp's own words), a key twice in one mapping, a key that is not a scalar,
   a tag other than `!!str`, a document that is not a mapping, more than one document, and one that
-  expands to more than 100000 nodes or nests deeper than 64 levels (an alias that refers to itself).
-  Merge keys (`<<`) are not supported: `<<` is an unknown key like any other.
+  expands to more than 100000 nodes or nests deeper than 64 levels (an alias that refers to itself, a merge included).
 - Errors about a key or a value (`unknown configuration key 'colour'`) have no line, as in JSON.
 - **Without YAML** (`-DMT_WITH_YAML=OFF`, no yaml-cpp) a `.yaml` file is read and refused with an
   `mt-config` error that says how to build with it; the goldens that need it (`requires.txt`, `yaml`)

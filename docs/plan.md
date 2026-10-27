@@ -345,11 +345,10 @@ past twice its size, stop at what is solid and say so instead of widening it.
   reads the branch that builds). Done when: the `ifdef_branches` golden shows the guards, and has a round trip
   that compiles the generated test in each of the configurations; a member under `#else`/`#elif` is guarded by
   the negation or the chain, never by a guess.
-- [ ] **9.7** *(S, low)* **YAML merge keys** (`<<: *base`). The converter merges a mapping, or a sequence of
-  mappings, into the one that holds the key; the keys written in the mapping win over the merged ones, and
-  earlier mappings in a sequence win over later ones, as in YAML 1.1. A merge key whose value is not a mapping is
-  an `mt-config` error with line and column. The reader of the JSON file is not touched. Done when: unit tests for
-  each rule above and the `config_yaml` golden case uses one.
+- [x] **9.7** *(S, low)* **YAML merge keys** (`<<: *base`). The converter merges a mapping, or a list of mappings, into the one that
+  holds the key; the keys written in the mapping win over the merged ones, and earlier mappings in a list win over later
+  ones, as in YAML 1.1. A merge key whose value is not a mapping is an `mt-config` error with line and column. The reader of
+  the JSON file is not touched. Unit tests for each rule, and the `config_yaml` golden case uses one (`design.md` 14).
 - [ ] **9.8** *(S, medium)* **Installing it.** `install()` rules for the binary, the licence and the user
   documentation, a `cmake --install` check in CI that runs the installed `mirrortest --version`, and a CPack
   tarball (`-G TGZ`) built by a CI job without publishing it. Done when: the install tree has no path from the

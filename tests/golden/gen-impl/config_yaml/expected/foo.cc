@@ -11,7 +11,11 @@ namespace acme {
 // <mt:begin acme::Foo>
 Foo::Foo(int /*arg1*/) {}
 
-unsigned int Foo::size() {
+unsigned int Foo::size() const {
+    std::abort();
+}
+
+unsigned int Foo::length() const {
     std::abort();
 }
 
