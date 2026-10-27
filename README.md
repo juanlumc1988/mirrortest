@@ -150,6 +150,9 @@ Exit codes: `0` success, `1` the input has errors (nothing is written), `2` usag
 
 Requirements: CMake ≥ 3.20, a C++17 and C11 compiler (GCC or Clang), git.
 
+On Ubuntu 24.04 under WSL2, `tools/setup-mirrortest.sh` installs these (and, on request, libclang, Qt or Clang),
+then builds and tests the project; `--help` lists its options.
+
 ```console
 $ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 $ cmake --build build
