@@ -23,6 +23,7 @@ using syntax::QtMarker;
 using syntax::Specifiers;
 
 constexpr unsigned kMaxParseWarnings = 10;
+constexpr std::size_t kDirectiveReach = 4096;
 
 bool is_class_like(std::string_view type) {
     return type == "class_specifier" || type == "struct_specifier" || type == "union_specifier";
@@ -35,14 +36,15 @@ bool is_conditional(std::string_view type) {
 
 // Whether [begin, end) lies inside one preprocessor directive, with its continuation lines: `#elif HAS_INCLUDE(<any>)` is
 // no C++ to the parser, but it hides no declaration, because every branch is read whatever the condition says (design 6.5).
+// A directive is looked for within kDirectiveReach bytes, so that a file of one very long line is not a quadratic walk.
 bool within_directive(std::string_view text, std::size_t begin, std::size_t end) {
     auto line_break = [&](std::size_t at) { return text[at] == '\n' && (at == 0 || text[at - 1] != '\\'); };
     std::size_t start = begin;
-    while (start > 0 && !line_break(start - 1)) --start;
+    while (start > 0 && begin - start < kDirectiveReach && !line_break(start - 1)) --start;
     while (start < text.size() && (text[start] == ' ' || text[start] == '\t')) ++start;
     if (start >= text.size() || text[start] != '#') return false;
     std::size_t stop = begin;
-    while (stop < text.size() && !line_break(stop)) ++stop;
+    while (stop < text.size() && stop - begin < kDirectiveReach && !line_break(stop)) ++stop;
     return end <= stop;
 }
 

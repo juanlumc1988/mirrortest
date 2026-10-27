@@ -359,11 +359,12 @@ TEST(CodeFrontendRealHeaders, AParameterThatIsAPointerToMemberSkipsItsFunctionWi
                         "    void take(int S::*p, int ok);\n"
                         "    void call(int (S::*f)(int));\n"
                         "    void plain(int a, const char* b);\n"
+                        "    void arrays(int (&a)[3], int (*b)[4], void (&c)(int), const char* (*d)(int));\n"
                         "};\n"
                         "void free_take(int S::*p);\n"
                         "void free_plain(int a);\n");
     const ir::Class& s = the_class(r, "S");
-    EXPECT_EQ(method_names(s), (std::vector<std::string>{"plain"}));
+    EXPECT_EQ(method_names(s), (std::vector<std::string>{"plain", "arrays"})) << "a reference or a pointer is not a pointer to member";
     ASSERT_EQ(r.model.functions.size(), 1u);
     EXPECT_EQ(r.model.functions[0].name, "free_plain");
 

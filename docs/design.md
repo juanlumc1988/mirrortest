@@ -401,6 +401,9 @@ plan 9.1; `libclang` reads all of these right):
 - a parameter `typename T::type* = nullptr`: the `*` is in the `ERROR` node and the type loses it;
 - a field that is a pointer to member (`const T C::* field_;`), and a free function whose default argument is
   braced (`void f(Fn<void()> a = {});` at namespace scope), which are not read;
+- a free function whose parameter is a reference or a pointer to an array (`void f(int (&a)[3]);` at namespace
+  scope): the grammar reads a variable with an initializer, and the function is not in the model, with no warning
+  (as a member it is read);
 - a parameter that is a pointer to member (`int S::*p`, `int (S::*f)(int)`): the grammar reads a parameter called
   `S::*p` of type `int`. The function or method is skipped with an `mt-unsupported` warning;
 - a macro that stands for a declaration or a qualifier and is not in `ignore_macros`: the declarations around it
