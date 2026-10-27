@@ -268,6 +268,19 @@ TEST(CodeFrontendRealHeaders, ABracedDefaultHasNoBlankAroundIt) {
     EXPECT_EQ(p[2].default_value, std::optional<std::string>("(3)"));
 }
 
+TEST(CodeFrontendRealHeaders, ADestructorCanBePureVirtual) {
+    // Found with GoogleTest's MatchResultListener: the grammar reads `~L() = 0;` as a definition with a pure-virtual clause.
+    const Read r = read("class Listener {\npublic:\n    virtual ~Listener() = 0;\n    virtual void f() = 0;\n    virtual void g();\n"
+                        "    virtual ~Other() = default;\n};\n");
+    const ir::Class& c = the_class(r, "Listener");
+    ASSERT_GE(c.methods.size(), 3u);
+    EXPECT_EQ(c.methods[0].kind, ir::MethodKind::Destructor);
+    EXPECT_TRUE(c.methods[0].is_pure);
+    EXPECT_TRUE(c.methods[0].is_virtual);
+    EXPECT_TRUE(c.methods[1].is_pure);
+    EXPECT_FALSE(c.methods[2].is_pure);
+}
+
 TEST(CodeFrontendRealHeaders, WhatTheParserMadeOfTextItCouldNotReadIsNotAMember) {
     // A comma expression with template-ids in a decltype: tree-sitter-cpp gives up on it and the recovery leaves
     // pieces that look like declarations (a field called `std::declval<A>`).

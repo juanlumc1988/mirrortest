@@ -185,6 +185,11 @@ public:
     [[nodiscard, deprecated("x")]] unsigned long both() const;
     __attribute__((unused)) unsigned plain();
     alignas(8) unsigned aligned_field;
+    template <typename T> void log(const char* fmt, ...);
+    template <typename, typename> static auto test(...) -> int;
+    template <typename... Ts> void packed(Ts&&... ts);
+    template <typename... Ts> void unnamed_pack(Ts&&...);
+    template <typename T> void typed(T, ...);
 };)"},
     {"nested",
      R"(class Outer {
@@ -209,6 +214,17 @@ public:
     class Deeper { public: struct Deepest {}; };
 };
 })"},
+    {"conversion_templates",
+     R"(namespace ns { template <typename T> class Matcher {}; }
+template <typename S> class Action {};
+class Convertible {
+public:
+    template <typename F> operator Action<F>() const;
+    template <typename U, typename... Args> operator Action<U(Args...)>() const;
+    template <typename T> operator ::ns::Matcher<T>() const;
+    template <typename T> operator T*() const;
+    operator bool() const;
+};)"},
     {"function_types",
      R"(template <typename S> class Fn {};
 struct Option {};
@@ -343,6 +359,8 @@ struct S : B {
     auto dover(int a) const & -> decltype(x_) override;
     static auto make(int n) -> decltype(x_);
     static decltype(x_) from_decltype() noexcept;
+    template <typename... Args> auto operator()(const Args&...) -> decltype(x_);
+    template <typename T> auto operator()(T t) const -> decltype(x_);
     auto with_body(int n) const -> decltype(x_) { return x_ + n; }
 };)"},
     {"comments_inside_declarations",

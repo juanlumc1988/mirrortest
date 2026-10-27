@@ -6,7 +6,10 @@
 // is what tools/corpus.sh uses to say whether the two frontends read a header the same way.
 //
 //   mt_dump_model [--frontend tree-sitter|libclang] [--std c++17] [-I DIR]... [--clang-arg ARG]... [--config FILE]
-//                 [--no-positions] FILE
+//                 [--no-positions] [--tree] FILE
+//
+// --tree writes the syntax tree tree-sitter makes of the file (after the preprocessing that blanks the Qt macros and the
+// configured ones) instead of a model: what to look at when the syntax-tree reader reads something wrong.
 //
 // --config reads the `ignore_macros` (and the rest) of a configuration file, as the commands do.
 
@@ -20,13 +23,15 @@
 #include "mirrortest/core/source.h"
 #include "mirrortest/frontend/clang_frontend.h"
 #include "mirrortest/frontend/code_frontend.h"
+#include "mirrortest/syntax/preprocess.h"
+#include "mirrortest/syntax/tree.h"
 #include "model_dump.h"
 
 namespace {
 
 int usage() {
     std::cerr << "usage: mt_dump_model [--frontend tree-sitter|libclang] [--std c++17] [-I DIR]... [--clang-arg ARG]... "
-                 "[--config FILE] [--no-positions] FILE\n";
+                 "[--config FILE] [--no-positions] [--tree] FILE\n";
     return 2;
 }
 
@@ -39,6 +44,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> include_dirs;
     std::vector<std::string> clang_args;
     bool positions = true;
+    bool tree = false;
     std::string file;
     std::string config_file;
 
@@ -51,6 +57,7 @@ int main(int argc, char** argv) {
         else if (a == "--clang-arg" && has_value) clang_args.push_back(argv[++i]);
         else if (a == "--config" && has_value) config_file = argv[++i];
         else if (a == "--no-positions") positions = false;
+        else if (a == "--tree") tree = true;
         else if (!a.empty() && a[0] == '-') return usage();
         else if (file.empty()) file = a;
         else return usage();
@@ -71,6 +78,12 @@ int main(int argc, char** argv) {
         return 3;
     }
     const std::string include_path = fs::path(file).filename().string();
+
+    if (tree) {
+        const mt::syntax::Preprocessed pre = mt::syntax::preprocess(source->text, macros);
+        std::cout << mt::syntax::parse_cpp(pre.text).root().sexp() << "\n";
+        return 0;
+    }
 
     mt::ir::Model model;
     if (frontend_name == "tree-sitter") {

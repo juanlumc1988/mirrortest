@@ -134,7 +134,8 @@ TEST(TypeFromSpelling, ReadsTheShapeFromTheEnd) {
 
 TEST(TypeFromSpelling, FunctionPointersAndArraysAreKeptWhole) {
     for (const char* text : {"void (*)(int)", "int[3]", "const char* names[]", "int (&)[4]", "std::vector<int>[3]",
-                             "void (Widget::*)(int) const", "const decltype(x_) (*)(int)"}) {
+                             "void (Widget::*)(int) const", "const decltype(x_) (*)(int)",
+                             "const Args&...", "Args&&...", "T*..."}) {
         const Type t = type_from_spelling(text);
         EXPECT_EQ(t.base, t.spelling) << text;
         EXPECT_EQ(t.pointer_depth, 0u) << text;

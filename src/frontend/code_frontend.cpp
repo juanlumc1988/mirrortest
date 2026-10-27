@@ -628,7 +628,9 @@ private:
         m.is_final = traits.is_final;
         m.ref_qualifier = traits.ref_qualifier;
         const Node value = node.child_by_field("default_value");
-        m.is_pure = !value.is_null() && value.text() == "0";
+        // `= 0` is the default value of a declaration, but a clause of its own when the grammar reads the declaration
+        // as a definition, which it does for a destructor: `virtual ~Listener() = 0;`.
+        m.is_pure = (!value.is_null() && value.text() == "0") || has_child_of_type(node, "pure_virtual_clause");
         m.is_deleted = has_child_of_type(node, "delete_method_clause");
         m.is_defaulted = has_child_of_type(node, "default_method_clause");
     }

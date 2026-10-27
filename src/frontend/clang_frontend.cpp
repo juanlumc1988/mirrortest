@@ -121,6 +121,47 @@ std::size_t closing(const std::vector<Tok>& t, std::size_t from) {
     return t.size();
 }
 
+// Where the parameter list of a function's declaration is, in the offsets of its '(' and its ')'.
+struct ParameterList {
+    bool     found = false;
+    unsigned open = 0;
+    unsigned close = 0;
+    bool     c_variadic = false;   // it ends in a C-style `...`, which is not the `...` of a pack
+};
+
+// The parameter list is the first '(' after the name that is not the pair of `operator()` and is not inside the angle
+// brackets of the type a conversion function converts to (`operator Action<U(Args...)>()`).
+ParameterList find_parameter_list(const std::vector<Tok>& t, unsigned name_offset) {
+    ParameterList list;
+    std::size_t i = 0;
+    while (i < t.size() && t[i].begin < name_offset) ++i;
+    if (i < t.size() && t[i].text == "operator") {
+        ++i;
+        if (i + 1 < t.size() && t[i].text == "(" && t[i + 1].text == ")") {
+            i += 2;
+        } else {
+            int angles = 0;
+            for (; i < t.size(); ++i) {
+                if (t[i].text == "<") ++angles;
+                if (t[i].text == ">") --angles;
+                if (t[i].text == ">>") angles -= 2;
+                if (t[i].text == "(" && angles <= 0) break;
+            }
+        }
+    }
+    const std::size_t close = closing(t, i);
+    if (close >= t.size()) return list;
+    while (t[i].text != "(") ++i;
+    list.found = true;
+    list.open = t[i].begin;
+    list.close = t[close].begin;
+    list.c_variadic = close >= i + 2 && t[close - 1].text == "..." && (t[close - 2].text == "(" || t[close - 2].text == ",");
+    return list;
+}
+
+// Whether the tokens of a function's declaration include its parameter list.
+bool has_parameter_list(const std::vector<Tok>& t, unsigned name_offset) { return find_parameter_list(t, name_offset).found; }
+
 Shape read_shape(const std::vector<Tok>& t, unsigned name_offset) {
     Shape s;
     std::size_t i = 0;
@@ -294,11 +335,11 @@ private:
 
     // The tokens of a function's declaration. libclang's extent of `auto f() -> decltype(x);` is the two words
     // `auto f`: the trailing return type that has a decltype in it is left out, and so is everything after it (the
-    // parameter list, `const`, `override`). A declaration whose extent has no parameter list is read on, from the same
-    // start, to the `;` or `{` that ends it.
+    // parameter list, `const`, `override`). A declaration whose extent has no parameter list (the `()` of an
+    // `operator()` is not one) is read on, from the same start, to the `;` or `{` that ends it.
     std::vector<Tok> function_tokens(CXCursor c) const {
         std::vector<Tok> t = tokens(c);
-        if (std::any_of(t.begin(), t.end(), [](const Tok& x) { return x.text == "("; })) return t;
+        if (has_parameter_list(t, name_offset(c))) return t;
         const CXFile file = clang_getFile(tu_, main_file_.c_str());
         if (file == nullptr) return t;
         const CXSourceRange rest = clang_getRange(clang_getRangeStart(clang_getCursorExtent(c)),
@@ -637,16 +678,25 @@ private:
 
     // The parameters of the function itself: not those of a function pointer it returns, which libclang also lists among
     // the children (`void (*get(int a))(int b)` has `b` among them, and before `a`). It can say how many are the function's
-    // own for a function but not for a function template, whose children are all there is.
+    // own for a function but not for a function template, whose children are all there is: those between the
+    // parentheses of the parameter list, which the tokens say (the type a conversion function converts to can have
+    // parameters of its own, `operator Action<U(Args...)>()`), and its C-style `...` is told by them too.
     std::vector<ir::Param> parameters(CXCursor function) const {
         std::vector<CXCursor> declared;
         const int own = clang_Cursor_getNumArguments(function);
+        bool c_variadic = clang_Cursor_isVariadic(function) != 0;
         if (own >= 0) {
             for (int i = 0; i < own; ++i) declared.push_back(clang_Cursor_getArgument(function, static_cast<unsigned>(i)));
         } else {
+            ParameterList list;
+            if (!from_macro(function)) list = find_parameter_list(function_tokens(function), name_offset(function));
             for (CXCursor p : children(function)) {
-                if (clang_getCursorKind(p) == CXCursor_ParmDecl) declared.push_back(p);
+                if (clang_getCursorKind(p) != CXCursor_ParmDecl) continue;
+                const unsigned at = span_of(p).begin;
+                if (list.found && (at < list.open || at > list.close)) continue;
+                declared.push_back(p);
             }
+            c_variadic = c_variadic || list.c_variadic;
         }
         std::vector<ir::Param> params;
         for (CXCursor p : declared) {
@@ -656,7 +706,7 @@ private:
             param.default_value = default_value(p);
             params.push_back(std::move(param));
         }
-        if (clang_Cursor_isVariadic(function) != 0) {
+        if (c_variadic) {
             ir::Param ellipsis;
             ellipsis.type.spelling = "...";
             ellipsis.type.base = "...";
@@ -940,6 +990,28 @@ private:
         return invokable ? ir::QtRole::Invokable : ir::QtRole::None;
     }
 
+    // `operator Matcher<T>`: the type after `operator`, as written. libclang names the conversion function of a template
+    // with the canonical names of its parameters (`operator Matcher<type-parameter-0-0>`).
+    std::string conversion_name(CXCursor c, const std::vector<Tok>& t, const std::string& api_name) const {
+        if (!from_macro(c)) {
+            const std::size_t at = index_at(t, name_offset(c));
+            if (at != std::string::npos && at < t.size() && t[at].text == "operator") {
+                std::size_t end = at + 1;
+                int angles = 0;
+                for (; end < t.size(); ++end) {
+                    const std::string& x = t[end].text;
+                    if (x == "<") ++angles;
+                    if (x == ">") --angles;
+                    if (x == ">>") angles -= 2;
+                    if (x == "(" && angles <= 0) break;
+                }
+                const std::string written = end > at + 1 && end < t.size() ? spelled(t, at + 1, end, std::string::npos) : std::string();
+                if (!written.empty()) return "operator " + written;
+            }
+        }
+        return "operator " + ir::normalize_spelling(api_name.substr(std::min<std::size_t>(api_name.size(), 8)));
+    }
+
     void method(CXCursor c, ClassState& state, bool is_template) {
         const CXCursorKind kind = is_template ? clang_getTemplateCursorKind(c) : clang_getCursorKind(c);
         if (is_template && !is_method_kind(kind)) return;   // a member class template, for one: not a member to test
@@ -960,7 +1032,7 @@ private:
                 break;
             case CXCursor_ConversionFunction:
                 m.kind = ir::MethodKind::Conversion;
-                m.name = "operator " + ir::normalize_spelling(spelled.substr(std::min<std::size_t>(spelled.size(), 8)));
+                m.name = conversion_name(c, t, spelled);
                 break;
             default:
                 m.name = ir::normalize_operator_name(spelled);

@@ -185,8 +185,8 @@ Type type_from_spelling(std::string_view spelling) {
     Type t;
     t.spelling = normalize_spelling(spelling);
     if (t.spelling.empty()) return t;
-    if (has_declarator_brackets(t.spelling)) {
-        t.base = t.spelling;       // a function pointer, an array: exact, and nothing finer
+    if (has_declarator_brackets(t.spelling) || ends_with(t.spelling, "...")) {
+        t.base = t.spelling;       // a function pointer, an array, a pack (`const Args&...`): exact, and nothing finer
         return t;
     }
 
