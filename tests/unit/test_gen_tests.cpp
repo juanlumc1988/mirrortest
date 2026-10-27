@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "mirrortest/cli/run.h"
+#include "mirrortest/frontend/clang_frontend.h"
 #include "test_support.h"
 
 using namespace mt;
@@ -158,6 +159,101 @@ std::string include_line(const TempDir& dir, const std::vector<std::string>& arg
     return at == std::string::npos ? "<none>" : text.substr(at, text.find('\n', at) - at);
 }
 
+// ---- --frontend libclang ----------------------------------------------------------------------------------------------
+
+#define SKIP_WITHOUT_LIBCLANG() \
+    if (!frontend::libclang_supported()) GTEST_SKIP() << "built without libclang"
+
+TEST(GenTestsLibclang, AnUnsupportedBuildSaysSoInsteadOfFallingBackToTheOtherReader) {
+    if (frontend::libclang_supported()) GTEST_SKIP() << "built with libclang";
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--frontend", "libclang"});
+    EXPECT_EQ(r.code, 1) << r.err;
+    EXPECT_TRUE(contains(r.err, "this build of mirrortest has no libclang frontend")) << r.err;
+    EXPECT_FALSE(exists(dir, "tests"));
+}
+
+TEST(GenTestsLibclang, WritesWhatTheOtherReaderWritesForAHeaderThatCompiles) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_foo(dir);
+    ASSERT_EQ(gen_tests(dir, {"include/acme/foo.h", "--out", "ts"}).code, 0);
+    const Outcome r = gen_tests(dir, {"include/acme/foo.h", "--out", "cl", "--frontend", "libclang"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created cl/foo_test.cpp\n");
+    std::string expected = read(dir, "ts/foo_test.cpp");
+    EXPECT_EQ(read(dir, "cl/foo_test.cpp"), expected);
+}
+
+TEST(GenTestsLibclang, TheIncludeDirectoriesAreRelativeToTheRunNotToTheProcess) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "vendor/dep.h", "struct Dep { int v; };\n");
+    write_file(dir.path() / "src/user.h", "#include \"dep.h\"\nclass User {\npublic:\n    Dep get() const;\n};\n");
+    const Outcome without = gen_tests(dir, {"src/user.h", "--out", "none", "--frontend", "libclang"});
+    EXPECT_TRUE(contains(without.err, "'dep.h' file not found")) << without.err;
+    const Outcome with = gen_tests(dir, {"src/user.h", "--out", "tests", "--frontend", "libclang", "-I", "vendor"});
+    EXPECT_EQ(with.code, 0) << with.err;
+    EXPECT_FALSE(contains(with.err, "warning")) << with.err;
+    EXPECT_TRUE(exists(dir, "tests/user_test.cpp"));
+}
+
+TEST(GenTestsLibclang, AnIncludeNextToTheHeaderIsFoundWhateverTheProcessDirectoryIs) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "src/dep.h", "struct Dep { int v; };\n");
+    write_file(dir.path() / "src/user.h", "#include \"dep.h\"\nclass User {\npublic:\n    Dep get() const;\n};\n");
+    const Outcome r = gen_tests(dir, {"src/user.h", "--out", "tests", "--frontend", "libclang"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(contains(r.err, "file not found")) << r.err;
+    EXPECT_FALSE(contains(r.err, "warning")) << r.err;
+}
+
+TEST(GenTestsLibclang, CxxTwentyThreeIsTheStandardLibclangCallsTwentyThreeB) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "functor.h", "struct Functor {\n    static int operator()(int x);\n};\n");
+    const Outcome r = gen_tests(dir, {"functor.h", "--out", "tests", "--frontend", "libclang", "--std", "c++23"});
+    EXPECT_FALSE(contains(r.err, "[mt-parse]")) << r.err;
+    EXPECT_FALSE(contains(r.err, "invalid value")) << r.err;
+}
+
+TEST(GenTestsLibclang, TheCompileCommandsOfTheProjectGiveItsIncludeDirectoriesToo) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "vendor/dep.h", "struct Dep { int v; };\n");
+    write_file(dir.path() / "src/user.h", "#include \"dep.h\"\nclass User {\npublic:\n    Dep get() const;\n};\n");
+    write_file(dir.path() / "cc.json", R"([{"directory":".","command":"c++ -Ivendor -c x.cpp"}])");
+    const Outcome r = gen_tests(dir, {"src/user.h", "--out", "tests", "--frontend", "libclang", "--compile-commands", "cc.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(contains(r.err, "warning")) << r.err;
+}
+
+TEST(GenTestsLibclang, ClangArgsReachTheCompilerSoTheBranchThatBuildsIsTheOneRead) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "port.h", "class Port {\npublic:\n#ifdef USE_DMA\n    void transfer(const char* data, unsigned size);\n#else\n    void transfer(const char* data);\n#endif\n};\n");
+    ASSERT_EQ(gen_tests(dir, {"port.h", "--out", "plain", "--frontend", "libclang"}).code, 0);
+    ASSERT_EQ(gen_tests(dir, {"port.h", "--out", "dma", "--frontend", "libclang", "--clang-arg", "-DUSE_DMA"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "plain/port_test.cpp"), "Port::transfer(const char*)"));
+    EXPECT_FALSE(contains(read(dir, "plain/port_test.cpp"), "unsigned"));
+    EXPECT_TRUE(contains(read(dir, "dma/port_test.cpp"), "Port::transfer(const char*, unsigned)"));
+    ASSERT_EQ(gen_tests(dir, {"port.h", "--out", "ts"}).code, 0);
+    EXPECT_TRUE(contains(read(dir, "ts/port_test.cpp"), "Port::transfer(const char*, unsigned)")) << "tree-sitter keeps both";
+    EXPECT_TRUE(contains(read(dir, "ts/port_test.cpp"), "Port::transfer(const char*)"));
+}
+
+TEST(GenTestsLibclang, TheStandardOfTheRunIsTheOneTheHeaderIsParsedAs) {
+    SKIP_WITHOUT_LIBCLANG();
+    const TempDir dir;
+    write_file(dir.path() / "abbrev.h", "class Apply {\npublic:\n    void run(auto fn);\n    int size() const;\n};\n");
+    const Outcome older = gen_tests(dir, {"abbrev.h", "--out", "o17", "--frontend", "libclang", "--std", "c++17"});
+    EXPECT_TRUE(contains(older.err, "[mt-parse]")) << older.err;
+    const Outcome newer = gen_tests(dir, {"abbrev.h", "--out", "o20", "--frontend", "libclang", "--std", "c++20"});
+    EXPECT_FALSE(contains(newer.err, "[mt-parse]")) << newer.err;
+}
+
 TEST(GenTestsInclude, WithoutAnIncludeDirectoryItIsTheFileName) {
     const TempDir dir;
     write_foo(dir);
@@ -183,6 +279,42 @@ TEST(GenTestsInclude, ADirectoryThatDoesNotContainTheHeaderIsNoHelp) {
     fs::create_directories(dir.path() / "other");
     EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "other"}), "#include \"foo.h\"");
     EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "include/acme/missing"}), "#include \"foo.h\"");
+}
+
+TEST(GenTestsInclude, TheIncludeDirectoriesOfACompilationDatabaseCountAsIfGivenWithI) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "build/compile_commands.json", R"([{"directory":"build","command":"c++ -I../include -c x.cpp"}])");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "--compile-commands", "build/compile_commands.json"}), "#include \"acme/foo.h\"");
+}
+
+TEST(GenTestsInclude, TheOnesGivenOnTheCommandLineAreSearchedBeforeThoseOfTheDatabase) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "cc.json", R"([{"command":"c++ -Iinclude"}])");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "-I", "include/acme", "--compile-commands", "cc.json"}), "#include \"foo.h\"");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "--compile-commands", "cc.json", "-I", "include/acme"}), "#include \"foo.h\"")
+        << "wherever the options are written";
+}
+
+TEST(GenTestsInclude, InsideTheDatabaseTheOrderOfTheCompilerCommandHolds) {
+    const TempDir dir;
+    write_foo(dir);
+    write_file(dir.path() / "a.json", R"([{"command":"c++ -Iinclude/acme -Iinclude"}])");
+    write_file(dir.path() / "b.json", R"([{"command":"c++ -Iinclude -Iinclude/acme"}])");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "--compile-commands", "a.json"}), "#include \"foo.h\"");
+    EXPECT_EQ(include_line(dir, {"include/acme/foo.h", "--compile-commands", "b.json"}), "#include \"acme/foo.h\"");
+}
+
+TEST(GenTestsInclude, ADatabaseThatCannotBeUsedStopsTheRun) {
+    const TempDir dir;
+    write_foo(dir);
+    const Outcome missing = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--compile-commands", "nope.json"});
+    EXPECT_EQ(missing.code, 3) << missing.err;
+    write_file(dir.path() / "cc.json", "[3]x");
+    const Outcome broken = gen_tests(dir, {"include/acme/foo.h", "--out", "tests", "--compile-commands", "cc.json"});
+    EXPECT_EQ(broken.code, 1) << broken.err;
+    EXPECT_FALSE(exists(dir, "tests"));
 }
 
 TEST(GenTestsInclude, ASpellingOfTheDirectoryWithDotsOrASlashIsTheSameDirectory) {

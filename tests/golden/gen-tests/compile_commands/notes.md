@@ -1,0 +1,1 @@
+The same header as `include_path`, but the include directory comes from a compilation database (`--compile-commands`, here `database.json`: a file called `compile_commands.json` is ignored by git) instead of `-I`: the test includes the header relative to the first directory of the file that contains it (`acme/gear.h`).

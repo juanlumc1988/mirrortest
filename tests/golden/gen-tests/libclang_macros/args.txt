@@ -1,0 +1,6 @@
+gen-tests
+${IN}/config.h
+--out
+${OUT}
+--frontend
+libclang

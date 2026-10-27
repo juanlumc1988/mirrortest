@@ -46,6 +46,55 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # The configuration reader without YAML: a .yaml file is refused with a clear error and what needs
+  # YAML skips itself, so a build that leaves yaml-cpp out is a build that works.
+  no-yaml:
+    name: without yaml-cpp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DMT_WERROR=ON \
+                -DMT_WITH_YAML=OFF
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # The libclang frontend (--frontend libclang): the same models as tree-sitter's, from the same headers, and every
+  # gen-tests and gen-impl golden case run again with it. libclang is the distribution's, so it is the one that matches
+  # the compiler that finds the standard headers.
+  libclang:
+    name: libclang frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools and libclang
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libclang-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DMT_WERROR=ON \
+                -DMT_WITH_LIBCLANG=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   sanitizers:
     name: asan + ubsan
     runs-on: ubuntu-latest
@@ -105,13 +154,13 @@ jobs:
       - name: Qt Test round trips
         run: ctest --test-dir build -R '^roundtrip\.qt\.' --no-tests=error --output-on-failure
 
-  arm:
-    name: arm stubs (cross syntax check)
+  cross:
+    name: cross stubs (32-bit syntax check)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build tools and the ARM cross compiler
+      - name: Install build tools and a 32-bit cross compiler
         run: sudo apt-get update && sudo apt-get install -y ninja-build g++-arm-linux-gnueabihf
 
       - name: Configure
@@ -119,14 +168,15 @@ jobs:
           cmake -S . -B build -G Ninja \
                 -DCMAKE_BUILD_TYPE=Debug \
                 -DMT_WERROR=ON \
-                -DMT_ARM_CXX=arm-linux-gnueabihf-g++
+                -DMT_CROSS_CXX=arm-linux-gnueabihf-g++
 
       - name: Build
         run: cmake --build build -j
 
       # Every generated stub, as C++11 with -Wall -Wextra -Wpedantic -Werror (and
-      # -fno-exceptions -fno-rtti under --no-exceptions), by the compiler for the
-      # target the stubs are written for. The host jobs run the same checks with
-      # the host compiler and also link and run the round trips.
-      - name: Compile the generated stubs for ARM
-        run: ctest --test-dir build -R '^stubs\.arm\.' --output-on-failure
+      # -fno-exceptions -fno-rtti under --no-exceptions), by a compiler for a
+      # 32-bit target, where `long` and `size_t` are narrower than on the host. The
+      # host jobs run the same checks with the host compiler and also link and run
+      # the round trips.
+      - name: Compile the generated stubs for a 32-bit target
+        run: ctest --test-dir build -R '^stubs\.cross\.' --output-on-failure

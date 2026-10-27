@@ -6,6 +6,8 @@ project(mirrortest VERSION 0.1.0 LANGUAGES C CXX)
 
 option(MT_BUILD_TESTS "Build the unit, golden and round-trip tests" ON)
 option(MT_WERROR      "Treat warnings as errors" OFF)
+option(MT_WITH_YAML   "Read configuration files written in YAML (.yaml, .yml); needs yaml-cpp" ON)
+option(MT_WITH_LIBCLANG "Add the libclang frontend for headers (--frontend libclang); needs libclang" OFF)
 
 # The generator itself is C++17 throughout. It runs on the development host,
 # never on the target, so there is nothing to gain from a lower standard.
@@ -15,6 +17,9 @@ option(MT_WERROR      "Treat warnings as errors" OFF)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(MtDependencies)
 include(MtEmbedFiles)
+if(MT_WITH_LIBCLANG)
+    include(MtLibclang)
+endif()
 
 set(MT_WARNINGS "")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -46,6 +51,7 @@ mt_embed_templates("${MT_EMBEDDED_TEMPLATES}" "${CMAKE_CURRENT_SOURCE_DIR}/templ
 add_library(mt_core STATIC
     src/backend/cxx_format.cpp
     src/backend/gtest_backend.cpp
+    src/backend/hook_header.cpp
     src/backend/impl_backend.cpp
     src/backend/impl_merge.cpp
     src/backend/mock_planner.cpp
@@ -58,7 +64,9 @@ add_library(mt_core STATIC
     src/cli/gen_tests.cpp
     src/cli/plan_collector.cpp
     src/cli/run.cpp
+    src/core/compile_commands.cpp
     src/core/config.cpp
+    src/core/config_yaml.cpp
     src/core/diagnostics.cpp
     src/core/diff.cpp
     src/core/include_search.cpp
@@ -70,6 +78,7 @@ add_library(mt_core STATIC
     src/core/writer.cpp
     src/frontend/annotations.cpp
     src/frontend/classify.cpp
+    src/frontend/clang_frontend.cpp
     src/frontend/code_frontend.cpp
     src/frontend/facts.cpp
     src/frontend/known_names.cpp
@@ -88,6 +97,16 @@ target_include_directories(mt_core PUBLIC include)
 target_link_libraries(mt_core
     PUBLIC  mt::tree_sitter nlohmann_json::nlohmann_json
     PRIVATE mt::inja CLI11::CLI11)
+if(MT_WITH_YAML)
+    target_link_libraries(mt_core PRIVATE yaml-cpp::yaml-cpp)
+endif()
+# Whether the configuration reader knows YAML is a property of the library, and of whoever includes
+# its headers to ask (core/config.h: yaml_supported()), not of a macro they have to define.
+target_compile_definitions(mt_core PRIVATE MT_WITH_YAML=$<BOOL:${MT_WITH_YAML}>)
+if(MT_WITH_LIBCLANG)
+    target_link_libraries(mt_core PRIVATE mt::libclang)
+endif()
+target_compile_definitions(mt_core PRIVATE MT_WITH_LIBCLANG=$<BOOL:${MT_WITH_LIBCLANG}>)
 set_source_files_properties(src/cli/run.cpp PROPERTIES
     COMPILE_DEFINITIONS MT_VERSION="${PROJECT_VERSION}")
 mt_configure(mt_core)
@@ -107,15 +126,19 @@ if(MT_BUILD_TESTS)
     add_executable(mt_unit_tests
         tests/unit/test_annotations.cpp
         tests/unit/test_classify.cpp
+        tests/unit/test_clang_frontend.cpp
         tests/unit/test_cli.cpp
         tests/unit/test_code_frontend.cpp
+        tests/unit/test_compile_commands.cpp
         tests/unit/test_config.cpp
+        tests/unit/test_config_yaml.cpp
         tests/unit/test_cxx_format.cpp
         tests/unit/test_dependencies.cpp
         tests/unit/test_extract.cpp
         tests/unit/test_gen_impl.cpp
         tests/unit/test_gen_tests.cpp
         tests/unit/test_gtest_backend.cpp
+        tests/unit/test_hook_header.cpp
         tests/unit/test_include_search.cpp
         tests/unit/test_impl_backend.cpp
         tests/unit/test_impl_merge.cpp
@@ -187,15 +210,15 @@ if(MT_BUILD_TESTS)
     set_tests_properties(cmake.embed_clash PROPERTIES PASS_REGULAR_EXPRESSION "raw-string terminator")
 
     # gen-impl round trips (docs/design.md 16.3): generate from the test of a
-    # golden case, compile the stubs as strict embedded C++11, compile and run
+    # golden case, compile the stubs as strict C++11, compile and run
     # the test, require every test red, and require that a second run changes
     # nothing. Driven by compiler command lines, not a nested CMake project, so
     # the cases are fast and need no network; GoogleTest is the main build's.
     if(NOT MSVC)
-        foreach(case basic_class fixture_members namespaces multi_class_includes no_exceptions
-                     mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums exceptions)
+        foreach(case basic_class fixture_members namespaces multi_class_includes no_exceptions no_stl no_stl_library_types
+                     stub_hook stub_hook_abort mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums exceptions)
             set(mode throw)
-            if(case STREQUAL "no_exceptions")
+            if(case STREQUAL "no_exceptions" OR case STREQUAL "no_stl" OR case STREQUAL "no_stl_library_types" OR case STREQUAL "stub_hook_abort")
                 set(mode abort)
             endif()
             add_test(NAME roundtrip.${case}
@@ -315,15 +338,21 @@ if(MT_BUILD_TESTS)
         endforeach()
 
         # gen-impl: the golden cases whose test runs. qt_exceptions_new needs the macros of Qt 6.3.
-        set(mt_qt_impl_cases qt_basic qt_inline_slots qt_exceptions)
+        set(mt_qt_impl_cases qt_basic qt_inline_slots qt_exceptions qt_hook)
         if(MT_QT STREQUAL "Qt6" AND Qt6_VERSION VERSION_GREATER_EQUAL 6.3)
             list(APPEND mt_qt_impl_cases qt_exceptions_new)
         endif()
         foreach(case IN LISTS mt_qt_impl_cases)
+            # stub_policy hook: a handler that fails the slot and returns, so that all slots run.
+            set(handler "")
+            if(case STREQUAL "qt_hook")
+                set(handler "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/hook/qt_handler.cpp")
+            endif()
             add_test(NAME roundtrip.qt.gen_impl.${case}
                 COMMAND "${CMAKE_COMMAND}" ${mt_qt_args}
                     -DMT_DIRECTION=gen-impl
                     -DMT_CASE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl/${case}
+                    "-DMT_HANDLER=${handler}"
                     -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/roundtrip/qt/gen-impl/${case}
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/run_qt_case.cmake")
             set_tests_properties(roundtrip.qt.gen_impl.${case} PROPERTIES TIMEOUT 300)
@@ -356,10 +385,10 @@ if(MT_BUILD_TESTS)
     endif()
 
     # Do the stubs of *every* gen-impl golden compile as strict C++11? With the
-    # host compiler always, and with MT_ARM_CXX (a cross compiler, e.g.
-    # arm-linux-gnueabihf-g++, which CI installs) for the target they are for.
-    # Syntax only: nothing is linked or run.
-    set(MT_ARM_CXX "" CACHE STRING "Cross compiler for the stub syntax checks (empty: skip them)")
+    # host compiler always, and with MT_CROSS_CXX (a cross compiler for a 32-bit
+    # target, e.g. arm-linux-gnueabihf-g++, which CI installs) to see the stubs
+    # where `long` and `size_t` are narrower. Syntax only: nothing is linked or run.
+    set(MT_CROSS_CXX "" CACHE STRING "Cross compiler for the stub syntax checks (empty: skip them)")
     file(GLOB mt_golden_impl_cases LIST_DIRECTORIES true RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl"
          "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden/gen-impl/*")
     list(SORT mt_golden_impl_cases)
@@ -383,14 +412,14 @@ if(MT_BUILD_TESTS)
         if(case_qt AND NOT MT_QT)
             continue()
         endif()
-        foreach(kind host arm)
-            if(case_qt AND kind STREQUAL "arm")
+        foreach(kind host cross)
+            if(case_qt AND kind STREQUAL "cross")
                 continue()
             endif()
             if(kind STREQUAL "host")
                 set(compiler "${CMAKE_CXX_COMPILER}")
             else()
-                set(compiler "${MT_ARM_CXX}")
+                set(compiler "${MT_CROSS_CXX}")
             endif()
             if(compiler)
                 add_test(NAME stubs.${kind}.${case}

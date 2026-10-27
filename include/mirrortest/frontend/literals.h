@@ -9,9 +9,9 @@
 // a tool whose output is built for a different data model than the one it runs
 // on.
 //
-// The rule that shapes it (design R10): `long` is 32 bits on ARM32 and 64 on
-// x86-64 Linux, and the generator runs on one while the code runs on the
-// other. So a `long` is only ever inferred from an explicit `l` suffix, never
+// The rule that shapes it (design R10): `long` is 32 bits on 32-bit targets and
+// on 64-bit Windows and 64 on 64-bit Linux, and the generator runs on one data
+// model while the code may be built for the other. So a `long` is only ever inferred from an explicit `l` suffix, never
 // from the size of the value. A decimal literal that does not fit an `int`
 // becomes `long long` and a hexadecimal one that does not fit an `unsigned
 // int` also does, each with a warning, because the standard would give `long`

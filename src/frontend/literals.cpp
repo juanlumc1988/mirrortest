@@ -183,7 +183,7 @@ void classify_integer(Literal& lit, const std::string& low, bool hex, bool bin, 
     if (s.longs == 1) {
         lit.type = inferred(s.is_unsigned ? "unsigned long" : "long", false, 0, text);
         if (value > (s.is_unsigned ? kUintMax : kIntMax)) {
-            range_note("does not fit a 32-bit long, which is what it is on ARM32");
+            range_note("does not fit a 32-bit long, which is what it is on 32-bit targets and on 64-bit Windows");
         }
         return;
     }

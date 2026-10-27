@@ -38,61 +38,6 @@ ir::Access to_access(std::string_view text) {
     return ir::Access::Private;
 }
 
-std::string collapse_spaces(std::string_view text) {
-    std::string out;
-    bool pending = false;
-    for (char c : text) {
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-            pending = !out.empty();
-        } else {
-            if (pending) out += ' ';
-            pending = false;
-            out += c;
-        }
-    }
-    return out;
-}
-
-// `operator==`, `operator new`, `operator bool`: the keyword followed by
-// something that is not part of an identifier. `operatorX` is just a name.
-bool is_operator_name(const std::string& name) {
-    constexpr std::string_view keyword = "operator";
-    if (name.size() <= keyword.size() || name.compare(0, keyword.size(), keyword) != 0) {
-        return false;
-    }
-    const char next = name[keyword.size()];
-    const bool continues_identifier = (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
-                                      (next >= '0' && next <= '9') || next == '_';
-    return !continues_identifier;
-}
-
-// "operator ==" and "operator==" are one name; "operator  new [ ]" is
-// "operator new[]". Anything that is not an operator is returned untouched.
-std::string normalise_operator_name(const std::string& name) {
-    if (!is_operator_name(name)) {
-        return name;
-    }
-    const std::string rest = collapse_spaces(std::string_view(name).substr(8));
-    if (rest.empty()) {
-        return name;
-    }
-    const char first = rest[0];
-    const bool word = (first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_';
-    if (word) {
-        std::string tidy;
-        for (std::size_t i = 0; i < rest.size(); ++i) {
-            if (rest[i] == ' ' && i + 1 < rest.size() && rest[i + 1] == '[') continue;
-            tidy += rest[i];
-        }
-        return "operator " + tidy;
-    }
-    std::string symbol;
-    for (char c : rest) {
-        if (c != ' ') symbol += c;
-    }
-    return "operator" + symbol;
-}
-
 // Two methods are the same declaration if nothing but the parameter names and
 // the return type differs. Used to merge a class read twice (both branches of
 // an #if) without listing a member twice.
@@ -258,7 +203,7 @@ private:
     void template_declaration(const Node& node) {
         std::string params(node.named_child(0).text());
         if (params.size() >= 2 && params.front() == '<' && params.back() == '>') {
-            params = collapse_spaces(std::string_view(params).substr(1, params.size() - 2));
+            params = ir::collapse_spaces(std::string_view(params).substr(1, params.size() - 2));
         }
         for (const Node& child : node.named_children()) {
             const std::string_view type = child.type();
@@ -322,7 +267,7 @@ private:
             }
             const syntax::FunctionTraits traits = syntax::read_function_traits(d.function, file_);
             ir::Function f;
-            f.name = normalise_operator_name(d.name);
+            f.name = ir::normalize_operator_name(d.name);
             f.ns = ns_;
             f.ret = traits.has_trailing_return ? traits.trailing_return
                                                : syntax::make_declared_type(spec, d, file_);
@@ -677,12 +622,12 @@ private:
         const syntax::FunctionTraits traits = syntax::read_function_traits(d.function, file_);
 
         ir::Method m;
-        m.name = normalise_operator_name(d.name);
+        m.name = ir::normalize_operator_name(d.name);
         if (!m.name.empty() && m.name[0] == '~') {
             m.kind = ir::MethodKind::Destructor;
         } else if (m.name == state.cls.name && spec.type.is_null()) {
             m.kind = ir::MethodKind::Constructor;
-        } else if (is_operator_name(m.name)) {
+        } else if (ir::is_operator_name(m.name)) {
             m.kind = ir::MethodKind::Operator;
         }
         if (m.kind == ir::MethodKind::Normal || m.kind == ir::MethodKind::Operator) {

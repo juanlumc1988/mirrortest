@@ -32,9 +32,12 @@ namespace mt::core {
 
 enum class CxxStd { Cxx11, Cxx14, Cxx17, Cxx20, Cxx23 };
 enum class GuardStyle { Ifndef, PragmaOnce };
-enum class StubPolicy { Throw, Abort, Default };
+enum class StubPolicy { Throw, Abort, Default, Hook };
 enum class Placeholder { Fail, Skip };
 enum class AutoPolicy { Error, Todo };
+// What reads a header (docs/design.md, section 6.7): tree-sitter, which needs nothing and tolerates code that
+// does not compile, or libclang, a compiler front end that knows which branch of an #if builds.
+enum class Frontend { TreeSitter, Libclang };
 // How a generated Qt Test file starts its event loop: QTEST_APPLESS_MAIN (no
 // application object), QTEST_GUILESS_MAIN (a QCoreApplication) or QTEST_MAIN
 // (a QApplication).
@@ -46,12 +49,14 @@ const char* to_string(GuardStyle value);      // "ifndef", "pragma-once"
 const char* to_string(StubPolicy value);      // "throw", "abort", "default"
 const char* to_string(Placeholder value);     // "fail", "skip"
 const char* to_string(AutoPolicy value);      // "error", "todo"
+const char* to_string(Frontend value);        // "tree-sitter", "libclang"
 
 std::optional<CxxStd>     parse_std(std::string_view text);
 std::optional<GuardStyle> parse_guard_style(std::string_view text);
 std::optional<StubPolicy> parse_stub_policy(std::string_view text);
 std::optional<Placeholder> parse_placeholder(std::string_view text);
 std::optional<AutoPolicy> parse_auto_policy(std::string_view text);
+std::optional<Frontend> parse_frontend(std::string_view text);
 
 // The valid spellings of each enumeration, in declaration order. The CLI
 // validates its options against these and prints them in --help, so the
@@ -61,6 +66,7 @@ std::vector<std::string> guard_names();
 std::vector<std::string> stub_policy_names();
 std::vector<std::string> placeholder_names();
 std::vector<std::string> auto_policy_names();
+std::vector<std::string> frontend_names();
 
 // 11, 14, 17, 20, 23.
 int to_number(CxxStd value);
@@ -127,6 +133,10 @@ struct Config {
 
     StubPolicy  stub_policy       = StubPolicy::Throw;
     bool        no_exceptions     = false;          // see effective_stub_policy()
+    // The project does not use the standard library. A stub does not throw a `std::logic_error`
+    // (it aborts, as under no_exceptions), and a generated header that has to include a library
+    // header for a type of the tests is reported (`mt-no-stl`).
+    bool        no_stl            = false;
     bool        no_rtti           = false;
     Placeholder placeholder       = Placeholder::Fail;
     AutoPolicy  auto_policy       = AutoPolicy::Error;
@@ -139,6 +149,14 @@ struct Config {
     // ("std::runtime_error") it is generated, deriving from it. Empty (the default): it must come
     // from a header, or be reported.
     std::string exception_base;
+
+    // What reads the headers: gen-tests' input, and the headers a test includes that gen-impl must not
+    // generate again. A test file is always read by tree-sitter (it is code that may not compile yet).
+    Frontend frontend = Frontend::TreeSitter;
+    // The libclang frontend's compiler arguments, as given: `-DNAME=1`, `-I/opt/vendor/include`, `-std=...`
+    // (the standard of `std` is passed first, and the -I of the run after those). A relative path in
+    // them is relative to the process's directory, not to the run's: write them absolute.
+    std::vector<std::string> clang_args;
 
     // Applied last, and only to what was inferred (never to what the user
     // declared or annotated). Sorted by key: lookups only, never emission
@@ -155,8 +173,9 @@ struct Config {
     std::map<std::string, std::vector<std::string>>  template_instantiations;  // "ns::Box" -> {"int", ...}
 };
 
-// Without exceptions a stub cannot throw, so `throw` becomes `abort`. An
-// explicit `default` is kept: it never throws either.
+// Without exceptions a stub cannot throw, and without the standard library it has no
+// `std::logic_error` to throw, so `throw` becomes `abort`. An explicit `default` is kept:
+// it never throws either.
 StubPolicy effective_stub_policy(const Config& config);
 
 // Applies the keys present in `json` on top of `config`. Comments (// and
@@ -167,9 +186,25 @@ StubPolicy effective_stub_policy(const Config& config);
 bool apply_config_json(Config& config, std::string_view json, const std::string& origin,
                        Diagnostics& diagnostics);
 
-// Reads `path` (an `mt-io` error if it cannot be read) and applies it. A
-// relative path is resolved against `base_dir` if given; diagnostics show it
-// as written.
+// The same for a YAML document (docs/design.md, section 14). It is read with yaml-cpp, turned
+// into the JSON that apply_config_json reads and handed to it, so that what is valid, what is
+// an error and how it is worded are decided in one place. A scalar is a boolean for
+// true/false, an integer for digits, null for null, ~ or nothing, and a string otherwise
+// and always when quoted (`yes` is a string, not a boolean). Anchors and aliases work; merge
+// keys (`<<`), tags other than !!str, a key twice in a mapping, more than one document, a
+// key that is not a scalar and a document that expands to more than 100000 nodes are errors.
+// An empty document, or one with only comments, changes nothing.
+//
+// Without YAML support (-DMT_WITH_YAML=OFF) this records an `mt-config` error that says so.
+bool apply_config_yaml(Config& config, std::string_view yaml, const std::string& origin,
+                       Diagnostics& diagnostics);
+
+// Whether this build reads YAML (MT_WITH_YAML).
+bool yaml_supported();
+
+// Reads `path` (an `mt-io` error if it cannot be read) and applies it: as YAML when the name
+// ends in .yaml or .yml (any case), as JSON otherwise. A relative path is resolved against
+// `base_dir` if given; diagnostics show it as written.
 bool load_config_file(Config& config, const std::string& path, Diagnostics& diagnostics,
                       const std::filesystem::path& base_dir = {});
 

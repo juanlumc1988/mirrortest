@@ -1,0 +1,5 @@
+in/foo_test.cpp:7:9: warning: the result of 'Foo::run' is never used, so the method is assumed to return void [mt-unused-result]
+in/foo_test.cpp:9:18: warning: 'Foo::mystery()' cannot return an empty 'std::runtime_error' under stub_policy 'hook'; its stub aborts when the hook returns (list the type in default_constructible_types if it can) [mt-unsupported]
+created out/foo.h
+created out/foo.cpp
+created out/mt_not_implemented.h

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "mirrortest/backend/cxx_format.h"
+#include "mirrortest/backend/hook_header.h"
 #include "mirrortest/core/naming.h"
 #include "mirrortest/core/regions.h"
 #include "mirrortest/ir/classify.h"
@@ -239,9 +240,14 @@ public:
         for (const ir::Model& k : options.known) models_.push_back(&k);
     }
 
+    bool uses_hook() const { return uses_hook_; }
+
     std::vector<ImplViews> run() {
         const std::vector<Unit>& units = assignment_.units();
-        for (const Unit& unit : units) needs_.push_back(scan(unit));
+        for (const Unit& unit : units) {
+            needs_.push_back(scan(unit));
+            if (options_.config.no_stl) report_library_headers(unit, needs_.back());
+        }
         break_cycles();
         std::vector<ImplViews> out;
         for (std::size_t i = 0; i < units.size(); ++i) out.push_back(views_for(units[i], needs_[i]));
@@ -259,6 +265,9 @@ private:
     // header's needs are known.
     struct Needs {
         std::set<std::string> system;     // <vector>
+        // The ones among them that are the standard library proper, each with the first
+        // name that asked for it ("vector" -> "std::vector"): what `no_stl` reports.
+        std::map<std::string, std::string> library;
         std::set<std::string> local;      // "other.h"
         // The headers whose classes this one holds by value: an include that a
         // forward declaration cannot stand in for.
@@ -307,10 +316,23 @@ private:
 
     // ---- includes -------------------------------------------------------------------------------------------
 
+    // With `no_stl` the types of the tests are still written as they are, but the user is told which
+    // header ends up including a library header because of one.
+    void report_library_headers(const Unit& unit, const Needs& needs) const {
+        for (const auto& [header, name] : needs.library) {
+            ir::SourceLoc where;
+            where.file = options_.source;
+            diag_.warning(core::code::no_stl,
+                          "'" + unit.header + "' includes <" + header + "> for '" + name + "', but no_stl says the project does not use the standard library",
+                          where);
+        }
+    }
+
     void note(const std::string& name, const Unit& unit, bool by_value, Needs& needs) const {
         const std::string sys = ir::system_include_for(name);
         if (!sys.empty()) {
             needs.system.insert(sys);
+            if (ir::is_standard_library_header(sys)) needs.library.emplace(sys, name);
             return;
         }
         const Declaration d = declaration_of(name);
@@ -463,21 +485,37 @@ private:
         Stub stub = make_stub(policy_, ret, trivial, returnable, signature);
         if (!trivial) any_stub_ = true;
         if (stub.fell_back) {
+            const bool hook = policy_ == core::StubPolicy::Hook;
             diag_.warning(core::code::unsupported,
-                          "'" + signature + "' cannot return an empty '" + ret.spelling +
-                              "' under stub_policy 'default'; its stub aborts instead (list the type in default_constructible_types if it can)",
+                          "'" + signature + "' cannot return an empty '" + ret.spelling + "' under stub_policy '" + (hook ? "hook" : "default") +
+                              "'; its stub aborts " + (hook ? "when the hook returns" : "instead") +
+                              " (list the type in default_constructible_types if it can)",
                           where);
         }
         return stub;
     }
 
-    json class_definitions(const ir::Class& c, std::set<std::string>& system) {
+    // The includes of a source file that its stubs ask for.
+    struct SourceIncludes {
+        std::set<std::string> system;   // <cstdlib>
+        std::set<std::string> local;    // "mt_not_implemented.h"
+    };
+
+    void note_stub_includes(const Stub& stub, SourceIncludes& includes) {
+        if (!stub.include.empty()) includes.system.insert(stub.include);
+        if (!stub.local_include.empty()) {
+            includes.local.insert(stub.local_include);
+            uses_hook_ = true;
+        }
+    }
+
+    json class_definitions(const ir::Class& c, SourceIncludes& includes) {
         json defs = json::array();
         for (const ir::Method* m : ordered_methods(c)) {
             if (!needs_definition(*m)) continue;
             const bool trivial = m->kind == ir::MethodKind::Constructor || m->kind == ir::MethodKind::Destructor;
             const Stub stub = stub_for(m->ret, trivial, method_signature(c, *m), m->where);
-            if (!stub.include.empty()) system.insert(stub.include);
+            note_stub_includes(stub, includes);
             defs.push_back(definition(method_definition_head(c, *m), stub.body));
         }
         for (const ir::Field& f : c.fields) {
@@ -492,11 +530,11 @@ private:
         return defs;
     }
 
-    json function_definitions(const std::vector<const ir::Function*>& functions, std::set<std::string>& system) {
+    json function_definitions(const std::vector<const ir::Function*>& functions, SourceIncludes& includes) {
         json defs = json::array();
         for (const ir::Function* f : functions) {
             const Stub stub = stub_for(f->ret, false, function_signature(*f), f->where);
-            if (!stub.include.empty()) system.insert(stub.include);
+            note_stub_includes(stub, includes);
             defs.push_back(definition(function_definition_head(*f), stub.body));
         }
         return defs;
@@ -563,7 +601,7 @@ private:
         ImplViews views;
         views.header_path = unit.header;
 
-        std::set<std::string> source_system;
+        SourceIncludes source_includes;
         json header_sections = foreign_sections(needs.forward);
         json source_sections = json::array();
         std::set<std::string> labels;
@@ -584,7 +622,7 @@ private:
             for (const ir::Class* c : ordered) {
                 claim(labels, core::class_label(c->ns, c->name), c->where);
                 blocks.push_back(class_block(*c));
-                json defs = class_definitions(*c, source_system);
+                json defs = class_definitions(*c, source_includes);
                 if (!defs.empty()) {
                     json b;
                     b["begin"] = core::region_begin(core::class_label(c->ns, c->name));
@@ -609,7 +647,7 @@ private:
                 json b;
                 b["begin"] = core::region_begin(label);
                 b["end"] = core::region_end(label);
-                b["definitions"] = function_definitions(s.functions, source_system);
+                b["definitions"] = function_definitions(s.functions, source_includes);
                 src_blocks.push_back(b);
             }
 
@@ -650,7 +688,9 @@ private:
             s["own_include"] = "#include \"" + unit.header + "\"";
             s["includes_begin"] = core::region_begin(core::includes_label());
             s["includes_end"] = core::region_end(core::includes_label());
-            s["includes"] = include_lines(source_system, needs.deferred);
+            std::set<std::string> local = needs.deferred;
+            local.insert(source_includes.local.begin(), source_includes.local.end());
+            s["includes"] = include_lines(source_includes.system, local);
             s["sections"] = source_sections;
             views.source_view = s;
         }
@@ -742,19 +782,29 @@ private:
     core::StubPolicy                policy_;
     std::vector<const ir::Model*>   models_;
     bool                            any_stub_ = false;
+    bool                            uses_hook_ = false;
     std::vector<Needs>              needs_;   // per unit, in the order of Assignment::units()
 };
 
 }  // namespace
 
+ImplBuild build_impl(const ir::Model& model, const ImplOptions& options, core::Diagnostics& diagnostics) {
+    Builder builder(model, options, diagnostics);
+    ImplBuild out;
+    out.views = builder.run();
+    out.uses_hook = builder.uses_hook();
+    return out;
+}
+
 std::vector<ImplViews> build_impl_views(const ir::Model& model, const ImplOptions& options, core::Diagnostics& diagnostics) {
-    return Builder(model, options, diagnostics).run();
+    return build_impl(model, options, diagnostics).views;
 }
 
 core::OutputPlan generate_impl(const ir::Model& model, const ImplOptions& options, const core::TemplateStore& templates,
                                core::Diagnostics& diagnostics) {
     core::OutputPlan plan;
-    for (const ImplViews& v : build_impl_views(model, options, diagnostics)) {
+    const ImplBuild built = build_impl(model, options, diagnostics);
+    for (const ImplViews& v : built.views) {
         if (auto text = templates.render("impl/header.inja", v.header_view, diagnostics)) {
             plan.files.push_back({core::output_path(options.out_include, v.header_path), *text});
         }
@@ -764,6 +814,7 @@ core::OutputPlan generate_impl(const ir::Model& model, const ImplOptions& option
             }
         }
     }
+    if (built.uses_hook) plan.files.push_back({core::output_path(options.out_include, kHookHeaderName), hook_header(options.config, options.source)});
     return plan;
 }
 

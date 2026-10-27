@@ -71,8 +71,8 @@ parameter. Write the suffix when the type matters:
 | `"text"s`, `"text"sv` | `std::string`, `std::string_view` |
 | `5ms`, `2h` | `std::chrono::milliseconds`, `std::chrono::hours` |
 
-`long` is 4 bytes on ARM32 and 8 on x86-64, so a literal that only fits one of
-them gets a warning. A literal larger than `int` without a suffix is `long
+`long` is 4 bytes on 32-bit targets and on 64-bit Windows and 8 on 64-bit Linux, so
+a literal that only fits one of them gets a warning. A literal larger than `int` without a suffix is `long
 long`.
 
 ### Don't use `auto` for the results of the code under test
@@ -328,6 +328,14 @@ the standard library are never generated.
 $ mirrortest gen-impl tests/foo_test.cpp --out src -I include
 ```
 
+If the project is built with CMake you do not have to repeat its include
+directories: `--compile-commands build/compile_commands.json` (written by
+`-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`) adds the `-I`, `-isystem` and `-iquote`
+directories of every compilation in the file, after the `-I` you give. It works in
+`gen-tests` too. Every entry counts, whether or not it is the test you are
+generating; if two targets of the project use different directories under the same
+name, give a database with only the one that matters, or the `-I` yourself.
+
 - A class goes to **the header whose name matches** (`FooBar` → `foo_bar.h`,
   ignoring case, `_` and `-`), else to the first header the test asks for. With
   no header to generate at all, each class and function gets a file named from
@@ -449,14 +457,48 @@ unsigned int Foo::size() const {
 | `throw` (default) | `throw std::logic_error("mirrortest: not implemented: ...");` | `<stdexcept>` |
 | `abort` | `std::abort();` | `<cstdlib>` |
 | `default` | `return {};` (nothing for `void`) | — |
+| `hook` | `mt_not_implemented("...");`, then `return {};` (nothing for `void`) | `"mt_not_implemented.h"`, written for you |
 
 `--no-exceptions` makes `throw` behave as `abort`, for projects that build with
 `-fno-exceptions` (and `--no-rtti` is a promise that no `typeid` or
-`dynamic_cast` is emitted). `default` can make a test pass by accident — a stub
+`dynamic_cast` is emitted). `--no-stl` does the same, because a stub that throws
+needs `std::logic_error`, and also reports every generated header that has to include a
+header of the standard library for a type your tests use (`mt-no-stl`; `<cstddef>`,
+`<cstdint>`, `<cstdio>`, `<cstdlib>` and Qt's do not count): the header is written as the
+test has it, and the warning tells you where the project's rule and the test disagree. `default` can make a test pass by accident — a stub
 that returns `0` satisfies `EXPECT_EQ(x.f(), 0)` — so it says
 `mt-stub-may-pass`; a return type that `{}` cannot build (a reference, a class
 without a default constructor) falls back to `abort` with a warning. List types
 you know are default-constructible in `default_constructible_types`.
+
+### `hook`: let every test run
+
+Qt Test ends the program at the first exception, so with `throw` the slots after
+the first one never say which stubs they are missing. With `--stub-policy hook`
+each stub calls `mt_not_implemented("<signature>")` from a header the tool writes
+for you, `mt_not_implemented.h`, next to the others. By default that **throws** (or,
+with `--no-exceptions` or `--no-stl`, prints the signature and aborts), so nothing
+changes until you install a handler that makes the running test fail and returns:
+
+```cpp
+#include <QtTest>
+#include "mt_not_implemented.h"
+
+namespace {
+void fail_the_slot(const char* signature) { QTest::qFail(signature, __FILE__, __LINE__); }
+struct Install { Install() { mt_set_not_implemented_handler(&fail_the_slot); } } install;
+}
+```
+
+Put it in any file of the test program, or in the test itself — `#include
+"mt_not_implemented.h"` there is not something the tool generates, and neither are
+`mt_set_not_implemented_handler` and the other names of that header. With it in the
+program, every slot runs and each reports the signatures it needs
+(`FAIL!  : TestCounter::incrementsByOne(zero) acme::Counter::increment()`). In GoogleTest
+use `ADD_FAILURE() << signature`. After the hook returns, the stub gives an empty
+value as `default` does; a type that `{}` cannot build aborts, with a warning. A
+handler that returns *without* failing the test lets it pass without the code it
+tests, so make it fail.
 
 Constructors and destructors are always empty, so a test runs on to the first
 stub that fails instead of stopping at its first line. Parameter names are
@@ -503,7 +545,8 @@ it can call. Say that a type can be built with `default_constructible_types` in
 the configuration.
 
 How the test includes the header: `--include-as PATH`, else the path below the
-first `-I` directory that contains it, else the file name.
+first `-I` directory that contains it (those of `--compile-commands` come after the
+ones given with `-I`), else the file name.
 
 By default the object under test is built inside each test. With `{"gtest":
 {"fixture": true}}` in the configuration the file has one fixture class that owns
@@ -513,6 +556,36 @@ constructor test builds a second object called `object`. Mind the price: the
 fixture builds `sut` before the test body, so the class's constructor runs even
 though the test is still red, which the plain skeleton never does. Use it for
 classes whose construction is safe.
+
+### Reading the header with libclang
+
+By default the header is read by tree-sitter, which needs nothing and tolerates a
+header that does not compile. If the project's headers do compile, `--frontend
+libclang` (or `"frontend": "libclang"`) has a compiler front end read them instead.
+It is in the build only if it was asked for (`-DMT_WITH_LIBCLANG=ON`, needs
+libclang: `apt install libclang-dev`); otherwise the option says so and stops.
+
+```console
+$ mirrortest gen-tests include/acme/port.h --out tests/ -I include \
+      --frontend libclang --clang-arg=-DUSE_DMA --std c++17
+```
+
+What changes: only the branch of an `#if` that builds is read (tree-sitter keeps
+both), what a macro declares is read (`GETTER(int, size)` is a method; no
+`ignore_macros` for an export macro), a pointer to member or a struct named by a
+`typedef` is read as it is. What does not: the types are still the ones **you
+wrote** (`unsigned` stays `unsigned`), so the tests it writes are the ones
+tree-sitter writes for the same header, byte for byte.
+
+libclang needs to find what the header includes: the `-I` of the run (and those of
+`--compile-commands`) are given to it, and `--clang-arg` adds the rest (`-DNAME=1`,
+`-isystem /abs/dir`; written absolute, because libclang resolves a relative path
+against the process's directory). The standard of `--std` is passed too. What it
+cannot resolve — a type nobody declared, a header it did not find — is reported
+as an `mt-parse` warning at its place ("libclang: unknown type name 'Mystery'"),
+and the declaration is still read with the type as you wrote it. Qt's headers are
+not needed for the signal and slot roles, only to resolve `QObject` and the value
+classes. Tests are always read by tree-sitter: they are code that may not compile yet.
 
 ### Cases over a table of arguments
 
@@ -636,7 +709,7 @@ files are never overwritten: a differing one gets a `.new` beside it, and
 
 ## Configuration
 
-`--config FILE.json` (comments allowed). Precedence: built-in defaults, then the
+`--config FILE.json` (comments allowed) or `FILE.yaml`. Precedence: built-in defaults, then the
 file, then the command line. Unknown keys and wrong values are errors, all
 reported at once. The full list is in [docs/design.md](design.md), section 14;
 the ones people reach for first:
@@ -660,6 +733,26 @@ the ones people reach for first:
   "overrides": { "acme::Repo::count": { "returns": "std::size_t" } }
 }
 ```
+
+The same configuration as YAML (`--config mt.yaml`, or `.yml`), if you prefer to
+comment it and to write the header as a block:
+
+```yaml
+std: c++14
+default_namespace: acme
+guard: pragma-once
+file_header: |
+  // Copyright (c) ACME. All rights reserved.
+stub_policy: abort
+type_map:
+  unsigned int: std::uint32_t
+by_value_types: [Handle]
+```
+
+The keys and the errors are those of the JSON. A plain `true`, `false` and number have that type;
+anything quoted is text, and `yes`/`no`/`on`/`off` are not booleans. Anchors and aliases work; merge
+keys (`<<`), tags other than `!!str`, a key twice in one mapping and more than one document are
+errors. A build made with `-DMT_WITH_YAML=OFF` refuses a YAML file and says so.
 
 `type_map` rewrites what was *inferred* (never what you declared): handy to turn
 every `unsigned int` into `std::uint32_t`. `file_header` is emitted at the top of
@@ -690,6 +783,7 @@ differences.
 | `mt-annotation` | a malformed annotation, or one that does not hit exactly one call | fix the comment; use the file-level form for several calls |
 | `mt-unsupported` | a construct outside the supported subset (see [Limits](#limits)), a QTest file, or two test files that write the same file differently | see the message |
 | `mt-stub-may-pass` | `--stub-policy default` | by design; a reminder |
+| `mt-no-stl` | `--no-stl`, and a generated header that includes a standard library header for a type of the test | use a type the project has, or `type_map` |
 | `mt-framework` | the test framework could not be told, or the file uses both | `--framework gtest` |
 | `mt-merge-region` | an error: the regions of a file being merged are nested, unclosed or repeated | fix the `// <mt:begin>` / `// <mt:end>` lines |
 | `mt-merge-no-region`, `mt-merge-mismatch`, `mt-merge-broke` | warnings of `--overwrite merge`: a class has no region (so a `.new` is written), a member exists with other types (left alone), a merge would have broken the file | see [Merging](#merging) |
@@ -714,3 +808,6 @@ Honest list of what it does not do (yet):
 - `TYPED_TEST` bodies are skipped (with a warning).
 - A constructor defined *outside* its class does not stop the member it
   initialises from also asking for a default constructor.
+- With `--frontend libclang`, a header that does not compile is read with warnings, and whatever libclang
+  cannot resolve is as unknown to it as to anybody; class template specialisations, function templates
+  and inherited constructors are skipped with the same warnings as with tree-sitter.

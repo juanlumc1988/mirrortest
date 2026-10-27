@@ -117,7 +117,7 @@ TEST(Cli, EachCommandHasItsOwnHelp) {
 TEST(Cli, HelpShowsTheValidChoicesFromTheConfiguration) {
     const Invocation r = invoke({"gen-impl", "--help"});
     EXPECT_TRUE(contains(r.out, "c++11|c++14|c++17|c++20|c++23"));
-    EXPECT_TRUE(contains(r.out, "throw|abort|default"));
+    EXPECT_TRUE(contains(r.out, "throw|abort|default|hook"));
     EXPECT_TRUE(contains(r.out, "error|todo"));
 }
 
@@ -266,6 +266,102 @@ TEST(CliParse, IncludeDirectoriesAccumulateAndDoNotEatTheInputs) {
     EXPECT_EQ(o.inputs, std::vector<std::string>{"test.cpp"});
 }
 
+TEST(CliParse, TheFrontendAndTheArgumentsForLibclangAreOptionsOfBothCommands) {
+    EXPECT_EQ(opts({"gen-tests", "h.h", "--out", "o"}).config.frontend, core::Frontend::TreeSitter) << "tree-sitter unless said otherwise";
+    const Options impl = opts({"gen-impl", "t.cpp", "--out", "o", "--frontend", "libclang", "--clang-arg", "-DX=1", "--clang-arg=-Iinc", "t2.cpp"});
+    EXPECT_EQ(impl.config.frontend, core::Frontend::Libclang);
+    EXPECT_EQ(impl.config.clang_args, (std::vector<std::string>{"-DX=1", "-Iinc"}));
+    EXPECT_EQ(impl.inputs, (std::vector<std::string>{"t.cpp", "t2.cpp"})) << "--clang-arg does not take the inputs that follow it";
+    const Options tests = opts({"gen-tests", "h.h", "--out", "o", "--frontend", "tree-sitter"});
+    EXPECT_EQ(tests.config.frontend, core::Frontend::TreeSitter);
+}
+
+TEST(CliParse, TheFrontendHasToBeOneThatExists) {
+    const Invocation bad = invoke({"gen-tests", "h.h", "--out", "o", "--frontend", "clang"});
+    EXPECT_EQ(bad.code, 2);
+    EXPECT_TRUE(contains(bad.err, "tree-sitter")) << bad.err;
+    EXPECT_TRUE(contains(bad.err, "libclang")) << bad.err;
+    EXPECT_TRUE(contains(invoke({"gen-tests", "--help"}).out, "--frontend"));
+    EXPECT_TRUE(contains(invoke({"gen-impl", "--help"}).out, "--clang-arg"));
+}
+
+TEST(CliConfig, TheFrontendAndItsArgumentsCanBeInTheFileAndTheCommandLineAddsToThem) {
+    TempDir dir;
+    write_file(dir.path() / "mt.json", R"({"frontend":"libclang","clang_args":["-DA","-Iinc"]})");
+    const Parsed p = parse({"gen-tests", "h.h", "--out", "o", "--config", "mt.json", "--clang-arg", "-DB"}, dir.path());
+    ASSERT_TRUE(p.options.has_value()) << p.err;
+    EXPECT_EQ(p.options->config.frontend, core::Frontend::Libclang);
+    EXPECT_EQ(p.options->config.clang_args, (std::vector<std::string>{"-DA", "-Iinc", "-DB"})) << "the file's first, then the command line's";
+    const Parsed over = parse({"gen-tests", "h.h", "--out", "o", "--config", "mt.json", "--frontend", "tree-sitter"}, dir.path());
+    EXPECT_EQ(over.options->config.frontend, core::Frontend::TreeSitter) << "and an option that was passed overrides the file";
+}
+
+TEST(CliParse, TheHookStubPolicyIsAccepted) {
+    EXPECT_EQ(opts({"gen-impl", "t.cpp", "--out", "o", "--stub-policy", "hook"}).config.stub_policy, core::StubPolicy::Hook);
+}
+
+TEST(CliParse, CompileCommandsIsRememberedForBothCommandsAndNotReadYet) {
+    const Options impl = opts({"gen-impl", "t.cpp", "--out", "o", "--compile-commands", "build/compile_commands.json", "-I", "inc"});
+    EXPECT_EQ(impl.compile_commands, std::optional<std::string>("build/compile_commands.json"));
+    EXPECT_EQ(impl.include_dirs, std::vector<std::string>{"inc"}) << "what the file names is added when the command runs, not here";
+    const Options tests = opts({"gen-tests", "h.h", "--out", "o", "--compile-commands", "cc.json"});
+    EXPECT_EQ(tests.compile_commands, std::optional<std::string>("cc.json"));
+    EXPECT_FALSE(opts({"gen-impl", "t.cpp", "--out", "o"}).compile_commands);
+    EXPECT_FALSE(opts({"gen-tests", "h.h", "--out", "o"}).compile_commands);
+}
+
+TEST(CliParse, CompileCommandsNeedsAFile) {
+    const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--compile-commands"});
+    EXPECT_FALSE(p.options);
+    EXPECT_EQ(p.exit_code, 2);
+}
+
+TEST(CliParse, CompileCommandsIsInTheHelpOfBothCommands) {
+    for (const char* command : {"gen-impl", "gen-tests"}) {
+        const Parsed p = parse({command, "--help"});
+        EXPECT_TRUE(contains(p.out, "--compile-commands")) << command;
+    }
+}
+
+TEST(CliCompileCommands, TheDirectoriesOfTheFileFollowTheOnesGiven) {
+    TempDir dir;
+    write_file(dir.path() / "cc.json", R"([{"directory":"/p","command":"c++ -I/p/inc -Ishared -I/p/inc"}])");
+    std::ostringstream err;
+    cli::Env env;
+    env.cwd = dir.path();
+    env.err = &err;
+    Options given = opts({"gen-impl", "t.cpp", "--out", "o", "-I", "mine", "--compile-commands", "cc.json"});
+    core::Diagnostics diagnostics;
+    const Options run = cli::with_compile_commands(given, env, diagnostics);
+    EXPECT_TRUE(diagnostics.empty());
+    EXPECT_EQ(run.include_dirs, (std::vector<std::string>{"mine", "/p/inc", "/p/shared"}));
+    EXPECT_EQ(given.include_dirs, std::vector<std::string>{"mine"}) << "the options it was given are not changed";
+    EXPECT_EQ(run.inputs, given.inputs);
+}
+
+TEST(CliCompileCommands, WithoutTheOptionOrWithAFileThatFailsTheOptionsAreAsTheyWere) {
+    TempDir dir;
+    std::ostringstream err;
+    cli::Env env;
+    env.cwd = dir.path();
+    env.err = &err;
+    Options given = opts({"gen-impl", "t.cpp", "--out", "o", "-I", "mine"});
+    core::Diagnostics none;
+    EXPECT_EQ(cli::with_compile_commands(given, env, none).include_dirs, std::vector<std::string>{"mine"});
+    EXPECT_TRUE(none.empty());
+
+    given.compile_commands = "missing.json";
+    core::Diagnostics missing;
+    EXPECT_EQ(cli::with_compile_commands(given, env, missing).include_dirs, std::vector<std::string>{"mine"});
+    EXPECT_TRUE(missing.has_errors());
+
+    write_file(dir.path() / "bad.json", "{}");
+    given.compile_commands = "bad.json";
+    core::Diagnostics bad;
+    EXPECT_EQ(cli::with_compile_commands(given, env, bad).include_dirs, std::vector<std::string>{"mine"});
+    EXPECT_TRUE(bad.has_errors());
+}
+
 TEST(CliParse, TheTestsOptionDoesNotEatFollowingPositionals) {
     const Options o = opts({"gen-impl", "--tests", "a.cpp", "b.cpp", "--out", "o"});
     EXPECT_EQ(o.inputs, (std::vector<std::string>{"b.cpp", "a.cpp"}));
@@ -275,7 +371,7 @@ TEST(CliParse, GenImplOptionsReachTheOptionsAndTheConfig) {
     TempDir dir;
     write_file(dir.path() / "none.json", "{}");
     const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--framework", "qtest",
-                            "--stub-policy", "default", "--no-exceptions", "--no-rtti",
+                            "--stub-policy", "default", "--no-exceptions", "--no-rtti", "--no-stl",
                             "--auto-policy", "todo", "--std", "c++11", "--overwrite", "force",
                             "--dry-run", "--check", "--strict", "--verbose",
                             "--templates", "tpl", "--config", "none.json"},
@@ -286,6 +382,7 @@ TEST(CliParse, GenImplOptionsReachTheOptionsAndTheConfig) {
     EXPECT_EQ(o.config.stub_policy, core::StubPolicy::Default);
     EXPECT_TRUE(o.config.no_exceptions);
     EXPECT_TRUE(o.config.no_rtti);
+    EXPECT_TRUE(o.config.no_stl);
     EXPECT_EQ(o.config.auto_policy, core::AutoPolicy::Todo);
     EXPECT_EQ(o.config.cxx_std, core::CxxStd::Cxx11);
     EXPECT_EQ(o.overwrite, core::OverwriteMode::Force);
@@ -361,6 +458,43 @@ TEST(CliConfig, AFileTurningOnNoExceptionsIsKeptWithoutTheFlag) {
     write_file(dir.path() / "mt.json", R"({"no_exceptions":true})");
     const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--config", "mt.json"}, dir.path());
     EXPECT_TRUE(p.options->config.no_exceptions);
+}
+
+TEST(CliConfig, NoStlOnTheCommandLineWinsOverAFileThatSaysFalseAndAFileThatSaysTrueIsKept) {
+    TempDir dir;
+    write_file(dir.path() / "off.json", R"({"no_stl":false})");
+    write_file(dir.path() / "on.json", R"({"no_stl":true})");
+    EXPECT_TRUE(parse({"gen-impl", "t.cpp", "--out", "o", "--config", "off.json", "--no-stl"}, dir.path()).options->config.no_stl);
+    EXPECT_TRUE(parse({"gen-impl", "t.cpp", "--out", "o", "--config", "on.json"}, dir.path()).options->config.no_stl);
+    EXPECT_FALSE(parse({"gen-impl", "t.cpp", "--out", "o", "--config", "off.json"}, dir.path()).options->config.no_stl);
+    EXPECT_FALSE(parse({"gen-impl", "t.cpp", "--out", "o"}, dir.path()).options->config.no_stl);
+}
+
+TEST(CliUsage, NoStlBelongsToGenImpl) {
+    EXPECT_EQ(invoke({"gen-tests", "h.h", "--out", "o", "--no-stl"}).code, 2);
+}
+
+TEST(CliConfig, AYamlFileIsReadLikeAJsonOneAndTheCommandLineStillWinsOverIt) {
+    if (!core::yaml_supported()) GTEST_SKIP() << "built without YAML";
+    TempDir dir;
+    write_file(dir.path() / "mt.yaml", "std: c++11\nstub_policy: abort\nno_stl: true\n");
+    const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--config", "mt.yaml", "--stub-policy", "hook"}, dir.path());
+    ASSERT_TRUE(p.options.has_value()) << p.err;
+    EXPECT_EQ(p.options->config.cxx_std, core::CxxStd::Cxx11);
+    EXPECT_TRUE(p.options->config.no_stl);
+    EXPECT_EQ(p.options->config.stub_policy, core::StubPolicy::Hook) << "an option that was passed overrides the file";
+}
+
+TEST(CliConfig, AnErrorInAYamlFileIsLocatedAndStopsTheRunWithExitCodeOne) {
+    if (!core::yaml_supported()) GTEST_SKIP() << "built without YAML";
+    TempDir dir;
+    write_file(dir.path() / "bad.yml", "std: c++11\nnaming: [oops\n");
+    const Parsed p = parse({"gen-impl", "t.cpp", "--out", "o", "--config", "bad.yml"}, dir.path());
+    EXPECT_FALSE(p.options.has_value());
+    EXPECT_EQ(p.exit_code, 1);
+    EXPECT_TRUE(contains(p.err, "bad.yml:")) << p.err;
+    EXPECT_TRUE(contains(p.err, "error: invalid YAML: ")) << p.err;
+    EXPECT_TRUE(contains(p.err, "[mt-config]")) << p.err;
 }
 
 TEST(CliConfig, ARelativeConfigPathIsResolvedAgainstTheWorkingDirectoryOfTheRun) {

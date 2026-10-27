@@ -17,6 +17,8 @@ tests/golden/<group>/<case>/
     stderr.txt       expected stderr      (absent = must be empty)
     exit_code.txt    expected exit code   (absent = 0)
     notes.md         why this case exists (ignored by the runner)
+    requires.txt     optional: the optional features of the build the case needs, one a line
+                     (yaml, libclang); where one is missing the case is skipped
 ```
 
 The command runs in-process with a fresh temporary directory as its working

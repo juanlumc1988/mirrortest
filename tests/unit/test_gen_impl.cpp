@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "mirrortest/cli/run.h"
+#include "mirrortest/frontend/clang_frontend.h"
 #include "test_support.h"
 
 using namespace mt;
@@ -316,6 +317,17 @@ TEST(GenImpl, AHeaderThatExistsOnAnIncludeDirectoryIsTheApiNotSomethingToGenerat
     EXPECT_FALSE(exists(dir, "src/acme/foo.cpp"));
 }
 
+TEST(GenImpl, AKnownHeaderCanBeReadWithLibclangAndIsTheApiAllTheSame) {
+    if (!frontend::libclang_supported()) GTEST_SKIP() << "built without libclang";
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "inc/acme/foo.h", "namespace acme { class Foo { public: explicit Foo(int); unsigned size() const; bool empty() const; }; }\n");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "-I", "inc", "--frontend", "libclang"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(contains(r.err, "warning")) << r.err;
+    EXPECT_FALSE(exists(dir, "src/acme/foo.h")) << "found on -I: it is the API";
+}
+
 TEST(GenImpl, YourOwnOutputOnTheIncludePathIsNotMistakenForTheApi) {
     const TempDir dir;
     write_foo_test(dir);
@@ -323,6 +335,200 @@ TEST(GenImpl, YourOwnOutputOnTheIncludePathIsNotMistakenForTheApi) {
     const Outcome again = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "-I", "src"});
     EXPECT_EQ(again.code, 0) << again.err;
     EXPECT_EQ(again.err, "unchanged src/acme/foo.h\nunchanged src/acme/foo.cpp\n") << "found in the output directory: still a target";
+}
+
+// ---- --compile-commands ------------------------------------------------------------------------------------
+
+// The compiler ran in build/, so '-I../inc' is the inc/ next to it.
+const char* kDatabase = R"([{"directory":"build","command":"c++ -I../inc -c ../tests/foo_test.cpp","file":"../tests/foo_test.cpp"}])";
+
+void write_existing_foo(const TempDir& dir) {
+    write_file(dir.path() / "inc/acme/foo.h", "namespace acme { class Foo { public: explicit Foo(int); unsigned size() const; }; }\n");
+}
+
+TEST(GenImplCompileCommands, TheIncludeDirectoriesOfTheDatabaseFindTheHeadersThatExist) {
+    const TempDir dir;
+    write_existing_foo(dir);
+    write_foo_test(dir);
+    write_file(dir.path() / "build/compile_commands.json", kDatabase);
+
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "without"}).code, 0);
+    EXPECT_TRUE(exists(dir, "without/acme/foo.h")) << "nothing says where the header is: it is generated";
+
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "with", "--compile-commands", "build/compile_commands.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(exists(dir, "with/acme/foo.h")) << "found on the database's -I: it is the API";
+    EXPECT_FALSE(exists(dir, "with/acme/foo.cpp"));
+}
+
+TEST(GenImplCompileCommands, AnIncludeDirectoryGivenOnTheCommandLineStillWorksBesideIt) {
+    const TempDir dir;
+    write_existing_foo(dir);
+    write_foo_test(dir);
+    write_file(dir.path() / "build/compile_commands.json", R"([{"command":"c++ -Inowhere"}])");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "-I", "inc", "--compile-commands", "build/compile_commands.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_FALSE(exists(dir, "src/acme/foo.h"));
+}
+
+TEST(GenImplCompileCommands, AFileThatIsNotThereIsAnIoError) {
+    const TempDir dir;
+    write_foo_test(dir);
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--compile-commands", "build/missing.json"});
+    EXPECT_EQ(r.code, 3) << r.err;
+    EXPECT_TRUE(contains(r.err, "build/missing.json")) << r.err;
+    EXPECT_TRUE(contains(r.err, "[mt-io]")) << r.err;
+    EXPECT_FALSE(exists(dir, "src"));
+}
+
+TEST(GenImplCompileCommands, AFileThatIsNotADatabaseIsAnErrorAndNothingIsWritten) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "cc.json", "{}");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--compile-commands", "cc.json"});
+    EXPECT_EQ(r.code, 1) << r.err;
+    EXPECT_TRUE(contains(r.err, "cc.json: error: not a compilation database: a JSON array of entries is expected [mt-config]")) << r.err;
+    EXPECT_FALSE(exists(dir, "src"));
+
+    write_file(dir.path() / "cc.json", "[{");
+    const Outcome broken = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--compile-commands", "cc.json"});
+    EXPECT_EQ(broken.code, 1) << broken.err;
+    EXPECT_TRUE(contains(broken.err, "cc.json: error: invalid JSON: ")) << broken.err;
+}
+
+TEST(GenImplCompileCommands, AnEntryItCannotReadIsAWarningAndStrictMakesItAnError) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "cc.json", R"([{"directory":"."}])");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--compile-commands", "cc.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(r.err, "cc.json: warning: entry 1 of the compilation database has neither 'arguments' nor 'command'; it is skipped [mt-config]")) << r.err;
+    EXPECT_TRUE(exists(dir, "src/acme/foo.h"));
+
+    const Outcome strict = gen_impl(dir, {"tests/foo_test.cpp", "--out", "strict", "--strict", "--compile-commands", "cc.json"});
+    EXPECT_EQ(strict.code, 1) << strict.err;
+    EXPECT_FALSE(exists(dir, "strict"));
+}
+
+TEST(GenImplCompileCommands, VerboseSaysWhichDirectoriesCameFromTheFile) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "build/compile_commands.json", kDatabase);
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--verbose", "--compile-commands", "build/compile_commands.json"});
+    EXPECT_TRUE(contains(r.err, "mirrortest: -I from 'build/compile_commands.json': inc\n")) << r.err;
+
+    write_file(dir.path() / "empty.json", "[]");
+    const Outcome none = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src2", "--verbose", "--compile-commands", "empty.json"});
+    EXPECT_TRUE(contains(none.err, "mirrortest: -I from 'empty.json': none\n")) << none.err;
+
+    const Outcome quiet = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src3", "--compile-commands", "build/compile_commands.json"});
+    EXPECT_FALSE(contains(quiet.err, "-I from")) << "only with --verbose";
+}
+
+// ---- --stub-policy hook ------------------------------------------------------------------------------------
+
+TEST(GenImplHook, TheStubsCallTheHookAndItsHeaderIsWrittenWithTheOthers) {
+    const TempDir dir;
+    write_foo_test(dir);
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_EQ(r.err, "created src/acme/foo.h\ncreated src/acme/foo.cpp\ncreated src/mt_not_implemented.h\n");
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.cpp"), "#include \"mt_not_implemented.h\"\n"));
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.cpp"), "    mt_not_implemented(\"acme::Foo::size() const\");\n    return {};\n"));
+    EXPECT_FALSE(contains(read(dir, "src/acme/foo.cpp"), "throw"));
+    EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "inline void mt_not_implemented(const char* signature) {"));
+    EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "from tests/foo_test.cpp."));
+}
+
+TEST(GenImplHook, ASecondRunChangesNothingAndNeitherDoesMerge) {
+    const TempDir dir;
+    write_foo_test(dir);
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook"}).code, 0);
+    const Outcome again = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook"});
+    EXPECT_EQ(again.err, "unchanged src/acme/foo.h\nunchanged src/acme/foo.cpp\nunchanged src/mt_not_implemented.h\n");
+    EXPECT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook", "--check"}).code, 0);
+    const Outcome merged = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook", "--overwrite", "merge"});
+    EXPECT_EQ(merged.code, 0) << merged.err;
+    EXPECT_TRUE(contains(merged.err, "unchanged src/mt_not_implemented.h\n")) << merged.err;
+}
+
+TEST(GenImplHook, TheHeaderGoesWhereTheHeadersGoAndTheSourceFindsItThere) {
+    const TempDir dir;
+    write_foo_test(dir);
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out-include", "inc", "--out-src", "src", "--stub-policy", "hook"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(exists(dir, "inc/mt_not_implemented.h"));
+    EXPECT_FALSE(exists(dir, "src/mt_not_implemented.h"));
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.cpp"), "#include \"mt_not_implemented.h\"\n"));
+}
+
+TEST(GenImplHook, NoOtherPolicyWritesIt) {
+    const TempDir dir;
+    write_foo_test(dir);
+    for (const char* policy : {"throw", "abort", "default"}) {
+        const std::string out = std::string("out_") + policy;
+        ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", out, "--stub-policy", policy}).code, 0) << policy;
+        EXPECT_FALSE(exists(dir, out + "/mt_not_implemented.h")) << policy;
+        EXPECT_FALSE(contains(read(dir, out + "/acme/foo.cpp"), "mt_not_implemented")) << policy;
+    }
+}
+
+TEST(GenImplHook, AYamlConfigurationDrivesTheRunLikeTheJsonOne) {
+    if (!core::yaml_supported()) GTEST_SKIP() << "built without YAML";
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "mt.yaml", "stub_policy: hook\nno_exceptions: true\n");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--config", "mt.yaml"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.cpp"), "mt_not_implemented(\"acme::Foo::size() const\");"));
+    EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "std::abort();"));
+}
+
+TEST(GenImplHook, TheConfigurationFileCanChooseItAndNoExceptionsChangesTheDefaultHandlerOnly) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "mt.json", R"({"stub_policy":"hook","no_exceptions":true})");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--config", "mt.json"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(read(dir, "src/acme/foo.cpp"), "mt_not_implemented(\"acme::Foo::size() const\");"));
+    EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "std::abort();"));
+    EXPECT_FALSE(contains(read(dir, "src/mt_not_implemented.h"), "throw"));
+}
+
+TEST(GenImplHook, ATestThatInstallsAHandlerIncludesTheHeaderAndCallsItsFunctionsWithoutGeneratingThem) {
+    const TempDir dir;
+    write_file(dir.path() / "tests/foo_test.cpp",
+               "#include <gtest/gtest.h>\n"
+               "#include \"acme/foo.h\"\n"
+               "#include \"mt_not_implemented.h\"\n"
+               "\n"
+               "TEST(FooTest, StartsWithThreeItems) {\n"
+               "    mt_not_implemented_handler previous = mt_set_not_implemented_handler(nullptr);\n"
+               "    mt_set_not_implemented_handler(previous);\n"
+               "    const acme::Foo foo(3);\n"
+               "    EXPECT_EQ(foo.size(), 3u);\n"
+               "}\n");
+    for (int run = 0; run < 2; ++run) {   // the second one finds the header in the output directory
+        const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook"});
+        EXPECT_EQ(r.code, 0) << r.err;
+        EXPECT_FALSE(contains(r.err, "warning")) << r.err;
+        EXPECT_FALSE(contains(read(dir, "src/acme/foo.h"), "mt_")) << "nothing of it is generated";
+        EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "inline void mt_not_implemented(const char* signature) {"));
+    }
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "other", "--stub-policy", "throw"}).code, 0);
+    EXPECT_FALSE(exists(dir, "other/mt_not_implemented.h")) << "without the policy there is no such header; it is not an empty one either";
+}
+
+TEST(GenImplHook, AHookHeaderThatDiffersGetsANewFileBesideItLikeAnyOther) {
+    const TempDir dir;
+    write_foo_test(dir);
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook"}).code, 0);
+    const std::string before = read(dir, "src/mt_not_implemented.h");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook", "--no-exceptions"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(contains(r.err, "src/mt_not_implemented.h.new")) << r.err;
+    EXPECT_EQ(read(dir, "src/mt_not_implemented.h"), before);
+    EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h.new"), "std::abort();"));
 }
 
 TEST(GenImpl, FrameworkHeadersAreNeverGenerated) {

@@ -61,7 +61,7 @@ TEST(LiteralsInteger, DecimalThatFitsAnInt) {
 }
 
 TEST(LiteralsInteger, DecimalThatDoesNotFitIsLongLongBecauseLongDependsOnTheTarget) {
-    // long is 32 bits on ARM32 and 64 on LP64: never guessed from a magnitude.
+    // long is 32 bits on ILP32 and LLP64 and 64 on LP64: never guessed from a magnitude.
     check_integers({{"2147483648", "long long", range},
                     {"4294967296", "long long", range},
                     {"9223372036854775807", "long long", range},
@@ -128,7 +128,7 @@ TEST(LiteralsInteger, UnsignedSuffix) {
 
 TEST(LiteralsInteger, LongSuffixIsTheOnlyWayToGetALong) {
     check_integers({{"3l", "long", none}, {"3L", "long", none}, {"2147483647l", "long", none},
-                    // Fine on x86-64, but a 32-bit long on ARM32 cannot hold it.
+                    // Fine where long has 64 bits, but a 32-bit long cannot hold it.
                     {"5000000000l", "long", range}, {"2147483648l", "long", range},
                     {"3ul", "unsigned long", none}, {"3lu", "unsigned long", none},
                     {"3UL", "unsigned long", none}, {"4294967295ul", "unsigned long", none},

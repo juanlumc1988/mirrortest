@@ -194,6 +194,57 @@ Type type_from_spelling(std::string_view spelling) {
     return t;
 }
 
+std::string collapse_spaces(std::string_view text) {
+    std::string out;
+    bool pending = false;
+    for (char c : text) {
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            pending = !out.empty();
+        } else {
+            if (pending) out += ' ';
+            pending = false;
+            out += c;
+        }
+    }
+    return out;
+}
+
+bool is_operator_name(const std::string& name) {
+    constexpr std::string_view keyword = "operator";
+    if (name.size() <= keyword.size() || name.compare(0, keyword.size(), keyword) != 0) {
+        return false;
+    }
+    const char next = name[keyword.size()];
+    const bool continues_identifier = (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+                                      (next >= '0' && next <= '9') || next == '_';
+    return !continues_identifier;
+}
+
+std::string normalize_operator_name(const std::string& name) {
+    if (!is_operator_name(name)) {
+        return name;
+    }
+    const std::string rest = collapse_spaces(std::string_view(name).substr(8));
+    if (rest.empty()) {
+        return name;
+    }
+    const char first = rest[0];
+    const bool word = (first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_';
+    if (word) {
+        std::string tidy;
+        for (std::size_t i = 0; i < rest.size(); ++i) {
+            if (rest[i] == ' ' && ((i + 1 < rest.size() && (rest[i + 1] == '[' || rest[i + 1] == ']')) || (i > 0 && rest[i - 1] == '['))) continue;
+            tidy += rest[i];
+        }
+        return "operator " + tidy;
+    }
+    std::string symbol;
+    for (char c : rest) {
+        if (c != ' ') symbol += c;
+    }
+    return "operator" + symbol;
+}
+
 std::string qualified_name(const std::vector<std::string>& ns, std::string_view name) {
     std::string out;
     for (const std::string& part : ns) {

@@ -27,8 +27,10 @@
 
 #include "mirrortest/core/config.h"
 #include "mirrortest/core/diagnostics.h"
+#include "mirrortest/core/source.h"
 #include "mirrortest/core/writer.h"
 #include "mirrortest/ir/model.h"
+#include "mirrortest/syntax/preprocess.h"
 
 namespace mt::cli {
 
@@ -63,6 +65,7 @@ struct Options {
     QtMain                       qt_main = QtMain::GuiLess;
 
     std::vector<std::string> include_dirs;    // -I, in order
+    std::optional<std::string> compile_commands;   // --compile-commands: its -I come after those
     core::OverwriteMode      overwrite = core::OverwriteMode::Never;
     bool dry_run = false;
     bool check   = false;
@@ -105,6 +108,19 @@ int finish_run(const Options& options, const Env& env, core::Diagnostics& diagno
 
 // The exit code for the errors alone: 0 if there are none.
 int exit_code_for(const core::Diagnostics& diagnostics);
+
+// The options a command runs with. With --compile-commands, reads that file and
+// appends the include directories it names to `include_dirs`, after the ones given
+// with -I, so that those are searched first. A file that cannot be read, or is not a
+// compilation database, is an error in `diagnostics` and leaves the options as they were.
+// Without the option, `options` itself.
+Options with_compile_commands(const Options& options, const Env& env, core::Diagnostics& diagnostics);
+
+// Reads a header with the frontend the configuration chooses (`frontend`, --frontend): tree-sitter by
+// default, or libclang, which is given the standard of `std`, the -I of the run made absolute, and the
+// `clang_args` of the configuration. `include_path` is what an #include of it would say.
+ir::Model read_header_with(const Options& options, const Env& env, const core::SourceFile& source, const std::string& include_path,
+                           const syntax::MacroTable& macros, core::Diagnostics& diagnostics);
 
 int run_gen_impl(const Options& options, const Env& env);
 int run_gen_tests(const Options& options, const Env& env);

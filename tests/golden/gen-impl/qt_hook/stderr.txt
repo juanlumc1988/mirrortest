@@ -1,0 +1,5 @@
+in/tst_counter.cpp:30:13: warning: the result of 'acme::Counter::increment' is never used, so the method is assumed to return void [mt-unused-result]
+in/tst_counter.cpp:32:26: warning: the result of 'acme::Counter::reset' is never used, so the method is assumed to return void [mt-unused-result]
+created out/acme/counter.h
+created out/acme/counter.cpp
+created out/mt_not_implemented.h

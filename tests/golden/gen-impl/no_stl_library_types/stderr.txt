@@ -1,0 +1,4 @@
+in/inventory_test.cpp: warning: 'inventory.h' includes <string> for 'std::string', but no_stl says the project does not use the standard library [mt-no-stl]
+in/inventory_test.cpp: warning: 'inventory.h' includes <vector> for 'std::vector', but no_stl says the project does not use the standard library [mt-no-stl]
+created out/inventory.h
+created out/inventory.cpp

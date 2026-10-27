@@ -1,0 +1,7 @@
+[
+  {
+    "directory": ".",
+    "command": "c++ -I in/include -c in/main.cpp",
+    "file": "in/main.cpp"
+  }
+]

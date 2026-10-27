@@ -5,6 +5,10 @@ templates. The defaults are compiled into the binary; `--templates DIR`
 replaces any of them with a file of your own, for example to match a house
 style for file headers or section comments.
 
+The header the `hook` stub policy needs (`mt_not_implemented.h`) is not a template: it is
+plain text with nothing to restyle but the file header, which it takes from the
+configuration.
+
 A template only *places* text. Everything that needs a decision is computed by
 the tool and handed over already formatted: how a signature is spelt, which
 includes a type needs, what a stub's body is. That is deliberate. Overriding a

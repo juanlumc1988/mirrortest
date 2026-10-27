@@ -36,13 +36,16 @@ const Choice<GuardStyle> kGuards[] = {
     {GuardStyle::Ifndef, "ifndef"}, {GuardStyle::PragmaOnce, "pragma-once"},
 };
 const Choice<StubPolicy> kStubPolicies[] = {
-    {StubPolicy::Throw, "throw"}, {StubPolicy::Abort, "abort"}, {StubPolicy::Default, "default"},
+    {StubPolicy::Throw, "throw"}, {StubPolicy::Abort, "abort"}, {StubPolicy::Default, "default"}, {StubPolicy::Hook, "hook"},
 };
 const Choice<Placeholder> kPlaceholders[] = {
     {Placeholder::Fail, "fail"}, {Placeholder::Skip, "skip"},
 };
 const Choice<AutoPolicy> kAutoPolicies[] = {
     {AutoPolicy::Error, "error"}, {AutoPolicy::Todo, "todo"},
+};
+const Choice<Frontend> kFrontends[] = {
+    {Frontend::TreeSitter, "tree-sitter"}, {Frontend::Libclang, "libclang"},
 };
 
 template <class E, std::size_t N>
@@ -492,11 +495,14 @@ void Reader::read_root(const json& root, Config& c) {
         else if (key == "file_header")                 read_file_header(v, c.file_header);
         else if (key == "stub_policy")                 read_choice(v, key, kStubPolicies, c.stub_policy);
         else if (key == "no_exceptions")               read_bool(v, key, c.no_exceptions);
+        else if (key == "no_stl")                      read_bool(v, key, c.no_stl);
         else if (key == "no_rtti")                     read_bool(v, key, c.no_rtti);
         else if (key == "placeholder")                 read_choice(v, key, kPlaceholders, c.placeholder);
         else if (key == "auto_policy")                 read_choice(v, key, kAutoPolicies, c.auto_policy);
         else if (key == "placeholder_type")            read_type(v, key, c.placeholder_type);
         else if (key == "string_literal_param")        read_type(v, key, c.string_literal_param);
+        else if (key == "frontend")                    read_choice(v, key, kFrontends, c.frontend);
+        else if (key == "clang_args")                  read_list(v, key, c.clang_args, "a compiler argument", [](const std::string& s) { return !s.empty(); });
         else if (key == "exception_base") {
             // Empty is the default said aloud: no exception class is generated.
             if (v.is_string() && v.get<std::string>().empty()) c.exception_base.clear();
@@ -530,12 +536,14 @@ const char* to_string(GuardStyle value)     { return name_of(kGuards, value); }
 const char* to_string(StubPolicy value)     { return name_of(kStubPolicies, value); }
 const char* to_string(Placeholder value)    { return name_of(kPlaceholders, value); }
 const char* to_string(AutoPolicy value)     { return name_of(kAutoPolicies, value); }
+const char* to_string(Frontend value)       { return name_of(kFrontends, value); }
 
 std::optional<CxxStd> parse_std(std::string_view text) { return find_choice(kStds, text); }
 std::optional<GuardStyle> parse_guard_style(std::string_view text) { return find_choice(kGuards, text); }
 std::optional<StubPolicy> parse_stub_policy(std::string_view text) { return find_choice(kStubPolicies, text); }
 std::optional<Placeholder> parse_placeholder(std::string_view text) { return find_choice(kPlaceholders, text); }
 std::optional<AutoPolicy> parse_auto_policy(std::string_view text) { return find_choice(kAutoPolicies, text); }
+std::optional<Frontend> parse_frontend(std::string_view text) { return find_choice(kFrontends, text); }
 
 template <class E, std::size_t N>
 std::vector<std::string> names_of(const Choice<E> (&table)[N]) {
@@ -551,6 +559,7 @@ std::vector<std::string> guard_names() { return names_of(kGuards); }
 std::vector<std::string> stub_policy_names() { return names_of(kStubPolicies); }
 std::vector<std::string> placeholder_names() { return names_of(kPlaceholders); }
 std::vector<std::string> auto_policy_names() { return names_of(kAutoPolicies); }
+std::vector<std::string> frontend_names() { return names_of(kFrontends); }
 
 int to_number(CxxStd value) {
     switch (value) {
@@ -564,7 +573,7 @@ int to_number(CxxStd value) {
 }
 
 StubPolicy effective_stub_policy(const Config& config) {
-    if (config.no_exceptions && config.stub_policy == StubPolicy::Throw) {
+    if ((config.no_exceptions || config.no_stl) && config.stub_policy == StubPolicy::Throw) {
         return StubPolicy::Abort;
     }
     return config.stub_policy;
@@ -593,11 +602,27 @@ bool apply_config_json(Config& config, std::string_view text, const std::string&
     return true;
 }
 
+namespace {
+
+bool ends_with_ignoring_case(const std::string& text, const std::string& tail) {
+    if (text.size() < tail.size()) return false;
+    for (std::size_t i = 0; i < tail.size(); ++i) {
+        const char c = text[text.size() - tail.size() + i];
+        if ((c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c) != tail[i]) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
 bool load_config_file(Config& config, const std::string& path, Diagnostics& diagnostics,
                       const std::filesystem::path& base_dir) {
     const std::optional<SourceFile> file = read_source(path, diagnostics, base_dir);
     if (!file) {
         return false;
+    }
+    if (ends_with_ignoring_case(path, ".yaml") || ends_with_ignoring_case(path, ".yml")) {
+        return apply_config_yaml(config, file->text, path, diagnostics);
     }
     return apply_config_json(config, file->text, path, diagnostics);
 }

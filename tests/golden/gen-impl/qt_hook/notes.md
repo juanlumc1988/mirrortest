@@ -1,0 +1,1 @@
+The Qt Test of `qt_basic` with `--stub-policy hook`. With stubs that throw, QTest reports the first failure and ends the program (R26); the round trip installs a handler that calls `QTest::qFail` and returns, and requires every slot to run and fail in one program.

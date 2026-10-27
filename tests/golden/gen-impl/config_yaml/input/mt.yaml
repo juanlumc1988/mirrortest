@@ -1,0 +1,9 @@
+# The house style, as a person would write it.
+default_namespace: acme
+guard: pragma-once
+file_header: |
+  // Copyright (c) ACME. All rights reserved.
+stub_policy: abort
+naming:
+  header: "{stem}.hpp"
+  source: "{stem}.cc"

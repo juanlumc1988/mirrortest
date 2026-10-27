@@ -18,6 +18,8 @@
 //       stderr.txt       expected stderr       (absent = must be empty)
 //       exit_code.txt    expected exit code    (absent = 0)
 //       notes.md         free text: why the case exists. Ignored.
+//       requires.txt     optional: the optional features of the build the case needs, one per line
+//                        (yaml, libclang). Where one is missing the case is skipped, not failed.
 //
 // The command runs in-process with a fresh temporary directory as its working
 // directory, so every path it prints is the relative one from args.txt and the

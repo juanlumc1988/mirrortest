@@ -303,6 +303,50 @@ TEST(CxxFormatStub, AbortNeedsCstdlib) {
     }
 }
 
+TEST(CxxFormatStub, HookCallsTheHookWithTheSignatureAndNeedsItsHeader) {
+    const backend::Stub s = backend::make_stub(core::StubPolicy::Hook, kVoid, false, true, "acme::Foo::run()");
+    ASSERT_EQ(s.body.size(), 1u);
+    EXPECT_EQ(s.body[0], "mt_not_implemented(\"acme::Foo::run()\");");
+    EXPECT_EQ(s.local_include, "mt_not_implemented.h");
+    EXPECT_EQ(s.include, "");
+    EXPECT_FALSE(s.fell_back);
+}
+
+TEST(CxxFormatStub, HookThenReturnsWhatDefaultReturnsBecauseTheHookMayReturn) {
+    const backend::Stub s = backend::make_stub(core::StubPolicy::Hook, kInt, false, true, "f()");
+    EXPECT_EQ(s.body, (std::vector<std::string>{"mt_not_implemented(\"f()\");", "return {};"}));
+    EXPECT_EQ(s.include, "");
+    EXPECT_FALSE(s.fell_back);
+}
+
+TEST(CxxFormatStub, HookAbortsAfterTheHookWhereThereIsNoEmptyValueToReturn) {
+    // A type that `{}` cannot build (told so by the caller), and a reference, which is never returned as `{}`.
+    const backend::Stub unbuildable = backend::make_stub(core::StubPolicy::Hook, kInt, false, false, "f()");
+    const backend::Stub reference = backend::make_stub(core::StubPolicy::Hook, kRef, false, true, "f()");
+    for (const backend::Stub* s : {&unbuildable, &reference}) {
+        EXPECT_EQ(s->body, (std::vector<std::string>{"mt_not_implemented(\"f()\");", "std::abort();"}));
+        EXPECT_EQ(s->include, "cstdlib");
+        EXPECT_EQ(s->local_include, "mt_not_implemented.h");
+        EXPECT_TRUE(s->fell_back);
+    }
+}
+
+TEST(CxxFormatStub, HookEscapesTheSignatureAndLeavesConstructorsAndDestructorsEmpty) {
+    const backend::Stub s = backend::make_stub(core::StubPolicy::Hook, kVoid, false, true, "f(char \"x\" \\)");
+    ASSERT_EQ(s.body.size(), 1u);
+    EXPECT_EQ(s.body[0], "mt_not_implemented(\"f(char \\\"x\\\" \\\\)\");");
+
+    const backend::Stub trivial = backend::make_stub(core::StubPolicy::Hook, kVoid, true, true, "Foo::Foo()");
+    EXPECT_TRUE(trivial.body.empty());
+    EXPECT_EQ(trivial.local_include, "") << "an empty body needs no header";
+}
+
+TEST(CxxFormatStub, OnlyHookAsksForALocalInclude) {
+    for (core::StubPolicy p : {core::StubPolicy::Throw, core::StubPolicy::Abort, core::StubPolicy::Default}) {
+        EXPECT_EQ(backend::make_stub(p, kInt, false, true, "f()").local_include, "");
+    }
+}
+
 TEST(CxxFormatStub, DefaultReturnsBracesAndNeedsNoInclude) {
     const backend::Stub s = backend::make_stub(core::StubPolicy::Default, kInt, false, true, "f()");
     ASSERT_EQ(s.body.size(), 1u);

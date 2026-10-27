@@ -26,9 +26,9 @@ README per version).
 | R5 | §6 | `QCOMPARE` requires identical types | *Verified*: Qt 5.15 and Qt 6.4 have `template<T1,T2> qCompare(const T1&, const T2&)` via `==`. The requirement belonged to old versions. | The exact type of the literal is still inferred (avoids `-Wsign-compare` and keeps parity with GTest), but it is no longer a compilation requirement. |
 | R6 | §6 | Exceptions: use `QVERIFY_EXCEPTION_THROWN` | *Verified*: deprecated since Qt 6.3 in favour of `QVERIFY_THROWS_EXCEPTION(Type, expr)` — **reversed argument order** — which does not exist in Qt 5. | The frontend recognises both; the backend chooses according to `--qt 5\|6` (§9.6). |
 | R7 | §7 | Output compatible with `--std=c++11` | *Verified*: GoogleTest 1.12.x is the last one supporting C++11; 1.13–1.16 require C++14; 1.17 requires C++17. Tests generated for C++11 only compile with GTest ≤ 1.12. | Documented. GTest 1.16.0 is pinned so that C++14 output can be tested. The stub code (no GTest) is tested in C++11. |
-| R8 | §3 | Decide the parser with a spike | *Verified* (spike): tree-sitter-cpp 0.23.4 parses GTest without errors. QTest and Qt headers do **not**: `Q_OBJECT`, `slots`, `signals`, `Q_PROPERTY(…)` and export macros generate `ERROR` nodes and declarations get lost (11 errors in a typical header). With those macros replaced by spaces: 0 errors. | tree-sitter in both directions + a *blanking* preprocessing step that preserves offsets (§5.2). libclang stays as a possible future optional frontend. **[confirmed]** |
-| R9 | §11 | — | tree-sitter does not preprocess: it sees **all** branches of `#if/#else`. Embedded code with `#ifdef TARGET_ARM` can produce duplicate or contradictory declarations. | All branches are visited; exact duplicates are merged; different variants are kept with an `mt-conditional` note (§6.5). |
-| R10 | §4 | Types of integer literals | The type of a large integer depends on the data model: `long` is 32 bits on ARM32 (ILP32) and 64 on x86-64 (LP64). The generator runs on the host but the code is meant for ARM. | `long` is never deduced from magnitude, only from a suffix. Without a suffix and outside `int` → `long long` + warning. Suffix `l` with a value above 32 bits → ARM32 warning (§7.5). |
+| R8 | §3 | Decide the parser with a spike | *Verified* (spike): tree-sitter-cpp 0.23.4 parses GTest without errors. QTest and Qt headers do **not**: `Q_OBJECT`, `slots`, `signals`, `Q_PROPERTY(…)` and export macros generate `ERROR` nodes and declarations get lost (11 errors in a typical header). With those macros replaced by spaces: 0 errors. | tree-sitter in both directions + a *blanking* preprocessing step that preserves offsets (§5.2). libclang stays as an optional frontend for headers (plan 8.5, §6.7). **[confirmed]** |
+| R9 | §11 | — | tree-sitter does not preprocess: it sees **all** branches of `#if/#else`. Code with per-platform `#ifdef`s can produce duplicate or contradictory declarations. | All branches are visited; exact duplicates are merged; different variants are kept with an `mt-conditional` note (§6.5). |
+| R10 | §4 | Types of integer literals | The type of a large integer depends on the data model: `long` is 32 bits on 32-bit targets (ILP32) and on 64-bit Windows (LLP64) and 64 on 64-bit Linux (LP64). The generator runs on the host but the code may be built for another data model. | `long` is never deduced from magnitude, only from a suffix. Without a suffix and outside `int` → `long long` + warning. Suffix `l` with a value above 32 bits → a warning that a 32-bit `long` cannot hold it (§7.5). |
 | R11 | §4 | — | *Verified*: tree-sitter lexes `-1` as a single `number_literal`, not as a unary minus. | The literal classifier accepts a sign. |
 | R12 | §4 | `Foo foo(args);` | `Foo f();` is the *most vexing parse*: it declares a function. *Verified*: tree-sitter gives it as a `function_declarator`. | `mt-vexing-parse` warning; no constructor is inferred. |
 | R13 | §4 | `Foo::bar()` | *Verified*: `Foo::create()` and `ns::create()` are syntactically identical (`namespace_identifier`). | Explicit scope-resolution rule (§7.7). |
@@ -36,15 +36,15 @@ README per version).
 | R15 | §4, §12 | "Smart" merge in phase 6, yet "it is the most important requirement" | Contradiction: without merge, the TDD loop (new test → regenerate) always ends in a manual `.new`. | Merge by marked regions in phase 3, right after the gen-impl MVP (§11). **[confirmed]** |
 | R16 | §11 (merge) | — | Comparing by full signature would add spurious overloads when the user changes `int` → `std::uint32_t`; and the return type does not distinguish overloads. | Merge key = (name, arity); by types only for overloads of one arity that the run wants; differences in types or `const` → warning, never a new member (§11.2). |
 | R17 | §2 | inja templates editable "without recompiling" | If they are loaded from disk, the binary depends on an installation path; and putting logic in templates leaves it untested. | Default templates **embedded** in the binary + `--templates DIR` to override. The logic (signatures, TODOs, default values) lives in C++ and reaches the template already formatted (§15). |
-| R18 | §10 | `tool.yaml` | YAML adds yaml-cpp; nlohmann/json is already mandatory because of inja. | Configuration in JSON for the MVP; the loader is isolated so that YAML can be added later. **[confirmed]** |
+| R18 | §10 | `tool.yaml` | YAML adds yaml-cpp; nlohmann/json is already mandatory because of inja. | Configuration in JSON for the MVP; the loader is isolated so that YAML can be added later. **[confirmed]** Added in plan 8.4 as `--config tool.yaml` (§14), behind `MT_WITH_YAML`; JSON stays the reference. |
 | R19 | §5 | Placeholder arguments in the generated tests | `{}` is ambiguous between `f(int)` and `f(double)` and does not bind to `T&`. Besides, **running** legacy methods with zero values can hang or touch hardware and take down the whole test binary. | Named locals of exact type; the placeholder (`FAIL()`/`QFAIL`) goes **first**: what follows compiles (it checks the API) but does not run (§9.2). |
 | R20 | §5 | Tests on a `const` object | — | `const Foo& const_sut = sut;` for `const` methods; `static_assert(noexcept(…))` for `noexcept` (§9.2). |
 | R21 | §4 | Free functions | Calls to the project's own macros (`MY_EXPECT_OK(x)`) or to libc (`strlen`) would be taken for functions under test. | ALL_CAPS identifiers = macros; a list of known C/standard functions + `external_functions` in the config (§7.8). |
-| R22 | §8 | Stubs | With `-Werror -Wunused-parameter` (common in embedded) the stubs do not compile. | Commented-out parameter names in the definitions: `int Foo::f(int /*value*/)`. |
+| R22 | §8 | Stubs | With `-Werror -Wunused-parameter` (common in strict projects) the stubs do not compile. | Commented-out parameter names in the definitions: `int Foo::f(int /*value*/)`. |
 | R23 | §2, §8 | Deterministic | Not made concrete. | No timestamps or absolute paths; stable order (vectors, never `unordered_*` in emission); LF; final newline; no trailing spaces. The goldens verify it (§16). |
 | R24 | §7 | Dependencies through `FetchContent` with tags | Tags can move. *Verified* in this environment: GitHub's `/archive/` tarballs are blocked by the proxy; `git clone` works. | Shallow git by tag **and** verification of the commit SHA after the download (configure fails on mismatch). Offline mode with `FETCHCONTENT_SOURCE_DIR_*` (§17). *Implemented and tested.* |
 | R25 | §6 | `GTEST_SKIP()`, `INSTANTIATE_TEST_SUITE_P` | They exist since GTest 1.10; before that, `INSTANTIATE_TEST_CASE_P`. | The frontend recognises both names; the backend assumes GTest ≥ 1.10. |
-| R26 | §4 | Stubs with `throw` give the *red* phase | *Verified* (GTest 1.16, Qt 6.4.2): GTest catches the exception **per test** and carries on (all red). QTest reports `FAIL! Caught unhandled exception` and **rethrows** → `std::terminate`: the following slots do not run. It is still red, but only the first failure is seen. | `throw` is kept (red guaranteed in both). Documented for QTest (one slot can be run on its own: `tst_foo slotName`). Future improvement: a `hook` policy (§8.3). The QTest round trip checks what really happens (§16). |
+| R26 | §4 | Stubs with `throw` give the *red* phase | *Verified* (GTest 1.16, Qt 6.4.2): GTest catches the exception **per test** and carries on (all red). QTest reports `FAIL! Caught unhandled exception` and **rethrows** → `std::terminate`: the following slots do not run. It is still red, but only the first failure is seen. | `throw` is kept (red guaranteed in both). Documented for QTest (one slot can be run on its own: `tst_foo slotName`). The `hook` policy (§8.3, plan 8.3) lets a handler fail the slot and return, so that QTest goes on. The QTest round trips check what really happens (§16). |
 | R27 | §8 | — | *Verified*: with Clang, `-std=c++14 -Wpedantic -Werror`, GTest 1.16's own `TEST` macro fails (`[[maybe_unused]]` is a C++17 extension). Without `-Wpedantic`, or in C++17, it compiles. | In the round trip, C++14 test TUs are compiled with `-Wall -Wextra -Werror` (without `-Wpedantic`); the stubs (without GTest) do get `-Wpedantic`. |
 
 ---
@@ -53,7 +53,7 @@ README per version).
 
 | # | Decision | Reason |
 |---|---|---|
-| D1 | **tree-sitter in both directions** (MVP). The frontend interface is prepared for an optional libclang frontend (`MT_WITH_LIBCLANG`, future). **[confirmed]** | A single parser dependency, pinned and needing no toolchain; it tolerates code that does not compile; the same type-extraction utilities in both directions. For *skeletons* the syntax is enough: the header explicitly declares what is needed. libclang would require Qt and project include paths just to read signatures. |
+| D1 | **tree-sitter in both directions** (MVP). The frontend interface is prepared for an optional libclang frontend (`MT_WITH_LIBCLANG`, §6.7, plan 8.5: it reads headers when asked, tree-sitter stays the default). **[confirmed]** | A single parser dependency, pinned and needing no toolchain; it tolerates code that does not compile; the same type-extraction utilities in both directions. For *skeletons* the syntax is enough: the header explicitly declares what is needed. libclang would require Qt and project include paths just to read signatures. |
 | D2 | Binary name `mirrortest`; C++ namespace `mt`; annotation prefix `// @mt:`; markers `// <mt:begin X>` / `// <mt:end X>`; TODOs `TODO(mt):`; diagnostic codes `mt-*`. **[confirmed]** | Consistent with the repo; `@gen:` is too generic and could collide. |
 | D3 | Generator in C++17. Output: the **same** code for every `--std`, valid from C++11, except what is listed in §13.3. | Fewer variants = less surface for error. `--std` only changes what really depends on the standard. |
 | D4 | Default stub policy `throw std::logic_error`; `--no-exceptions` ⇒ `std::abort()`. | A *red* phase guaranteed in GTest and QTest (both report the failure; QTest aborts after the first, R26), and without exceptions too. |
@@ -62,7 +62,7 @@ README per version).
 | D7 | Default write mode `--overwrite=never`: if the file exists and differs, `<file>.new` is written and a warning is issued; if it is identical, it is not touched. | Non-destructive and idempotent (AT §4). |
 | D8 | All or nothing: if there is any error diagnostic, no file is written. Atomic writing (temporary file + `rename`). | Never leave a half-generated tree. |
 | D9 | Configuration: defaults < `--config file.json` < command line. No implicit discovery of configuration files. Unknown keys = error. | Predictable; typos in the config fail instead of being ignored. |
-| D10 | `#ifndef` guards by default (`"guard": "pragma-once"` optional). | Portability and the usual convention in embedded. |
+| D10 | `#ifndef` guards by default (`"guard": "pragma-once"` optional). | Portability and the most widespread convention. |
 | D11 | All generated text (comments, `TODO(mt)`, stub messages and diagnostics) in English. All documentation — design, plan, README, user documentation — and code comments in English as well. | Consistent with the owner's other repositories; the generated code ends up in third-party projects. |
 
 ---
@@ -381,6 +381,55 @@ then a note "and N more parse errors") is an `mt-parse` warning with its
 position, and what surrounds it is read: a header that almost parses is far more
 useful than none.
 
+### 6.7 The libclang frontend (plan 8.5)
+
+`--frontend libclang` (or `"frontend": "libclang"`) reads the **headers** with libclang instead of
+tree-sitter: the input of `gen-tests`, and the headers a test includes that `gen-impl` must not
+generate again. A test file is always read by tree-sitter (D1: it is code that may not compile yet). The
+option `MT_WITH_LIBCLANG` (off by default) builds it; it needs the system's libclang
+(`cmake/MtLibclang.cmake`, hints for Debian/Ubuntu, Homebrew and the usual LLVM prefixes, or
+`MT_LIBCLANG_INCLUDE_DIR` and `MT_LIBCLANG_LIBRARY`), because libclang has to be the compiler's own to find its
+headers. Without it, `--frontend libclang` is an error that says how to build it, never a silent fallback.
+
+What it is for: a header is code that compiles, and a compiler knows what a syntax tree cannot.
+
+- **Only the branch that builds** is read (`-DNAME` through `--clang-arg`), where tree-sitter keeps every
+  branch (§6.5); and what a macro **declares** is read (`GETTER(int, size)`), an export macro needs no
+  `ignore_macros`. A pointer to member, a struct given its name by a `typedef`, a struct defined in the
+  declaration of a member, are read as they are.
+- **Types as written.** The model's rule is that the spelling is what the user wrote, so the types of
+  parameters, fields and returns are read from the declaration's tokens, not from libclang's printing of the
+  type, which would make `unsigned` into `unsigned int`, qualify names as the libclang at hand does and say `int`
+  for a type it does not know. (Only a declaration made by a macro, or one that starts with a macro invocation such
+  as an export macro, takes libclang's spelling: the text of the first has none of its own, and for the second
+  libclang tokenises from the attribute in the macro's definition, so the tokens are not the declaration's.) With that, the two readers make **the same model**, positions included, of what
+  both can read: that is a test (`tests/unit/test_clang_frontend.cpp`) over a battery of headers, and the
+  `GoldenWithLibclang` run of every `gen-tests` and `gen-impl` golden case (all but `ifdef_branches`, which
+  differs on purpose). Qualifiers that are keywords (`virtual`, `explicit`, `override`, `noexcept`, `= delete`)
+  are read from the tokens as well, so "declared virtual" means written `virtual`. Two things of libclang's
+  own are corrected for. The extent it gives a function with `-> decltype(...)` (the usual SFINAE return) ends at
+  the function's name, leaving out the return type, the parameter list and every qualifier, so a declaration whose
+  extent has no parameter list is read on, from the same start, to the `;` or `{` that ends it. And the children it
+  lists for a function that returns a function pointer (`void (*get(int a))(int b)`) include the pointer's
+  parameters, so the function's own are asked of libclang by number (a function template has no number to ask
+  for, and keeps its children).
+- **Qt.** The same blanking pass (`syntax::preprocess`) gives libclang the text without `Q_OBJECT`,
+  `signals:` and `slots`, and the markers it leaves are applied by offset exactly as for the other reader, so the
+  Qt roles are the same and Qt's headers are not needed for them. They are needed to *resolve* `QObject` and the
+  value classes: without them those are unknown types, reported as below. The bases of a class are read from the
+  base clause as written, because libclang drops a base it cannot resolve.
+- **What it cannot read.** A type libclang does not know (`Mystery`, a missing `#include`) is an
+  `mt-parse` **warning** at its place — "libclang: unknown type name 'Mystery'; declarations around it
+  may be missing or have wrong types", at most ten and then a note with the count — and the declaration
+  is still read with the type as written. A file libclang cannot open at all is an `mt-parse` error and
+  an empty model.
+- **How it is called** (`cli::read_header_with`): `-x c++`, `-std=` of `--std` (`c++2b` for 23), the `-I`
+  of the run (and those of `--compile-commands`) made absolute against the run's directory, then the
+  `clang_args` of the configuration and the `--clang-arg`s of the command line, in that order. The header is given
+  from memory under its absolute path, so an `#include "next_to_it.h"` is found whatever the process's directory is.
+  Function bodies are skipped. Specialisations, function templates, member templates and inherited constructors
+  are reported as `mt-unsupported` in the words of the other reader.
+
 ---
 
 ## 7. Tests frontend (tests → `ir::Model`)
@@ -534,10 +583,10 @@ test.
 | Literal | Type |
 |---|---|
 | unsuffixed integer that fits in 32 signed bits | `int` |
-| unsuffixed decimal integer outside `int` | `long long` + `mt-literal-range` warning (on ARM32 and x86-64 the real type differs) |
+| unsuffixed decimal integer outside `int` | `long long` + `mt-literal-range` warning (on a 32-bit and on a 64-bit data model the real type differs) |
 | unsuffixed hex/oct/bin in `(INT_MAX, UINT_MAX]` | `unsigned int` (the same in ILP32 and LP64) |
 | unsuffixed hex/oct/bin > `UINT_MAX` | `long long` if it fits, otherwise `unsigned long long`; + warning (the standard gives `long`/`unsigned long` in LP64 and `long long` in ILP32) |
-| suffixes `u` · `l` · `ul`/`lu` · `ll` · `ull`/`llu` | `unsigned int` · `long` · `unsigned long` · `long long` · `unsigned long long`; `l`/`ul` with a value outside 32 bits → warning "does not fit in ARM32's `long`" |
+| suffixes `u` · `l` · `ul`/`lu` · `ll` · `ull`/`llu` | `unsigned int` · `long` · `unsigned long` · `long long` · `unsigned long long`; `l`/`ul` with a value outside 32 bits → warning "does not fit a 32-bit long, which is what it is on 32-bit targets and on 64-bit Windows" |
 | `z` · `uz`/`zu` (C++23) | `std::ptrdiff_t` (note: the signed type corresponding to `size_t`) · `std::size_t`; if `--std` < 23 → warning |
 | floating-point unsuffixed · `f` · `l` | `double` · `float` · `long double` |
 | `f16`, `bf16`, … (C++23) | not supported → `mt-literal` |
@@ -569,7 +618,7 @@ the position of the type. Details settled while implementing it:
   `2147483648` does not fit in `int` whatever comes in front of it.
 - A `u` integer above `UINT_MAX` → `unsigned long long` + `mt-literal-range`
   (the standard would give `unsigned long` in LP64). `l` only gives `long`; if
-  the value does not fit in 32 bits, an ARM32 warning. `unsigned long long`
+  the value does not fit in 32 bits, a warning that a 32-bit `long` cannot hold it. `unsigned long long`
   overflow → that type + `mt-literal` "too large". An invalid or user-defined
   suffix (`3f`, `3_km`, `1.5s`, `1.5f16`) is `Unsupported` + `mt-literal`, with
   no type.
@@ -1268,8 +1317,9 @@ void Foo::run() {
 | Policy | Methods (incl. `void`) | Ctor/dtor | Include |
 |---|---|---|---|
 | `throw` (default) | `throw std::logic_error("mirrortest: not implemented: <signature>")` | empty | `<stdexcept>` |
-| `abort` (`--no-exceptions`) | `std::abort();` | empty | `<cstdlib>` |
+| `abort` (`--no-exceptions`, `--no-stl`) | `std::abort();` | empty | `<cstdlib>` |
 | `default` | `return {};` · `void` → empty · return by reference or a type that `{}` cannot build → `std::abort()` + `mt-unsupported` warning | empty | `<cstdlib>` if needed |
+| `hook` | `mt_not_implemented("<signature>");` and then what `default` has: nothing for `void`, `return {};` for a value, `std::abort();` + `mt-unsupported` where `{}` cannot build it (the hook returned and there is nothing to return) | empty | `"mt_not_implemented.h"`, and `<cstdlib>` if needed |
 
 With `default`, `mt-stub-may-pass` is emitted once. Parameter names are always
 commented out (R22). Constructors and destructors are empty under every policy:
@@ -1287,11 +1337,37 @@ unknown type included — gets the abort and the warning. `--no-rtti`: the gener
 the templates. The `includes` region is emitted even when empty, so that the
 merge can add includes.
 
-Future improvement (not MVP), because of R26: a `hook` policy — the stubs call
-`mt_not_implemented("<signature>")`, declared in a generated header, with a
-default definition that throws or aborts and that the test side can replace
-(e.g. by `QTest::qFail` + a default value) so that QTest goes on running the
-rest of the slots.
+**The `hook` policy** (plan 8.3) answers R26. With `throw`, QTest reports the first
+failure and ends the program, so the slots after it never show which stubs they
+need. A `hook` stub calls `mt_not_implemented("<signature>")` and, if that returns,
+gives an empty value like `default`. The function is declared in a header of its own,
+`mt_not_implemented.h` (`backend/hook_header.h`), that `generate_impl` writes beside
+the other headers (`--out-include`, else `--out`) whenever some stub calls it, and
+every source includes. It is plain text built in C++, not a template, and nothing to
+compile or link: every function is `inline` and the handler is a function-local static.
+
+- `typedef void (*mt_not_implemented_handler)(const char* signature);`,
+  `mt_set_not_implemented_handler(handler)` (returns the previous one; `nullptr` puts
+  the default back) and `mt_not_implemented(signature)`.
+- The default handler **throws** a `std::logic_error` with the same message as the
+  `throw` policy, or — under `no_exceptions` or `no_stl`, which have nothing to throw —
+  prints the signature with `<cstdio>` and aborts. The stubs are the same in both.
+  That is why `effective_stub_policy` leaves `hook` alone.
+- The test side installs a handler that makes the running test fail and *returns*
+  (`QTest::qFail(signature, __FILE__, __LINE__)`, `ADD_FAILURE()`), before the tests
+  run: a static object in a file of the test program is enough
+  (`tests/roundtrip/hook/qt_handler.cpp`). Every slot then runs and each reports the
+  signatures it is missing. A handler that returns without failing the test lets it
+  pass without the code it tests, like `default` — which is why `mt-stub-may-pass`
+  is not emitted: the policy does not return a value by itself, the handler decides.
+- A test may `#include "mt_not_implemented.h"` and call `mt_set_not_implemented_handler`
+  itself, in a fixture or in `initTestCase`: that include is never a header to generate
+  (`is_foreign_include`), and the names of the header (`is_hook_function`,
+  `is_hook_type` in `frontend/known_names.h`) are never functions or classes to
+  generate. The header only exists with the `hook` policy.
+- The header is written like any other file: `.new` beside it if it exists and
+  differs (a run with `--no-exceptions` after one without), and left alone by
+  `--overwrite merge`, which has no regions to merge in it.
 
 ---
 
@@ -1873,9 +1949,9 @@ warnings into errors.
 | Code | Severity | When |
 |---|---|---|
 | `mt-io` | error | cannot read/write |
-| `mt-config` | error | invalid configuration or unknown key |
+| `mt-config` | error · warning | invalid configuration or unknown key · a compilation database that is not one (error), an entry of it that cannot be read (warning) |
 | `mt-framework` | error | framework not detectable or ambiguous |
-| `mt-parse` | warning | the parser marked regions as `ERROR` (not counting known shapes handled by text, such as `QFETCH(int, v)`) |
+| `mt-parse` | warning · error | the parser marked regions as `ERROR` (not counting known shapes handled by text, such as `QFETCH(int, v)`); with `--frontend libclang`, an error libclang recovered from (warning), a file it could not open at all or a build without libclang (error) |
 | `mt-auto` | error (policy) | `auto` receives a result of the API |
 | `mt-unknown-return`, `mt-unknown-param` | error (policy) | type cannot be inferred |
 | `mt-chained-call` | error (policy) | call on the result of another call |
@@ -1894,6 +1970,7 @@ warnings into errors.
 | `mt-merge-region` | error | malformed or duplicated regions |
 | `mt-merge-no-region`, `mt-merge-mismatch`, `mt-merge-broke` | warning | see §11 |
 | `mt-std` | warning | a type that requires a standard newer than `--std` |
+| `mt-no-stl` | warning | `no_stl`, and a generated header that has to include a header of the standard library for a type of the tests |
 
 ---
 
@@ -1903,21 +1980,20 @@ warnings into errors.
 
 ```
 mirrortest gen-impl  [--tests] FILE... --out DIR [--out-include DIR] [--out-src DIR]
-                     [--framework auto|gtest|qtest] [--stub-policy throw|abort|default]
-                     [--no-exceptions] [--no-rtti] [--auto-policy error|todo] [COMMON]
+                     [--framework auto|gtest|qtest] [--stub-policy throw|abort|default|hook]
+                     [--no-exceptions] [--no-rtti] [--no-stl] [--auto-policy error|todo] [COMMON]
 mirrortest gen-tests [--header] FILE... --out DIR [--framework gtest|qtest]
                      [--placeholder fail|skip] [--include-as PATH] [--qt 5|6]
                      [--qt-main appless|guiless|gui] [COMMON]
 COMMON:  -I DIR ... | --std c++11|c++14|c++17|c++20|c++23 (default c++17)
          --overwrite never|merge|force (default never) | --dry-run | --check
-         --config FILE.json | --templates DIR | --strict | --quiet | --verbose
-         --compile-commands FILE (phase 8: only to extract -I)
+         --config FILE.json|FILE.yaml | --templates DIR | --strict | --quiet | --verbose
+         --compile-commands FILE  (adds its -I, -isystem and -iquote directories)
+         --frontend tree-sitter|libclang (default tree-sitter) | --clang-arg ARG ...  (§6.7)
 ```
 
 Implemented in `cli/run.h` (`parse_options`, `finish_run`, `run`); `main.cpp`
-only builds the `Env` and calls `run`. `--compile-commands` is **not
-registered** until task 8.1: passing it today is a usage error, not an accepted
-and ignored option.
+only builds the `Env` and calls `run`.
 
 - **Inputs**: positional or with `--tests`/`--header` (AT §10); the positional
   ones first and then those of the option, each group in the order written.
@@ -1936,6 +2012,34 @@ and ignored option.
   the command without inputs); `expected(1)`, `allow_extra_args(false)` and
   `multi_option_policy(TakeAll)` are all needed at once (none is enough on its
   own, checked against this version). A glued `-Idir` works too.
+- **`--compile-commands FILE`** (both commands; `core/compile_commands.h`): a
+  compilation database, the `compile_commands.json` CMake writes with
+  `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`. Only the include directories are taken,
+  because mirrortest compiles nothing: it needs to know where the headers a test
+  includes are. They behave exactly as if they had been given with `-I`, and come
+  **after** the ones given on the command line, so that those are searched first
+  (and, for `gen-tests`, the first directory that contains the header decides how
+  the test includes it). Parsing the options only stores the path; the file is
+  read when the command runs (`with_compile_commands`), so that its problems are
+  ordinary diagnostics and `--strict` applies to them.
+  - Per entry: `arguments` if present, else `command`, split the way a POSIX shell
+    would (`split_command_line`: quotes and backslashes, no expansion; Windows
+    quoting is not understood). `-I dir`, `-Idir`, `-isystem dir` and `-iquote dir`
+    are read, nothing else (a `-DX=-Iy` is a definition). A relative directory is
+    joined to the entry's `directory` and normalised lexically (`..`, `.`, no
+    trailing slash); an entry without an absolute `directory` leaves it relative to
+    the working directory of the run, which is where `-I` is relative to as well.
+  - **Every entry counts**, not only those whose `file` is one of the inputs: a
+    header is never in the database, and the test being written is usually not
+    either. The union is deduplicated and keeps the order of first appearance. If
+    several targets disagree on a directory, give a database filtered to the one
+    that matters, or the `-I` yourself.
+  - A file that cannot be read is `mt-io` (exit 3); a text that is not JSON, or not
+    an array, is an `mt-config` error (exit 1); an entry that cannot be read (not an
+    object, no `arguments` or `command`, a `directory` or `command` that is not a
+    string, an argument that is not a string) is an `mt-config` warning naming its
+    position and is skipped. Nothing is written after an error. `--verbose` prints
+    the directories taken (`mirrortest: -I from 'cc.json': a b`).
 - **Validation**: values outside their set (`--std c++98`, `--qt 4`,
   `--framework auto` in `gen-tests`, …) are a usage error that says what is
   valid; the sets come from `core/config.h` (`std_names()`, …), a single source
@@ -1945,7 +2049,7 @@ and ignored option.
 - **Precedence** (D9): defaults → `--config` → command line, and **only an
   option actually passed** overrides the file (its default value never does:
   the default `--std` is c++17 and a file saying c++11 must win if `--std` is
-  absent). `--no-exceptions`/`--no-rtti` can only switch on. Relative paths
+  absent). `--no-exceptions`/`--no-rtti`/`--no-stl` can only switch on. Relative paths
   (config, inputs, templates, output) are resolved against `Env::cwd`, never
   with `chdir`, and are **shown as the user wrote them**.
 - **`--quiet`**: removes the notes and the summary; warnings and errors are
@@ -1976,7 +2080,7 @@ diagnostics); an error suppresses diffs and summary.
 
 ---
 
-## 14. Configuration (`--config file.json`)
+## 14. Configuration (`--config file.json` or `file.yaml`)
 
 ```json
 {
@@ -1992,12 +2096,15 @@ diagnostics); an error suppresses diffs and summary.
   "file_header": "",
   "stub_policy": "throw",
   "no_exceptions": false,
+  "no_stl": false,
   "no_rtti": false,
   "placeholder": "fail",
   "auto_policy": "error",
   "placeholder_type": "int",
   "string_literal_param": "const char*",
   "exception_base": "",
+  "frontend": "tree-sitter",
+  "clang_args": [],
   "qt": 6,
   "type_map": { "unsigned int": "std::uint32_t" },
   "by_value_types": [],
@@ -2038,6 +2145,22 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
   (`mt-unknown-type`). A type spelling; stored normalised. Has no effect with `no_exceptions`.
 - `no_exceptions` makes `stub_policy: throw` behave as `abort`
   (`effective_stub_policy`); an explicit `default` is respected.
+- `frontend` and `clang_args` (§6.7): which reader reads the headers, and what the libclang one is told
+  (`-DNAME=1`, `-I/abs/dir`, `-std=...` to override the one `std` gives). The `--clang-arg`s of the command line
+  are added after the file's. A relative path in them is relative to the *process's* directory (libclang's),
+  not to the run's: write them absolute.
+- `no_stl` (`--no-stl`, gen-impl; plan 8.2): the project does not use the standard
+  library. It does two things and only two, both about what the generator adds or
+  includes by itself: (1) `throw` behaves as `abort` too, because the stub would
+  throw a `std::logic_error` (`<stdexcept>`); the source then needs only `<cstdlib>`,
+  the C library's, and an explicit `default` is respected; (2) every generated header
+  that ends up including a header of the standard library proper — not `<cstddef>`,
+  `<cstdint>`, `<cstdio>`, `<cstdlib>` or Qt's — is reported with an `mt-no-stl`
+  warning naming the type that asked for it (`ir::is_standard_library_header`; once per
+  header and library header). The types themselves are the test's: the header is
+  written as the test has it and the warning says where the policy and the test
+  disagree, so the fix is in the test (or in `type_map`). It does nothing in
+  gen-tests: the tests are built with GoogleTest or Qt Test.
 - `file_header` must be a C++ comment (`//` or `/*`), because it is emitted
   verbatim at the top of every file; line breaks are normalised and trailing ones
   are trimmed.
@@ -2051,6 +2174,33 @@ Implemented in `include/mirrortest/core/config.h` (`Config`,
   long form of the annotation (§7.11).
 - `type_map` is applied last, to `Inferred`/`Defaulted` types (never to
   `Declared`/`Annotated`), comparing the normalised `base`.
+
+### 14.1 YAML
+
+A configuration whose name ends in `.yaml` or `.yml` (any case) is read as YAML (plan 8.4,
+`core/config_yaml.cpp`, option `MT_WITH_YAML`, on by default; it needs yaml-cpp 0.9.0, pinned by tag
+and commit like the other dependencies). Any other name is JSON, as before. The keys, the values and
+the errors are exactly the JSON ones, because the document is **converted to JSON and handed to the
+same reader** (`apply_config_json`): there is one place that knows what a key is, and a YAML file
+cannot drift from the JSON one.
+
+- **Scalars.** Plain: `true`/`True`/`TRUE` and the `false` spellings are booleans; digits (with an
+  optional sign) are integers; `null`, `~` and nothing are null; anything else is a string. **Quoted
+  and block scalars are always strings**, and so is `!!str x`. `yes`, `no`, `on` and `off` are not
+  booleans (they were in YAML 1.1): `no_stl: yes` is the error "must be true or false" instead of a
+  guess. A float or a hex number is text.
+- **YAML features.** Comments, flow style, block scalars (`file_header: |` is the natural way to write a
+  multi-line header), anchors and aliases, `---`/`...`. An empty document, one with only comments, `~`
+  or `null` changes nothing.
+- **Refused**, each with an `mt-config` error at the line and column: a syntax error
+  (`invalid YAML: ...`, yaml-cpp's own words), a key twice in one mapping, a key that is not a scalar,
+  a tag other than `!!str`, a document that is not a mapping, more than one document, and one that
+  expands to more than 100000 nodes or nests deeper than 64 levels (an alias that refers to itself).
+  Merge keys (`<<`) are not supported: `<<` is an unknown key like any other.
+- Errors about a key or a value (`unknown configuration key 'colour'`) have no line, as in JSON.
+- **Without YAML** (`-DMT_WITH_YAML=OFF`, no yaml-cpp) a `.yaml` file is read and refused with an
+  `mt-config` error that says how to build with it; the goldens that need it (`requires.txt`, `yaml`)
+  are skipped, and so are the unit tests.
 
 ---
 
@@ -2130,6 +2280,10 @@ Implemented in `core/templates.h` (`TemplateStore`) and
    - A failure shows the case, the stream or file, and an expected/actual diff.
      A case directory with an unknown entry (almost always a typo: `expeced/`) is
      a layout error.
+   - `requires.txt` (optional) names the optional parts of the build a case needs (`yaml`, `libclang`);
+     where one is missing the case is skipped. With libclang, every `gen-tests` and `gen-impl` case is also run
+     with `--frontend libclang` (`GoldenWithLibclang`), libclang's own warnings aside, except the ones that
+     differ on purpose (a table in `test_golden.cpp`).
    - Explicit update: `MT_UPDATE_GOLDEN=1 ctest -R golden` or the
      `update-golden` target; never by hand. It **refuses to record** output that
      is non-deterministic or breaks a convention, and deletes what is no longer
@@ -2141,7 +2295,7 @@ Implemented in `core/templates.h` (`TemplateStore`) and
 3. **Round trip** (CTest + `cmake -P tests/roundtrip/run_case.cmake`):
    - gen-impl (`tests/roundtrip/run_case.cmake`, cases `basic_class`,
      `fixture_members`, `namespaces`, `multi_class_includes`, `no_exceptions`,
-     `mock_interface`, `mock_legacy_macros`, `mock_known_interface`,
+     `no_stl`, `no_stl_library_types`, `stub_hook`, `stub_hook_abort`, `mock_interface`, `mock_legacy_macros`, `mock_known_interface`,
      `fake_interface`, whose test and arguments are those of the golden case):
      generate → compile the stubs with `-std=c++11 -Wall -Wextra -Wpedantic
      -Werror` (plus `-fno-exceptions -fno-rtti` for `abort`; the case's
@@ -2195,12 +2349,14 @@ Implemented in `core/templates.h` (`TemplateStore`) and
        whole program must fail. `qt_fetch_types` has no round trip (a data
        function without rows runs no slot) and `qt_exceptions_new` needs Qt 6.3;
        the test of `qt_exceptions` uses a macro that Qt 6.3 deprecates, which is
-       allowed to warn.
+       allowed to warn. `qt_hook` (`--stub-policy hook`) links a handler that calls
+       `QTest::qFail` and returns (`MT_HANDLER`), so nothing ends the program: all the slots
+       run, in one program, and every one must have its `FAIL!` line.
      - Not covered: `QTEST_MAIN` (it needs QtWidgets), hence no round trip for
        `qt_gui_main`.
-   - **ARM**: if `MT_ARM_CXX` is defined (CI installs
-     `g++-arm-linux-gnueabihf`), the same syntax checks run with the cross
-     compiler (`stubs.arm.<case>`): the generated stubs with
+   - **Cross**: if `MT_CROSS_CXX` is defined (CI installs
+     `g++-arm-linux-gnueabihf`, a 32-bit compiler), the same syntax checks run with
+     the cross compiler (`stubs.cross.<case>`): the generated stubs with
      `-std=c++11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only`, and with the
      `abort` policy also `-fno-exceptions -fno-rtti`.
 4. **Corpus of edge cases**: templates, nested namespaces,
@@ -2208,8 +2364,8 @@ Implemented in `core/templates.h` (`TemplateStore`) and
    `enum class`, smart pointers, Qt macros, `#if`.
 5. **Sanitizers** ASan/UBSan in CI on all the tests (already active).
 6. CI: GCC and Clang × Debug/RelWithDebInfo with `-Werror`; a sanitizers job; a
-   round-trip job with Qt 6 (and Qt 5 once the QTest backend exists); an ARM
-   job.
+   round-trip job with Qt 6 (and Qt 5 once the QTest backend exists); a
+   cross-compiler job for a 32-bit target.
 
 ---
 

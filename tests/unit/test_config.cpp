@@ -55,6 +55,7 @@ TEST(ConfigDefaults, MatchTheDesignDocument) {
     EXPECT_EQ(c.file_header, "");
     EXPECT_EQ(c.stub_policy, StubPolicy::Throw);
     EXPECT_FALSE(c.no_exceptions);
+    EXPECT_FALSE(c.no_stl);
     EXPECT_FALSE(c.no_rtti);
     EXPECT_EQ(c.placeholder, Placeholder::Fail);
     EXPECT_EQ(c.auto_policy, AutoPolicy::Error);
@@ -95,6 +96,7 @@ TEST(ConfigKeys, EveryKeyIsRead) {
         "file_header": "// Copyright ACME\n// All rights reserved\n",
         "stub_policy": "default",
         "no_exceptions": true,
+        "no_stl": true,
         "no_rtti": true,
         "placeholder": "skip",
         "auto_policy": "todo",
@@ -132,6 +134,7 @@ TEST(ConfigKeys, EveryKeyIsRead) {
     EXPECT_EQ(c.file_header, "// Copyright ACME\n// All rights reserved");
     EXPECT_EQ(c.stub_policy, StubPolicy::Default);
     EXPECT_TRUE(c.no_exceptions);
+    EXPECT_TRUE(c.no_stl);
     EXPECT_TRUE(c.no_rtti);
     EXPECT_EQ(c.placeholder, Placeholder::Skip);
     EXPECT_EQ(c.auto_policy, AutoPolicy::Todo);
@@ -185,7 +188,7 @@ TEST(ConfigKeys, PartialNamingKeepsTheOtherPatterns) {
 }
 
 TEST(ConfigKeys, CommentsAreAllowedInTheFile) {
-    const Applied a = apply("{\n  // project policy\n  \"std\": \"c++11\", /* ARM target */\n  \"no_exceptions\": true\n}\n");
+    const Applied a = apply("{\n  // project policy\n  \"std\": \"c++11\", /* the project's standard */\n  \"no_exceptions\": true\n}\n");
     ASSERT_TRUE(a.ok);
     EXPECT_EQ(a.config.cxx_std, CxxStd::Cxx11);
     EXPECT_TRUE(a.config.no_exceptions);
@@ -309,7 +312,7 @@ TEST(ConfigErrors, ValuesOutsideTheirSet) {
     EXPECT_EQ(only_error(apply(R"({"std":"c++98"})")),
               "configuration key 'std' must be one of: c++11, c++14, c++17, c++20, c++23 (got 'c++98')");
     EXPECT_EQ(only_error(apply(R"({"stub_policy":"hope"})")),
-              "configuration key 'stub_policy' must be one of: throw, abort, default (got 'hope')");
+              "configuration key 'stub_policy' must be one of: throw, abort, default, hook (got 'hope')");
     EXPECT_EQ(only_error(apply(R"({"guard":"pragma"})")),
               "configuration key 'guard' must be one of: ifndef, pragma-once (got 'pragma')");
     EXPECT_EQ(only_error(apply(R"({"qt":4})")), "configuration key 'qt' must be 5 or 6");
@@ -398,7 +401,7 @@ TEST(ConfigHelpers, StringsRoundTrip) {
     for (CxxStd s : {CxxStd::Cxx11, CxxStd::Cxx14, CxxStd::Cxx17, CxxStd::Cxx20, CxxStd::Cxx23}) {
         EXPECT_EQ(parse_std(to_string(s)), s);
     }
-    for (StubPolicy s : {StubPolicy::Throw, StubPolicy::Abort, StubPolicy::Default}) {
+    for (StubPolicy s : {StubPolicy::Throw, StubPolicy::Abort, StubPolicy::Default, StubPolicy::Hook}) {
         EXPECT_EQ(parse_stub_policy(to_string(s)), s);
     }
     for (Placeholder s : {Placeholder::Fail, Placeholder::Skip}) {
@@ -434,6 +437,56 @@ TEST(ConfigHelpers, NoExceptionsTurnsThrowIntoAbortButKeepsDefault) {
 
     c.stub_policy = StubPolicy::Abort;
     EXPECT_EQ(effective_stub_policy(c), StubPolicy::Abort);
+}
+
+TEST(ConfigHelpers, NoStlTurnsThrowIntoAbortToo) {
+    Config c;
+    c.no_stl = true;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Abort) << "there is no std::logic_error to throw";
+
+    c.no_exceptions = true;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Abort);
+
+    c.no_exceptions = false;
+    c.stub_policy = StubPolicy::Default;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Default) << "an explicit default is kept";
+
+    c.stub_policy = StubPolicy::Abort;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Abort);
+
+    c.no_stl = false;
+    c.stub_policy = StubPolicy::Throw;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Throw) << "and only no_stl, no_exceptions or both change it";
+}
+
+TEST(ConfigHelpers, HookIsKeptWhateverTheOtherPoliciesSay) {
+    Config c;
+    c.stub_policy = StubPolicy::Hook;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Hook);
+    c.no_exceptions = true;
+    c.no_stl = true;
+    EXPECT_EQ(effective_stub_policy(c), StubPolicy::Hook) << "only the default handler of the hook header changes";
+}
+
+TEST(ConfigKeys, TheFrontendAndTheArgumentsForLibclang) {
+    EXPECT_EQ(Config().frontend, Frontend::TreeSitter);
+    EXPECT_TRUE(Config().clang_args.empty());
+    const Applied a = apply(R"({"frontend":"libclang","clang_args":["-DNAME=1","-I/opt/include"]})");
+    ASSERT_TRUE(a.ok);
+    EXPECT_EQ(a.config.frontend, Frontend::Libclang);
+    EXPECT_EQ(a.config.clang_args, (std::vector<std::string>{"-DNAME=1", "-I/opt/include"}));
+    EXPECT_EQ(only_error(apply(R"({"frontend":"clang"})")), "configuration key 'frontend' must be one of: tree-sitter, libclang (got 'clang')");
+    EXPECT_EQ(only_error(apply(R"({"clang_args":"-DX"})")), "configuration key 'clang_args' must be a list");
+    EXPECT_EQ(only_error(apply(R"({"clang_args":[""]})")), "configuration key 'clang_args[0]' must be a compiler argument (got '')");
+    EXPECT_EQ(only_error(apply(R"({"clang_args":[1]})")), "configuration key 'clang_args[0]' must be a string");
+    for (Frontend f : {Frontend::TreeSitter, Frontend::Libclang}) EXPECT_EQ(parse_frontend(to_string(f)), f);
+    EXPECT_EQ(frontend_names(), (std::vector<std::string>{"tree-sitter", "libclang"}));
+}
+
+TEST(ConfigKeys, NoStlIsABoolean) {
+    EXPECT_TRUE(apply(R"({"no_stl":true})").config.no_stl);
+    EXPECT_FALSE(apply(R"({"no_stl":false})").config.no_stl);
+    EXPECT_EQ(only_error(apply(R"({"no_stl":"yes"})")), "configuration key 'no_stl' must be true or false");
 }
 
 // ---- files --------------------------------------------------------------------------------

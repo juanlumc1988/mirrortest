@@ -2,7 +2,7 @@
 # Part of mirrortest -- bidirectional C++ test/code generator.
 #
 # Do the stubs of a gen-impl golden case compile, under the strictest rules
-# embedded code is held to? Run as
+# a project is likely to hold them to? Run as
 #
 #   cmake -DMT_BIN=... -DMT_CASE_DIR=... -DMT_WORK=... -DMT_CXX=... -P syntax_case.cmake
 #
@@ -10,7 +10,7 @@
 # it) and compiles every generated source with `-fsyntax-only` as C++11 with
 # -Wall -Wextra -Wpedantic -Werror, plus -fno-exceptions -fno-rtti when the case
 # asks for --no-exceptions. Nothing is linked or run, so MT_CXX can be a cross
-# compiler: CI uses g++-arm-linux-gnueabihf, the target the stubs are for.
+# compiler for a 32-bit target: CI uses g++-arm-linux-gnueabihf.
 #
 # Each source includes its own header first, so a header that is not
 # self-contained fails here too.

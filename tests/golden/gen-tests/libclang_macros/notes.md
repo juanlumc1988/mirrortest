@@ -1,0 +1,1 @@
+`--frontend libclang`: members that a macro declares (`GETTER(int, size)`) and an export macro (`CONFIG_API`) need nothing from the user, because the compiler front end has expanded them. The syntax-tree reader sees macro calls where the members are, and needs `ignore_macros` for the export macro.

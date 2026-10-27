@@ -99,7 +99,7 @@ FileResult process_input(const Options& options, const Env& env, const core::Tem
             to_generate.push_back(inc.path);
         } else if (inc.kind == core::IncludeKind::Known) {
             if (const std::optional<core::SourceFile> header = core::read_source(inc.shown, diagnostics, env.cwd)) {
-                known.push_back(frontend::read_header(*header, inc.path, macros, diagnostics));
+                known.push_back(read_header_with(options, env, *header, inc.path, macros, diagnostics));
             }
         }
     }
@@ -123,8 +123,9 @@ FileResult process_input(const Options& options, const Env& env, const core::Tem
 
 }  // namespace
 
-int run_gen_impl(const Options& options, const Env& env) {
+int run_gen_impl(const Options& given, const Env& env) {
     core::Diagnostics diagnostics;
+    const Options options = with_compile_commands(given, env, diagnostics);
 
     std::optional<fs::path> template_dir;
     if (options.templates_dir) template_dir = resolve(env, *options.templates_dir);

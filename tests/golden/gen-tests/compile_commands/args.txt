@@ -1,0 +1,6 @@
+gen-tests
+${IN}/include/acme/gear.h
+--out
+${OUT}
+--compile-commands
+${IN}/database.json

@@ -1,0 +1,1 @@
+`--no-stl` and a test whose types come from the standard library. The header is written as the test has it (`std::vector<std::string>` needs `<string>` and `<vector>`), and each library header it has to include is reported with the type that asked for it (`mt-no-stl`, a warning). `std::size_t` is the C library's `<cstddef>` and is not reported.

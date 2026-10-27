@@ -32,9 +32,13 @@ cmake -S . -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMT_WERROR=ON \
   -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
 ```
 
+Optional parts of the build: `-DMT_WITH_YAML=OFF` leaves out yaml-cpp (a `.yaml` configuration is then
+refused with a clear error; CI builds that way too), and `-DMT_WITH_LIBCLANG=ON` adds the libclang
+frontend (plan 8.5). The golden cases and unit tests that need a part skip themselves when it is not there.
+
 A second build tree can reuse the first one's downloads instead of fetching
 again: pass `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<first>/_deps/<name>-src` for
-`TREE_SITTER`, `TREE_SITTER_CPP`, `NLOHMANN_JSON`, `INJA`, `CLI11` and
+`TREE_SITTER`, `TREE_SITTER_CPP`, `NLOHMANN_JSON`, `INJA`, `CLI11`, `YAML_CPP` and
 `GOOGLETEST` (lower-case name in the path).
 
 Clang's sanitizer runtime may be missing on minimal images
@@ -52,10 +56,10 @@ before committing.
 | `golden.*` | the real command line against the files in `tests/golden/` (output, stderr, exit code, determinism) |
 | `roundtrip.<case>` | generates from the test of a golden case, compiles the stubs as strict C++11 and the test as C++14, links, runs, requires every test red, and requires a second run to change nothing (`tests/roundtrip/run_case.cmake`) |
 | `roundtrip.gen_tests.<case>` | the same for gen-tests: generates tests from the header of a golden case, compiles an example implementation (C++11, strict) and the tests (C++14, `-Werror`), runs them and requires every one to fail, or to be skipped with `--placeholder skip` (`tests/roundtrip/run_gen_tests_case.cmake`, the implementations in `tests/roundtrip/gen-tests/`) |
-| `roundtrip.qt.gen_tests.<case>`, `roundtrip.qt.gen_impl.<case>` | the same for Qt Test, both directions, when Qt 6 (else Qt 5) with its Test module is installed (otherwise one test, `roundtrip.qt`, is reported as skipped). moc is run by the script; a `gen-impl` slot is run alone and must fail, because after the first exception QTest ends the program (`tests/roundtrip/run_qt_case.cmake`, the implementations in `tests/roundtrip/qt/`) |
+| `roundtrip.qt.gen_tests.<case>`, `roundtrip.qt.gen_impl.<case>` | the same for Qt Test, both directions, when Qt 6 (else Qt 5) with its Test module is installed (otherwise one test, `roundtrip.qt`, is reported as skipped). moc is run by the script; a `gen-impl` slot is run alone and must fail, because after the first exception QTest ends the program (the case `qt_hook` links a handler that fails the slot and returns, `tests/roundtrip/hook/`, and so runs all of them in one program) (`tests/roundtrip/run_qt_case.cmake`, the implementations in `tests/roundtrip/qt/`) |
 | `roundtrip.merge` | the TDD session: generate, implement a method, grow the test, `--overwrite merge`; the work survives and passes, the new stubs are red (`tests/roundtrip/run_merge.cmake`) |
 | `stubs.host.<case>` | the stubs of *every* gen-impl golden compile with `-fsyntax-only` as strict C++11 (`tests/roundtrip/syntax_case.cmake`) |
-| `stubs.arm.<case>` | the same with a cross compiler, if `-DMT_ARM_CXX=arm-linux-gnueabihf-g++` is given (CI does) |
+| `stubs.cross.<case>` | the same with a cross compiler for a 32-bit target, if `-DMT_CROSS_CXX=arm-linux-gnueabihf-g++` is given (CI does) |
 
 A new gen-impl golden case is a new `stubs.host.*` test the next time CMake
 configures; add it to the `roundtrip.*` list in `CMakeLists.txt` when it should be
