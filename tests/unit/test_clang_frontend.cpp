@@ -630,6 +630,36 @@ TEST(ClangFrontend, TheEllipsisOfAFunctionIsWhereTheFunctionIs) {
     EXPECT_EQ(r.model.functions[0].params[1].type.where.column, 5u);
 }
 
+TEST(ClangFrontend, TheDefaultOfAParameterAMacroDeclaresIsTheTokensOfTheDefault) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(enum class Codes { A, B = 5 };
+template <typename A, typename B> struct Pair { Pair(A, B); };
+#define MAKE(name) name(int code = 0); name(const char* s, int n = static_cast<int>(Codes::B))
+#define PAIR(name) name(Pair<int, int> p = Pair<int, int>(1, 2), bool flag = true)
+class Widget {
+public:
+    MAKE(Widget);
+    PAIR(Widget);
+    int size() const;
+};)";
+    const Read r = clang(text);
+    ASSERT_EQ(r.model.classes.size(), 2u);
+    const std::vector<ir::Method>& m = r.model.classes[1].methods;
+    ASSERT_EQ(m.size(), 4u);
+    ASSERT_EQ(m[0].params.size(), 1u);
+    ASSERT_TRUE(m[0].params[0].default_value.has_value());
+    EXPECT_EQ(*m[0].params[0].default_value, "0");
+    ASSERT_EQ(m[1].params.size(), 2u);
+    EXPECT_FALSE(m[1].params[0].default_value.has_value()) << "`s` has none: the `= ` that follows is `n`'s";
+    ASSERT_TRUE(m[1].params[1].default_value.has_value());
+    EXPECT_EQ(*m[1].params[1].default_value, "static_cast<int>(Codes::B)");
+    ASSERT_EQ(m[2].params.size(), 2u);
+    ASSERT_TRUE(m[2].params[0].default_value.has_value());
+    EXPECT_EQ(*m[2].params[0].default_value, "Pair<int,int>(1,2)") << "a comma inside <> does not end it";
+    ASSERT_TRUE(m[2].params[1].default_value.has_value());
+    EXPECT_EQ(*m[2].params[1].default_value, "true");
+}
+
 TEST(ClangFrontend, AFunctionThatReturnsAFunctionPointerHasItsOwnParametersOnly) {
     SKIP_WITHOUT_LIBCLANG();
     const char* text = R"(auto trailing() -> void (*)(int);

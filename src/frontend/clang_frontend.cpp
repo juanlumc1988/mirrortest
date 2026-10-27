@@ -13,6 +13,7 @@
 
 #if MT_WITH_LIBCLANG
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <iterator>
 #include <optional>
@@ -666,8 +667,48 @@ private:
         return params;
     }
 
+    // The text of the default argument of a parameter that a macro declares, from the spellings of the tokens
+    // libclang tokenises for it. The offsets of a token that came out of a macro are those of the place where the
+    // macro was used, so a slice of the text would be a piece of whatever is there; and the range of the tokens
+    // runs on past the end of the expression, to the end of the use, so it is cut where the expression ends: at a `,`
+    // outside parentheses and angle brackets, at a `)` that closes nothing, or at a `;`.
+    std::string default_by_tokens(CXCursor expression) const {
+        CXToken* raw = nullptr;
+        unsigned count = 0;
+        clang_tokenize(tu_, clang_getCursorExtent(expression), &raw, &count);
+        std::string out;
+        const auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+        int depth = 0;
+        int angles = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            if (clang_getTokenKind(raw[i]) == CXToken_Comment) continue;
+            const std::string text = to_string(clang_getTokenSpelling(tu_, raw[i]));
+            if (text == "(" || text == "[" || text == "{") ++depth;
+            if (text == ")" || text == "]" || text == "}") {
+                if (depth == 0) break;
+                --depth;
+            }
+            if (depth == 0 && text == "<") ++angles;
+            if (depth == 0 && text == ">" && angles > 0) --angles;
+            if (depth == 0 && text == ">>" && angles > 0) angles = std::max(0, angles - 2);
+            if (depth == 0 && angles == 0 && (text == "," || text == ";")) break;
+            if (!out.empty() && !text.empty() && word(out.back()) && word(text.front())) out += ' ';
+            out += text;
+        }
+        clang_disposeTokens(tu_, raw, count);
+        return out;
+    }
+
     // What follows the first top-level '=' of a parameter, as it was written.
     std::optional<std::string> default_value(CXCursor param) const {
+        if (from_macro(param)) {
+            for (CXCursor child : children(param)) {
+                if (clang_isExpression(clang_getCursorKind(child)) == 0) continue;
+                const std::string text = default_by_tokens(child);
+                return text.empty() ? std::nullopt : std::optional<std::string>(text);
+            }
+            return std::nullopt;
+        }
         const std::vector<Tok> t = tokens(param);
         int depth = 0;
         for (std::size_t i = 0; i < t.size(); ++i) {
