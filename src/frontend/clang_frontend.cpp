@@ -110,10 +110,10 @@ std::string compact(const std::vector<Tok>& tokens, std::size_t from, std::size_
     return out;
 }
 
-// The index of the ')' that closes the '(' at `open`, or the end if it never does.
-std::size_t closing(const std::vector<Tok>& t, std::size_t open) {
+// The index of the ')' that closes the first '(' at or after `from`, or the end if there is none.
+std::size_t closing(const std::vector<Tok>& t, std::size_t from) {
     int depth = 0;
-    for (std::size_t i = open; i < t.size(); ++i) {
+    for (std::size_t i = from; i < t.size(); ++i) {
         if (t[i].text == "(") ++depth;
         if (t[i].text == ")" && --depth == 0) return i;
     }
@@ -128,33 +128,30 @@ Shape read_shape(const std::vector<Tok>& t, unsigned name_offset) {
         if (t[i].text == "virtual") s.is_virtual = true;
         if (t[i].text == "explicit") s.is_explicit = true;
     }
-    // The name; then the parameter list. `operator()` has parentheses of its own.
-    if (i < t.size() && t[i].text == "operator") {
-        ++i;
-        if (i + 1 < t.size() && t[i].text == "(" && t[i + 1].text == ")") i += 2;
-    }
-    while (i < t.size() && t[i].text != "(") ++i;
+    // The parameter list is the first parentheses from the name on (`operator()` has parentheses of its own, which
+    // close at once and leave the real ones to be skipped below like any other).
     const std::size_t close = closing(t, i);
-    if (close >= t.size()) return s;
 
     int depth = 0;
     for (std::size_t k = close + 1; k < t.size(); ++k) {
         const std::string& x = t[k].text;
         if (depth == 0 && x == "->") {
-            // A trailing return type runs to the end of the declarator.
+            // A trailing return type runs to what ends it: the `;` or `{`, the `= 0` or `= delete`, `override`, `final`.
+            // Parentheses keep what is inside them (`decltype(a = b)`) from ending it. What follows is read like the rest.
             std::size_t last = k + 1;
             int inner = 0;
             while (last < t.size()) {
                 const std::string& y = t[last].text;
-                if (y == "(" || y == "[" || y == "<") ++inner;
-                if (y == ")" || y == "]" || y == ">") --inner;
+                if (y == "(") ++inner;
+                if (y == ")") --inner;
                 if (inner <= 0 && (y == ";" || y == "{" || y == "=" || y == "override" || y == "final" || y == "requires")) break;
                 ++last;
             }
             if (last > k + 1) s.trailing_return = std::make_pair(t[k + 1].begin, t[last - 1].end);
-            break;
+            k = last - 1;
+            continue;
         }
-        if (depth == 0 && (x == ";" || x == "{" || x == ":" || x == "try")) break;
+        if (depth == 0 && (x == ";" || x == "{" || x == ":" || x == "try" || x == "requires")) break;   // and nothing after a requires-clause is a qualifier
         if (x == "(") ++depth;
         if (x == ")") --depth;
         if (depth != 0) continue;
@@ -270,24 +267,47 @@ private:
     }
 
     // The tokens of the text between two offsets, comments left out.
-    std::vector<Tok> tokens(CXCursor c) const {
+    std::vector<Tok> tokens_in(CXSourceRange range, unsigned limit) const {
         std::vector<Tok> out;
-        const Span span = span_of(c);
         CXToken* raw = nullptr;
         unsigned count = 0;
-        clang_tokenize(tu_, clang_getCursorExtent(c), &raw, &count);
+        clang_tokenize(tu_, range, &raw, &count);
         for (unsigned i = 0; i < count; ++i) {
             if (clang_getTokenKind(raw[i]) == CXToken_Comment) continue;
             const CXSourceRange r = clang_getTokenExtent(tu_, raw[i]);
             Tok t;
             t.begin = offset_of(clang_getRangeStart(r));
             t.end = offset_of(clang_getRangeEnd(r));
-            if (t.begin >= span.end) continue;   // some versions return one token past the range
+            if (t.begin >= limit) continue;   // some versions return one token past the range
             t.text = to_string(clang_getTokenSpelling(tu_, raw[i]));
             out.push_back(std::move(t));
         }
         clang_disposeTokens(tu_, raw, count);
         return out;
+    }
+
+    std::vector<Tok> tokens(CXCursor c) const { return tokens_in(clang_getCursorExtent(c), span_of(c).end); }
+
+    // The tokens of a function's declaration. libclang's extent of `auto f() -> decltype(x);` is the two words
+    // `auto f`: the trailing return type that has a decltype in it is left out, and so is everything after it (the
+    // parameter list, `const`, `override`). A declaration whose extent has no parameter list is read on, from the same
+    // start, to the `;` or `{` that ends it.
+    std::vector<Tok> function_tokens(CXCursor c) const {
+        std::vector<Tok> t = tokens(c);
+        if (std::any_of(t.begin(), t.end(), [](const Tok& x) { return x.text == "("; })) return t;
+        const CXFile file = clang_getFile(tu_, main_file_.c_str());
+        if (file == nullptr) return t;
+        const CXSourceRange rest = clang_getRange(clang_getRangeStart(clang_getCursorExtent(c)),
+                                                  clang_getLocationForOffset(tu_, file, static_cast<unsigned>(text_.size())));
+        std::vector<Tok> longer;
+        int depth = 0;
+        for (Tok& x : tokens_in(rest, static_cast<unsigned>(text_.size()))) {
+            if (x.text == "(" || x.text == "[") ++depth;
+            if (x.text == ")" || x.text == "]") --depth;
+            if (depth == 0 && (x.text == ";" || x.text == "{")) return longer;
+            longer.push_back(std::move(x));
+        }
+        return t;   // it never ends: whatever the extent had
     }
 
     // A declaration that comes out of a macro has no text of its own to read a type from: its first
@@ -576,7 +596,7 @@ private:
     // ---- free functions ----------------------------------------------------------------------------
 
     void free_function(CXCursor c) {
-        const std::vector<Tok> t = tokens(c);
+        const std::vector<Tok> t = function_tokens(c);
         ir::Function f;
         f.name = ir::normalize_operator_name(to_string(clang_getCursorSpelling(c)));
         f.ns = ns_;
@@ -591,10 +611,21 @@ private:
 
     // ---- parameters ----------------------------------------------------------------------------------
 
+    // The parameters of the function itself: not those of a function pointer it returns, which libclang also lists among
+    // the children (`void (*get(int a))(int b)` has `b` among them, and before `a`). It can say how many are the function's
+    // own for a function but not for a function template, whose children are all there is.
     std::vector<ir::Param> parameters(CXCursor function) const {
+        std::vector<CXCursor> declared;
+        const int own = clang_Cursor_getNumArguments(function);
+        if (own >= 0) {
+            for (int i = 0; i < own; ++i) declared.push_back(clang_Cursor_getArgument(function, static_cast<unsigned>(i)));
+        } else {
+            for (CXCursor p : children(function)) {
+                if (clang_getCursorKind(p) == CXCursor_ParmDecl) declared.push_back(p);
+            }
+        }
         std::vector<ir::Param> params;
-        for (CXCursor p : children(function)) {
-            if (clang_getCursorKind(p) != CXCursor_ParmDecl) continue;
+        for (CXCursor p : declared) {
             ir::Param param;
             param.type = declared_type(p);
             param.name = to_string(clang_getCursorSpelling(p));
@@ -849,7 +880,7 @@ private:
         const CXCursorKind kind = is_template ? clang_getTemplateCursorKind(c) : clang_getCursorKind(c);
         if (is_template && !is_method_kind(kind)) return;   // a member class template, for one: not a member to test
         const Span span = span_of(c);
-        const std::vector<Tok> t = tokens(c);
+        const std::vector<Tok> t = function_tokens(c);
         const Shape shape = shape_of(c, t);
 
         ir::Method m;

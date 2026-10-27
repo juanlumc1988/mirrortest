@@ -249,6 +249,35 @@ typedef A AliasTwo;)"},
      R"(struct { int a; } variable;
 class Holder { public: struct { int x; } inner; union { int u; float f; }; };
 union Un { int i; float f; };)"},
+    {"trailing_returns",
+     R"(template <typename T> struct Vec {};
+template <typename T, int N> struct Arr {};
+extern int x_;
+auto nested() -> Vec<Vec<int>>;
+auto triple(int a) -> Vec<Vec<Vec<int>>>;
+auto assigned() -> decltype(x_ = 1);
+auto decl(int a, const Vec<int>& v) -> decltype(x_);
+auto array_ref(int (&a)[4]) -> int (&)[4];
+auto expression() -> Arr<int, (4 > 2 ? 4 : 2)>;
+struct B {
+    virtual ~B();
+    virtual auto over() -> int;
+    virtual auto fin() const noexcept -> const Vec<int>&;
+    virtual auto dover(int) const & -> decltype(x_);
+};
+struct S : B {
+    auto member() const -> Vec<Vec<int>>;
+    virtual auto pure() -> Vec<int> = 0;
+    virtual auto pure2() const -> Vec<Vec<int>> = 0;
+    auto over() -> int override;
+    auto fin() const noexcept -> const Vec<int>& final;
+    auto deleted() -> int = delete;
+    auto sized() const -> decltype(x_);
+    virtual auto dpure() -> decltype(x_ = 1) = 0;
+    auto dover(int a) const & -> decltype(x_) override;
+    static auto make(int n) -> decltype(x_);
+    auto with_body(int n) const -> decltype(x_) { return x_ + n; }
+};)"},
     {"inline_definitions",
      R"(class Impl {
 public:
@@ -354,6 +383,51 @@ TEST(ClangFrontend, AnExportMacroNeedsNoIgnoreMacrosBecauseItIsExpanded) {
     ASSERT_EQ(r.model.classes[0].methods.size(), 1u);
     EXPECT_EQ(r.model.classes[0].methods[0].ret.spelling, "int");
     EXPECT_TRUE(r.diagnostics.empty());
+}
+
+TEST(ClangFrontend, AFunctionThatReturnsAFunctionPointerHasItsOwnParametersOnly) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(auto trailing() -> void (*)(int);
+void (*get(int a, const char* b))(int c);
+struct Holder {
+    void (*callback(int a))(double b, double c);
+    int (*table() const)[4];
+};)";
+    const Read r = clang(text);
+    ASSERT_TRUE(r.diagnostics.empty());
+    ASSERT_EQ(r.model.functions.size(), 2u);
+    EXPECT_EQ(r.model.functions[0].name, "trailing");
+    EXPECT_EQ(r.model.functions[0].ret.spelling, "void(*)(int)");
+    EXPECT_TRUE(r.model.functions[0].params.empty()) << "the (int) belongs to the pointer";
+    EXPECT_EQ(r.model.functions[1].name, "get");
+    ASSERT_EQ(r.model.functions[1].params.size(), 2u);
+    EXPECT_EQ(r.model.functions[1].params[0].name, "a");
+    EXPECT_EQ(r.model.functions[1].params[1].name, "b");
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    ASSERT_EQ(r.model.classes[0].methods.size(), 2u);
+    ASSERT_EQ(r.model.classes[0].methods[0].params.size(), 1u);
+    EXPECT_EQ(r.model.classes[0].methods[0].params[0].name, "a");
+    EXPECT_TRUE(r.model.classes[0].methods[1].params.empty());
+    EXPECT_TRUE(r.model.classes[0].methods[1].is_const);
+}
+
+TEST(ClangFrontend, WhatFollowsARequiresClauseIsNotAQualifier) {
+    SKIP_WITHOUT_LIBCLANG();
+    const char* text = R"(template <typename T> struct Guarded {
+    void both() const requires (sizeof(T) > 1) && true;
+    void rvalue() requires true && false;
+    auto trailing() const -> int requires (sizeof(T) > 1);
+};)";
+    const Read r = clang(text, {"-std=c++20"});
+    ASSERT_EQ(r.model.classes.size(), 1u);
+    const std::vector<ir::Method>& m = r.model.classes[0].methods;
+    ASSERT_EQ(m.size(), 3u);
+    EXPECT_TRUE(m[0].is_const);
+    EXPECT_EQ(m[0].ref_qualifier, ir::RefKind::None) << "the && of the constraint is not a reference qualifier";
+    EXPECT_EQ(m[1].ref_qualifier, ir::RefKind::None);
+    EXPECT_FALSE(m[1].is_const);
+    EXPECT_TRUE(m[2].is_const);
+    EXPECT_EQ(m[2].ret.spelling, "int");
 }
 
 TEST(ClangFrontend, AStructGivenANameByATypedefIsReadWhichTheSyntaxTreeReaderDoesNot) {

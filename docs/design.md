@@ -405,7 +405,13 @@ What it is for: a header is code that compiles, and a compiler knows what a synt
   both can read: that is a test (`tests/unit/test_clang_frontend.cpp`) over a battery of headers, and the
   `GoldenWithLibclang` run of every `gen-tests` and `gen-impl` golden case (all but `ifdef_branches`, which
   differs on purpose). Qualifiers that are keywords (`virtual`, `explicit`, `override`, `noexcept`, `= delete`)
-  are read from the tokens as well, so "declared virtual" means written `virtual`.
+  are read from the tokens as well, so "declared virtual" means written `virtual`. Two things of libclang's
+  own are corrected for. The extent it gives a function with `-> decltype(...)` (the usual SFINAE return) ends at
+  the function's name, leaving out the return type, the parameter list and every qualifier, so a declaration whose
+  extent has no parameter list is read on, from the same start, to the `;` or `{` that ends it. And the children it
+  lists for a function that returns a function pointer (`void (*get(int a))(int b)`) include the pointer's
+  parameters, so the function's own are asked of libclang by number (a function template has no number to ask
+  for, and keeps its children).
 - **Qt.** The same blanking pass (`syntax::preprocess`) gives libclang the text without `Q_OBJECT`,
   `signals:` and `slots`, and the markers it leaves are applied by offset exactly as for the other reader, so the
   Qt roles are the same and Qt's headers are not needed for them. They are needed to *resolve* `QObject` and the
