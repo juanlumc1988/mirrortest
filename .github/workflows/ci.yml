@@ -263,3 +263,21 @@ jobs:
       # the round trips.
       - name: Compile the generated stubs for a 32-bit target
         run: ctest --test-dir build -R '^stubs\.cross\.' --output-on-failure
+
+  # The one check that branch protection requires: it passes only if every job above passed, so the rule does not have to
+  # list them, and a renamed job or a new entry in a matrix needs no change to it. `always()` makes it run (and fail)
+  # when a job failed or was cancelled, instead of being skipped, which a required check would count as passed.
+  ci-ok:
+    name: ci passed
+    if: always()
+    needs: [host, no-yaml, libclang, newest, install, sanitizers, qt, cross]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for r in $RESULTS; do
+            [ "$r" = success ] || { echo "a job ended as '$r'"; exit 1; }
+          done
