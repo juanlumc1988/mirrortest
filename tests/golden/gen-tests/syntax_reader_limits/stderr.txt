@@ -1,0 +1,2 @@
+created out/slim_test.cpp
+created out/slim_functions_test.cpp

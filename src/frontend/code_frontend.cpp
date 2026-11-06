@@ -147,6 +147,10 @@ private:
             if (within_directive(tree_.source(), n.start_byte(), n.end_byte())) {
                 return false;
             }
+            // `const char* = nullptr`: the parser stumbles on the `*`, and read_parameters reads it.
+            if (syntax::is_unnamed_parameter_declarator(n)) {
+                return false;
+            }
             // QFETCH(int, v) is no C++ to a parser, and the test frontend reads it by text.
             if (syntax::parse_qfetch(n.text())) {
                 return false;

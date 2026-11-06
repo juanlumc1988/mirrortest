@@ -83,6 +83,12 @@ struct Declarator {
 // an empty Declarator: a parameter with only a type.
 Declarator parse_declarator(const Node& declarator);
 
+// tree-sitter-cpp cannot read an unnamed parameter that has a default value and a pointer or reference declarator
+// (`const char* = nullptr`, `Foo& = x`): it makes the `*` an ERROR node inside the optional_parameter_declaration, and
+// everything else in it is right. This is that ERROR node, if `error` is one: the declarator it holds is read as
+// the parameter's (`read_parameters`) and is not a parse error to report.
+bool is_unnamed_parameter_declarator(const Node& error);
+
 // ---- specifiers ------------------------------------------------------------------------
 
 struct Specifiers {

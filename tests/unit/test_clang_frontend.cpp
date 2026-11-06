@@ -411,6 +411,22 @@ public:
     unsigned long /* wide */ x_ /* field */;
 };
 void /* free */ g(/* nothing */);)"},
+    {"comments_inside_types_and_unnamed_declarators",
+     R"(class Slim {
+public:
+    unsigned /* cache */ int size() const;
+    long /* wide */ long big() const;
+    unsigned // up to the end of the line
+        short small() const;
+    auto fn() const -> int (*)(int);
+    auto arr() const -> int (&)[3];
+    auto ptr() const -> int*;
+    void a(int (*)(int));
+    void b(int());
+    void c(int (&)[3]);
+    void d(const char* = nullptr, char* = 0, int x = 1);
+};
+void free_f(int*, const char* = "x");)"},
     {"function_templates",
      R"(namespace n {
 template <typename T> T identity(T v);
