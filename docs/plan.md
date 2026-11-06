@@ -381,8 +381,10 @@ the previous one. Size as in phase 9.
   `backend/template_expand` instantiates it, the planner writes `f<int>(...)`; packs are left out
   with a warning that says why; an unlisted template says which line to add. Unit tests per rule, a golden case, a
   round trip for both frameworks. The design is decided (§9.7).
-- [ ] **10.2** *(M, medium)* **macOS** (design §20.1). A CI job on `macos-latest` that builds and runs every test, first
-  without gating anything; fix what it shows (a portability bug is a bug, with a unit test); then it joins `ci passed`.
+- [x] **10.2** *(M, medium)* **macOS** (design §20.1). A CI job on `macos-latest` (Apple Clang, arm64, `-Werror`) that builds and
+  runs every test, and is among the jobs `ci passed` waits for. Its first run found one defect in the tests, not in the
+  tool: the golden header `math.h` of `free_functions` was found by libc++'s `<cmath>` in place of the C library's, because the
+  round trip puts the case's directory on the include path; it is `arith.h` now.
 - [ ] **10.3** *(L, medium)* **Windows with MSVC** (design §20.1). The same on `windows-latest`. Expected work: the
   generated-stub compile checks and the round trips call the compiler with its own flags; line endings of the golden
   files; whatever the C grammars need. Tests that cannot run on the platform skip themselves, and the job lists the skips.

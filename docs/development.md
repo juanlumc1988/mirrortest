@@ -32,6 +32,10 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+CI builds and runs the whole suite on Linux with GCC and Clang (Ubuntu 24.04 and 26.04) and on macOS with Apple Clang (arm64), all with
+warnings as errors; a header in a test case must not be named like a C library header (`math.h`), because the round trips put
+its directory on the include path and libc++ would find it in place of the library's.
+
 Both GCC and Clang must be clean (`-DCMAKE_C_COMPILER=clang
 -DCMAKE_CXX_COMPILER=clang++` for the second). Sanitizers:
 

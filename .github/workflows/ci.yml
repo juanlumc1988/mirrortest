@@ -264,13 +264,10 @@ jobs:
       - name: Compile the generated stubs for a 32-bit target
         run: ctest --test-dir build -R '^stubs\.cross\.' --output-on-failure
 
-  # macOS (plan 10.2): Apple Clang and the Apple libc++, on the arm64 runner. It does not gate anything yet: it is not among the
-  # jobs `ci passed` waits for, and `continue-on-error` keeps its failures from failing the run, until it is green; then it
-  # joins them.
+  # macOS (plan 10.2): Apple Clang and the Apple libc++, on the arm64 runner, warnings as errors, the whole test suite.
   macos:
     name: macos
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -296,7 +293,7 @@ jobs:
   ci-ok:
     name: ci passed
     if: always()
-    needs: [host, no-yaml, libclang, newest, install, sanitizers, qt, cross]
+    needs: [host, no-yaml, libclang, newest, install, sanitizers, qt, cross, macos]
     runs-on: ubuntu-latest
     steps:
       - name: Every job succeeded
