@@ -2,7 +2,7 @@
 # Part of mirrortest -- bidirectional C++ test/code generator.
 
 cmake_minimum_required(VERSION 3.20)
-project(mirrortest VERSION 0.1.0 LANGUAGES C CXX)
+project(mirrortest VERSION 1.0.0 LANGUAGES C CXX)
 
 option(MT_BUILD_TESTS "Build the unit, golden and round-trip tests" ON)
 option(MT_WERROR      "Treat warnings as errors" OFF)

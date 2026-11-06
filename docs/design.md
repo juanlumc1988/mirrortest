@@ -2646,6 +2646,7 @@ formatting with clang-format (the output already follows a fixed style).
    and how to verify the download against `SHA256SUMS` and the attestation. A signing step is added when there is a
    certificate.
 2. **Windows:** MSVC only. **macOS:** one universal binary (arm64 and x86-64).
-3. **First version:** `0.1.0`, as `CMakeLists.txt` has it; `0.x` releases are marked as pre-releases.
+3. **Versions:** the first release was `0.1.0`, as `CMakeLists.txt` had it; `0.x` releases are marked as pre-releases. The
+   next is `1.0.0` (2026-11-06), a normal release: the plan is complete and nothing in it is left open.
 4. **Actions** of the release workflow are pinned by commit SHA (with the tag in a comment), and Dependabot proposes the
    updates for them and for the actions of `ci.yml`.
