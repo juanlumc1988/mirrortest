@@ -49,10 +49,7 @@ Node inner_declarator(const Node& wrapper) {
 std::string blanked_text(const Node& node) {
     std::string text(node.text());
     const unsigned base = node.start_byte();
-    for (const Node& comment : find_all(node, "comment")) {
-        if (comment.start_byte() < base || comment.end_byte() > node.end_byte()) {
-            continue;
-        }
+    for (const Node& comment : find_all(node, "comment")) {   // all of them inside `node`
         std::fill(text.begin() + (comment.start_byte() - base), text.begin() + (comment.end_byte() - base), ' ');
     }
     return text;
