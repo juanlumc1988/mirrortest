@@ -146,6 +146,22 @@ Exit codes: `0` success, `1` the input has errors (nothing is written), `2` usag
 `3` I/O, `4` `--check` found differences. Diagnostics use the GCC format
 (`file:line:col: warning: message [mt-code]`), so editors and CI pick them up.
 
+## Download
+
+Each [release](https://github.com/juanlumc1988/mirrortest/releases) has an archive for Linux (x86-64; glibc 2.35 or later),
+macOS (universal, 11 or later) and Windows (x86-64), a `SHA256SUMS` file and a build provenance attestation. They hold the
+program and the documentation, and the program is the default one: tree-sitter reads the headers (`--frontend libclang` needs
+a build with `-DMT_WITH_LIBCLANG=ON`, below). To check a download:
+
+```console
+$ sha256sum --check --ignore-missing SHA256SUMS      # shasum -a 256 -c on macOS
+$ gh attestation verify mirrortest-X.Y.Z-linux-x86_64.tar.gz --repo juanlumc1988/mirrortest
+```
+
+The programs are not signed. macOS puts a downloaded file in quarantine and refuses an unsigned program: take the quarantine
+off with `xattr -dr com.apple.quarantine mirrortest-X.Y.Z-macos-universal`. Windows SmartScreen warns about an unsigned
+program: "More info", then "Run anyway".
+
 ## Building
 
 Requirements: CMake ≥ 3.20, a C++17 and C11 compiler (GCC or Clang), git.

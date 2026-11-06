@@ -391,9 +391,13 @@ the previous one. Size as in phase 9.
   Studio (they use `/std:c++14 /W4 /WX /permissive- /Zs` and the environment `vcvars64` gives, loaded by the job), and
   `path_below` trusted `lexically_relative` for paths with and without a root, which Windows reads differently (a bug, now
   compared explicitly). The round trips, which compile with GCC/Clang command lines, run on the other systems.
-- [ ] **10.4** *(M, high)* **Release workflow** (design §20.2). `release.yml` on a `vX.Y.Z` tag that equals the project
-  version: build on the three platforms, package with CPack, `SHA256SUMS`, attestation, create the release as a
-  pre-release with generated notes. Tried first on a throw-away tag in a fork or with `workflow_dispatch` and no
-  publication. `docs/development.md` says how to make a release; the README says how to verify a download.
-- [ ] **10.5** *(S, medium)* **Protect the tags** with a ruleset (`v*`: no deletion, no update) and the release job
-  with its environment; both are repository settings, so the plan gives the JSON and the owner applies it.
+- [x] **10.4** *(M, high)* **Release workflow** (design §20.2). `release.yml` on a `vX.Y.Z` tag that equals the project version and is
+  on `main`: build on the three platforms (Linux in an Ubuntu 22.04 container with the C++ runtime inside, one universal macOS
+  binary, Windows with MSVC and the runtime inside), package with CPack, check each package as a user gets it, `SHA256SUMS`,
+  attestation, create the release as a draft that is published when everything is attached (a pre-release while the version is
+  `0.x`), notes generated. A pull request that changes the workflow, and a manual run, build and check and publish nothing; its
+  first run built and checked the three packages. `docs/development.md` says how to make a release; the README says how to verify
+  a download. Dependabot proposes the updates of the actions, which are pinned by commit.
+- [x] **10.5** *(S, medium)* **Protect the tags and the branch** with rulesets, repository settings that the owner applies:
+  `.github/rulesets/release-tags.json` (`v*`: no deletion, no update) and `.github/rulesets/main.json` (a pull request, and the one
+  check `ci passed`); and the publish job has an environment, `release`, where required reviewers can be set.
