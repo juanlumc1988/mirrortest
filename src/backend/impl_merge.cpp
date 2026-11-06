@@ -527,6 +527,10 @@ std::optional<core::MergeResult> ImplMerger::merge(const core::OutputFile& gener
     core::Diagnostics ours;   // regions of our own output cannot be malformed, and if they are the file is just not merged
     const std::optional<std::vector<Region>> wanted_regions = core::find_regions(generated.content, generated.path, ours);
     if (!wanted_regions) return std::nullopt;
+    // A file with no regions (mt_not_implemented.h) has nothing to insert into: it is whole or it is different, and a
+    // different one is not merged but left as it is, with the new text in a .new beside it. Saying "unchanged" for it
+    // would hide that a run with other options (--no-exceptions) wants another header.
+    if (wanted_regions->empty()) return std::nullopt;
 
     Job job{generated, existing, 0, false, diagnostics};
     const std::vector<std::string> generated_lines = core::split_lines(generated.content);

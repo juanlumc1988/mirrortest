@@ -26,9 +26,11 @@ inline constexpr const char* kHookHeaderName = "mt_not_implemented.h";
 
 // Its text. The default handler throws a `std::logic_error`, or -- with
 // `no_exceptions` or `no_stl`, which have nothing to throw -- prints the signature
-// with <cstdio> and aborts. `source` is the test it was generated from, only
-// shown in the first line. Ends with a newline, uses LF.
-std::string hook_header(const core::Config& config, const std::string& source);
+// with <cstdio> and aborts. Every test of a run, and of a later run, needs this same
+// file, so nothing in it depends on the test that asked for it (it used to name the
+// test in its first line, which made two tests in one run an error and a second run
+// leave a `.new` for a comment). Ends with a newline, uses LF.
+std::string hook_header(const core::Config& config);
 
 }  // namespace mt::backend
 

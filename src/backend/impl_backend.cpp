@@ -814,7 +814,7 @@ core::OutputPlan generate_impl(const ir::Model& model, const ImplOptions& option
             }
         }
     }
-    if (built.uses_hook) plan.files.push_back({core::output_path(options.out_include, kHookHeaderName), hook_header(options.config, options.source)});
+    if (built.uses_hook) plan.files.push_back({core::output_path(options.out_include, kHookHeaderName), hook_header(options.config)});
     return plan;
 }
 

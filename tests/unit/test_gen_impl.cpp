@@ -437,7 +437,42 @@ TEST(GenImplHook, TheStubsCallTheHookAndItsHeaderIsWrittenWithTheOthers) {
     EXPECT_TRUE(contains(read(dir, "src/acme/foo.cpp"), "    mt_not_implemented(\"acme::Foo::size() const\");\n    return {};\n"));
     EXPECT_FALSE(contains(read(dir, "src/acme/foo.cpp"), "throw"));
     EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "inline void mt_not_implemented(const char* signature) {"));
-    EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "from tests/foo_test.cpp."));
+    EXPECT_FALSE(contains(read(dir, "src/mt_not_implemented.h"), "foo_test.cpp")) << "it belongs to every test, not to this one";
+}
+
+TEST(GenImplHook, SeveralTestsInOneRunShareTheHeader) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "tests/bar_test.cpp",
+               "#include <gtest/gtest.h>\n#include \"acme/bar.h\"\nTEST(BarTest, Level) { acme::Bar bar; EXPECT_EQ(bar.level(), 3u); }\n");
+    const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "tests/bar_test.cpp", "--out", "src", "--stub-policy", "hook"});
+    EXPECT_EQ(r.code, 0) << r.err;
+    EXPECT_TRUE(exists(dir, "src/acme/foo.h"));
+    EXPECT_TRUE(exists(dir, "src/acme/bar.h"));
+    EXPECT_TRUE(exists(dir, "src/mt_not_implemented.h"));
+}
+
+TEST(GenImplHook, ARunFromAnotherTestLeavesTheHeaderAlone) {
+    const TempDir dir;
+    write_foo_test(dir);
+    write_file(dir.path() / "tests/bar_test.cpp",
+               "#include <gtest/gtest.h>\n#include \"acme/bar.h\"\nTEST(BarTest, Level) { acme::Bar bar; EXPECT_EQ(bar.level(), 3u); }\n");
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook"}).code, 0);
+    const Outcome r = gen_impl(dir, {"tests/bar_test.cpp", "--out", "src", "--stub-policy", "hook"});
+    EXPECT_TRUE(contains(r.err, "unchanged src/mt_not_implemented.h\n")) << r.err;
+    EXPECT_FALSE(exists(dir, "src/mt_not_implemented.h.new"));
+}
+
+TEST(GenImplHook, AHeaderThatDiffersGetsADotNewAlsoUnderMerge) {
+    const TempDir dir;
+    write_foo_test(dir);
+    ASSERT_EQ(gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook"}).code, 0);
+    for (const char* mode : {"never", "merge"}) {
+        const Outcome r = gen_impl(dir, {"tests/foo_test.cpp", "--out", "src", "--stub-policy", "hook", "--no-exceptions", "--overwrite", mode});
+        EXPECT_TRUE(contains(r.err, "wrote src/mt_not_implemented.h.new (src/mt_not_implemented.h exists and differs)\n")) << mode << ": " << r.err;
+        EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h.new"), "std::abort();")) << mode;
+        EXPECT_TRUE(contains(read(dir, "src/mt_not_implemented.h"), "throw std::logic_error")) << "the file itself is not touched";
+    }
 }
 
 TEST(GenImplHook, ASecondRunChangesNothingAndNeitherDoesMerge) {
