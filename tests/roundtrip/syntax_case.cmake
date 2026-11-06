@@ -15,6 +15,9 @@
 # Each source includes its own header first, so a header that is not
 # self-contained fails here too.
 #
+# With MSVC (-DMT_CXX_ID=MSVC) the same question is asked in its own words: /std:c++14 (its oldest), /W4 /WX /permissive-,
+# /Zs for syntax only; there is no way to ask it for -fno-exceptions, so --no-exceptions changes nothing there.
+#
 # Stubs that mention Qt (a QString in a signature) need Qt's headers, which are
 # C++17: with -DMT_QT_INCLUDE=<list> the stubs are compiled as C++17 with -fPIC
 # and Qt's include directories, and nothing else changes.
@@ -34,8 +37,17 @@ file(MAKE_DIRECTORY "${gen}")
 
 file(STRINGS "${MT_CASE_DIR}/args.txt" raw_args)
 set(args "")
+set(msvc FALSE)
+if(DEFINED MT_CXX_ID AND MT_CXX_ID STREQUAL "MSVC")
+    set(msvc TRUE)
+endif()
 set(flags -std=c++11 -Wall -Wextra -Wpedantic -Werror -fsyntax-only)
-if(DEFINED MT_QT_INCLUDE AND NOT "${MT_QT_INCLUDE}" STREQUAL "")
+set(include_flag "-I")
+if(msvc)
+    set(flags /nologo /std:c++14 /W4 /WX /permissive- /EHsc /Zs)
+    set(include_flag "/I")
+endif()
+if(NOT msvc AND DEFINED MT_QT_INCLUDE AND NOT "${MT_QT_INCLUDE}" STREQUAL "")
     set(flags -std=c++17 -fPIC -Wall -Wextra -Wpedantic -Werror -fsyntax-only)
     foreach(dir IN LISTS MT_QT_INCLUDE)
         list(APPEND flags "-I${dir}")
@@ -45,7 +57,7 @@ foreach(arg IN LISTS raw_args)
     string(REPLACE "\${IN}" "${input}" arg "${arg}")
     string(REPLACE "\${OUT}" "${gen}" arg "${arg}")
     list(APPEND args "${arg}")
-    if(arg STREQUAL "--no-exceptions")
+    if(arg STREQUAL "--no-exceptions" AND NOT msvc)
         list(APPEND flags -fno-exceptions -fno-rtti)
     endif()
 endforeach()
@@ -58,7 +70,7 @@ endif()
 file(GLOB_RECURSE sources "${gen}/*.cpp")
 list(SORT sources)
 foreach(source IN LISTS sources)
-    execute_process(COMMAND "${MT_CXX}" ${flags} "-I${gen}" "-I${input}/include" "${source}"
+    execute_process(COMMAND "${MT_CXX}" ${flags} "${include_flag}${gen}" "${include_flag}${input}/include" "${source}"
                     RESULT_VARIABLE code OUTPUT_VARIABLE out ERROR_VARIABLE err)
     if(NOT code EQUAL 0)
         message(FATAL_ERROR "${MT_CXX} rejects ${source} (${MT_CASE_DIR}):\n${out}${err}")

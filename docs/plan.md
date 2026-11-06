@@ -385,9 +385,12 @@ the previous one. Size as in phase 9.
   runs every test, and is among the jobs `ci passed` waits for. Its first run found one defect in the tests, not in the
   tool: the golden header `math.h` of `free_functions` was found by libc++'s `<cmath>` in place of the C library's, because the
   round trip puts the case's directory on the include path; it is `arith.h` now.
-- [ ] **10.3** *(L, medium)* **Windows with MSVC** (design §20.1). The same on `windows-latest`. Expected work: the
-  generated-stub compile checks and the round trips call the compiler with its own flags; line endings of the golden
-  files; whatever the C grammars need. Tests that cannot run on the platform skip themselves, and the job lists the skips.
+- [x] **10.3** *(L, medium)* **Windows with MSVC** (design §20.1). A CI job on `windows-latest` (MSVC x64, `/W4 /WX`) that builds
+  and runs every test, and is among the jobs `ci passed` waits for. Its first run compiled everything and passed 2281 of 2330 tests;
+  the rest were two things: the stub checks asked `cl` in GCC flags and could not find the standard headers outside Visual
+  Studio (they use `/std:c++14 /W4 /WX /permissive- /Zs` and the environment `vcvars64` gives, loaded by the job), and
+  `path_below` trusted `lexically_relative` for paths with and without a root, which Windows reads differently (a bug, now
+  compared explicitly). The round trips, which compile with GCC/Clang command lines, run on the other systems.
 - [ ] **10.4** *(M, high)* **Release workflow** (design §20.2). `release.yml` on a `vX.Y.Z` tag that equals the project
   version: build on the three platforms, package with CPack, `SHA256SUMS`, attestation, create the release as a
   pre-release with generated notes. Tried first on a throw-away tag in a fork or with `workflow_dispatch` and no

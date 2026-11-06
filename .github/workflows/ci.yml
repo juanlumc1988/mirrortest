@@ -287,13 +287,40 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure -j 4
 
+  # Windows (plan 10.3): MSVC, x64, the newest Visual Studio of the runner, warnings as errors (/W4 /WX). The round trips (they
+  # compile the generated code with GCC/Clang command lines) are not registered under MSVC: they run on the other systems.
+  windows:
+    name: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tests that compile generated code call `cl` themselves, outside Visual Studio's build: they need the compiler's
+      # environment (INCLUDE, LIB, PATH) as a developer prompt has it.
+      - name: Developer environment
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
+          }
+
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DMT_WERROR=ON
+
+      - name: Build
+        run: cmake --build build --config Debug -j
+
+      - name: Test
+        run: ctest --test-dir build -C Debug --output-on-failure -j 4
+
   # The one check that branch protection requires: it passes only if every job above passed, so the rule does not have to
   # list them, and a renamed job or a new entry in a matrix needs no change to it. `always()` makes it run (and fail)
   # when a job failed or was cancelled, instead of being skipped, which a required check would count as passed.
   ci-ok:
     name: ci passed
     if: always()
-    needs: [host, no-yaml, libclang, newest, install, sanitizers, qt, cross, macos]
+    needs: [host, no-yaml, libclang, newest, install, sanitizers, qt, cross, macos, windows]
     runs-on: ubuntu-latest
     steps:
       - name: Every job succeeded

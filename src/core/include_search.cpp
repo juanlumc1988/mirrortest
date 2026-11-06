@@ -106,6 +106,11 @@ std::vector<ResolvedInclude> resolve_includes(const std::vector<ir::Include>& in
 }
 
 std::optional<std::string> path_below(const std::filesystem::path& file, const std::filesystem::path& dir) {
+    // Nothing to compare: an empty path, or one with a root (a drive, a leading slash) and one without. The standard's
+    // `lexically_relative` is not trusted to say so: on Windows "/p/x" is not absolute, and an empty base gives the file itself.
+    if (file.empty() || dir.empty() || file.root_name() != dir.root_name() || file.has_root_directory() != dir.has_root_directory()) {
+        return std::nullopt;
+    }
     const std::filesystem::path relative = file.lexically_normal().lexically_relative(dir.lexically_normal());
     // Empty: no way from one to the other. "." : the same place. "..": it is outside.
     if (relative.empty() || relative == "." || *relative.begin() == "..") return std::nullopt;

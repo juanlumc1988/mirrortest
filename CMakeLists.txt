@@ -30,6 +30,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 elseif(MSVC)
     set(MT_WARNINGS /W4 /permissive-)
+    # The headers of the dependencies are SYSTEM includes (/external:I); their warnings are not ours. C4702 (unreachable code)
+    # is reported by the code generator for the templates of inja, which /external:W0 does not cover: it is off.
+    if(MSVC_VERSION GREATER_EQUAL 1929)
+        list(APPEND MT_WARNINGS /external:W0)
+    endif()
+    list(APPEND MT_WARNINGS /wd4702)
     if(MT_WERROR)
         list(APPEND MT_WARNINGS /WX)
     endif()
@@ -41,6 +47,10 @@ function(mt_configure tgt)
         CXX_STANDARD_REQUIRED ON
         CXX_EXTENSIONS OFF)
     target_compile_options(${tgt} PRIVATE ${MT_WARNINGS})
+    if(MSVC)
+        # std::getenv is "unsafe" to the CRT (C4996); nothing here writes through what it returns.
+        target_compile_definitions(${tgt} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
 endfunction()
 
 # ---- core library: IR, parsing, inference, emission -----------------------
@@ -459,6 +469,7 @@ if(MT_BUILD_TESTS)
                         -DMT_CASE_DIR=${case_dir}
                         -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/stubs-${kind}/${case}
                         -DMT_CXX=${compiler}
+                        -DMT_CXX_ID=${CMAKE_CXX_COMPILER_ID}
                         "$<$<BOOL:${case_qt}>:-DMT_QT_INCLUDE=$<TARGET_PROPERTY:${MT_QT}::Test,INTERFACE_INCLUDE_DIRECTORIES>$<SEMICOLON>$<TARGET_PROPERTY:${MT_QT}::Core,INTERFACE_INCLUDE_DIRECTORIES>>"
                         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/syntax_case.cmake")
                 set_tests_properties(stubs.${kind}.${case} PROPERTIES TIMEOUT 120)
