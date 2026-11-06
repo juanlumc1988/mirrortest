@@ -24,6 +24,26 @@ the build and test run of the section below. It is idempotent and edits no dotfi
 `--with-qt` (Qt 6 with Test and moc, for the Qt round trips) and `--with-clang` (Clang 20 and its sanitizer runtime).
 Run from a checkout it uses it; standalone, `--clone[=DIR]` clones into `~/mirrortest`.
 
+## Making a release
+
+A release is a tag, and nothing else: `.github/workflows/release.yml` does the rest (design §20).
+
+1. The version is the one in `CMakeLists.txt` (`project(mirrortest VERSION x.y.z)`); raise it in a pull request, with the
+   plan and the notes that say what the release holds, and merge it. `main` is green: the release does not run the tests again.
+2. Tag that commit and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow refuses a tag that is not
+   `v` + the version of `CMakeLists.txt`, or that is not on `main`.
+3. It builds Release packages on Linux (in Ubuntu 22.04, the C++ runtime inside the program), macOS (one universal binary,
+   macOS 11 or later) and Windows (MSVC, the runtime inside), unpacks each and checks it (the program runs and says the
+   version; on Linux and macOS `tools/check_install.sh`; on macOS both architectures are there; on Linux it needs no
+   libstdc++), writes `SHA256SUMS`, attests the packages (build provenance), and creates the release as a draft that it
+   publishes when all is attached. A `0.x` version is a pre-release. The notes are generated from the pull requests.
+4. The workflow is tried, without publishing, by a pull request that changes it and by a manual run (Actions, Release, Run
+   workflow): they build and check the packages and keep them as artifacts of the run for 14 days.
+
+A tag is never moved or deleted (a ruleset for `v*` tags forbids it, plan 10.5): a release that was wrong is followed by
+the next patch version. The actions of the workflow are pinned by commit, with the tag in a comment; Dependabot proposes
+the updates as pull requests.
+
 ## Build and test
 
 ```sh

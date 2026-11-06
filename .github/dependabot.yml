@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+# Part of mirrortest -- bidirectional C++ test/code generator.
+#
+# The actions of the workflows (ci.yml by tag, release.yml by commit with the tag in a comment): Dependabot proposes the
+# update of each as a pull request, which CI checks before anybody merges it.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CI:"
+    groups:
+      actions:
+        patterns: ['*']
