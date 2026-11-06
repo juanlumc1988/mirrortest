@@ -359,8 +359,9 @@ past twice its size, stop at what is solid and say so instead of widening it.
 
 - **Publishing releases or binaries.** It acts outside the repository (a release page, an artifact someone
   downloads); the owner decides if and where, and 9.8 only makes it possible. Decided for phase 10 (10.4, 10.5).
-- **`mt_not_implemented.h` under `--overwrite merge`.** A file the test side is meant to edit (it installs the handler
-  there) is never overwritten: a changed one gets a `.new`. That is the safe behaviour, not a missing feature.
+- **`mt_not_implemented.h` under `--overwrite merge`.** Thought to be a file the test side edits (it installs the handler
+  there), which is why merge left it alone. It is not: the handler is installed from the test program. Closed in phase 11
+  (11.3), with two defects behind it.
 - **The two limits of the syntax-tree reader** that libclang does not have (a comment inside a fundamental type,
   an abstract declarator in a trailing return type). Closed in phase 11 (11.2), where they turned out to be worse than
   rare: a `//` comment inside a type produced code that did not compile, and an unnamed function-pointer parameter lost
@@ -420,3 +421,11 @@ The owner asked for the three open items of the list above to be closed (2026-11
   `ERROR` node, and no `mt-parse` warning is given for it. Conversion operators are still functions. Unit tests of
   the extractor, a snippet that both readers must model the same (`test_clang_frontend.cpp`) and the golden case
   `syntax_reader_limits`.
+- [x] **11.3** *(S, medium)* **`mt_not_implemented.h`** (design §8.3). The item looked like a feature that was left out on
+  purpose; looking at what the tool does found two defects. The header named the test it was generated from in its first line,
+  so a `gen-impl` run over two tests with the `hook` policy failed ("both generate ... with different content"), and a later
+  run from another test left a `.new` for a comment: the line is gone, the header is the same for every test. And
+  `--overwrite merge` reported a header that differed (a run with `--no-exceptions`, say) as `unchanged`, because a file without
+  regions has nothing to insert into: it gets a `.new` now, as under `never`, and the file is not touched. Unit tests of the
+  header, of the merger and of the runs (several tests, another test, other options under both modes); the three `hook` goldens
+  have the new first line.
