@@ -292,7 +292,7 @@ each task (`- [x]`) when it is finished, in the same commit that implements it.
 
 ---
 
-## Phase 9 — Robustness and coverage (defined, not started)
+## Phase 9 — Robustness and coverage (done)
 
 What is left after phase 8 comes from three places: the places where the design says "a later phase"
 (§7.6 matchers, §9.1 free functions, §6.5 members under `#if`), the limits that the phase 8 review listed,
@@ -358,13 +358,37 @@ past twice its size, stop at what is solid and say so instead of widening it.
 ### Left out of phase 9, and why
 
 - **Publishing releases or binaries.** It acts outside the repository (a release page, an artifact someone
-  downloads); the owner decides if and where, and 9.8 only makes it possible.
+  downloads); the owner decides if and where, and 9.8 only makes it possible. Proposed in phase 10 (10.4, 10.5).
 - **`mt_not_implemented.h` under `--overwrite merge`.** A file the test side is meant to edit (it installs the handler
   there) is never overwritten: a changed one gets a `.new`. That is the safe behaviour, not a missing feature.
 - **The two limits of the syntax-tree reader** that libclang does not have (a comment inside a fundamental type,
   an abstract declarator in a trailing return type). They are rare, `--frontend libclang` reads them right, and 9.1
   will say if the corpus shows them often enough to change that.
-- **Windows and macOS builds.** Nothing in the project needs them yet, and each is a CI job to keep green.
+- **Windows and macOS builds.** Nothing in the project needed them yet, and each is a CI job to keep green. Proposed
+  in phase 10 (10.2, 10.3), together with the releases, which are what makes them worth the upkeep.
 - **Matchers over containers** (9.4) and **function templates** (9.5): they need decisions about which instantiation
   to test, which the design leaves to the configuration (`template_instantiations`, §9.1); a function template still gets
-  an `mt-unsupported` warning and no test.
+  an `mt-unsupported` warning and no test. Function templates are proposed in phase 10 (10.1, design §9.7); matchers
+  over containers stay out.
+
+## Phase 10 — Function templates, other platforms and releases (proposed, not started)
+
+Each task needs the owner's answer to the open questions of its design section before it starts
+(design §9.7 and §20). Size as in phase 9.
+
+- [ ] **10.1** *(M, medium)* **Function templates in `gen-tests`** (design §9.7). `template_instantiations` accepts
+  the name of a function template; the frontend keeps the template in the model (`Function::template_params`),
+  `backend/template_expand` instantiates it, the planner writes `f<int>(...)`; packs and dependent types are left out
+  with a warning that says why; an unlisted template says which line to add. Unit tests per rule, a golden case, a
+  round trip for both frameworks. Design first (the open questions), then code.
+- [ ] **10.2** *(M, medium)* **macOS** (design §20.1). A CI job on `macos-latest` that builds and runs every test, first
+  without gating anything; fix what it shows (a portability bug is a bug, with a unit test); then it joins `ci passed`.
+- [ ] **10.3** *(L, medium)* **Windows with MSVC** (design §20.1). The same on `windows-latest`. Expected work: the
+  generated-stub compile checks and the round trips call the compiler with its own flags; line endings of the golden
+  files; whatever the C grammars need. Tests that cannot run on the platform skip themselves, and the job lists the skips.
+- [ ] **10.4** *(M, high)* **Release workflow** (design §20.2). `release.yml` on a `vX.Y.Z` tag that equals the project
+  version: build on the three platforms, package with CPack, `SHA256SUMS`, attestation, create the release as a
+  pre-release with generated notes. Tried first on a throw-away tag in a fork or with `workflow_dispatch` and no
+  publication. `docs/development.md` says how to make a release; the README says how to verify a download.
+- [ ] **10.5** *(S, medium)* **Protect the tags** with a ruleset (`v*`: no deletion, no update) and the release job
+  with its environment; both are repository settings, so the plan gives the JSON and the owner applies it.
