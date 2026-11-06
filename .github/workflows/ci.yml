@@ -298,6 +298,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The tests that compile generated code call `cl` themselves, outside Visual Studio's build: they need the compiler's
+      # environment (INCLUDE, LIB, PATH) as a developer prompt has it.
+      - name: Developer environment
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
+          }
+
       - name: Configure
         run: cmake -S . -B build -A x64
 
