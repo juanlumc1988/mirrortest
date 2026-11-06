@@ -33,24 +33,18 @@ ir::Type inferred_type(std::string_view spelling, const std::string& reason) {
 
 // `testing::Eq`, `::testing::Eq` and `Eq` are one matcher.
 std::string matcher_name(std::string name) {
-    for (const std::string scope : {"::testing::", "testing::"}) {
-        if (name.compare(0, scope.size(), scope) == 0) {
-            name.erase(0, scope.size());
-            break;
-        }
+    if (name.compare(0, 11, "::testing::") == 0) {
+        name.erase(0, 11);
+    } else if (name.compare(0, 9, "testing::") == 0) {
+        name.erase(0, 9);
     }
     return name;
 }
 
 // What a container holds when an element is `int& x` or `const std::string s`: the type without the top-level `const` and
 // the reference (the pointee's `const` stays: `const char*` is not `char*`).
-ir::Type element_type(ir::Type t) {
-    if (t.ref == ir::RefKind::None && (t.is_const == false || t.pointer_depth > 0)) return t;
-    ir::Type out = ir::make_type(t.base, t.pointer_depth > 0 && t.is_const, ir::RefKind::None, t.pointer_depth);
-    out.origin = t.origin;
-    out.reason = t.reason;
-    out.where = t.where;
-    return out;
+std::string element_spelling(const ir::Type& t) {
+    return ir::make_type(t.base, t.pointer_depth > 0 && t.is_const, ir::RefKind::None, t.pointer_depth).spelling;
 }
 
 std::optional<Receiver> receiver_of(const ValueInfo& v, bool arrow) {
@@ -1091,7 +1085,7 @@ private:
         if (v.is_string_literal) {
             e.type = inferred_type("std::string", "string literal");
         } else if (v.type) {
-            e.type = element_type(*v.type);
+            e.type = inferred_type(element_spelling(*v.type), "element of a matcher");
         }
         if (e.type) e.warnings = v.warnings;
         return e;
