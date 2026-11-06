@@ -95,6 +95,8 @@ inline std::string dump(const mt::ir::Model& model, bool with_positions = false)
     for (const mt::ir::Function& f : model.functions) {
         out << "function " << f.name;
         for (const std::string& n : f.ns) out << " ns:" << n;
+        if (f.template_params) out << " template<" << *f.template_params << ">";
+        if (!f.template_args.empty()) out << " args<" << f.template_args << ">";
         out << " ret=" << dump_type(f.ret) << " noexcept=" << f.is_noexcept << " header=" << f.header;
         if (!f.guards.empty()) out << " guards=" << join_guards(f.guards);
         if (with_positions) out << " @" << dump_where(f.where);

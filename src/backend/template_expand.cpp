@@ -131,6 +131,48 @@ std::string substitute(const std::string& text, const std::map<std::string, std:
     return out;
 }
 
+// Each parameter's argument: the one given, else its default with the earlier parameters in it. False, after a
+// warning that says why, if a parameter has none.
+bool bind_arguments(const std::vector<TemplateParam>& params, const std::vector<std::string>& args, const std::string& shown,
+                    const ir::SourceLoc& where, core::Diagnostics& diagnostics, std::map<std::string, std::string>& with) {
+    for (std::size_t i = 0; i < params.size(); ++i) {
+        std::string value;
+        if (i < args.size()) {
+            value = args[i];
+        } else if (params[i].has_default) {
+            value = substitute(params[i].default_value, with, std::string(), std::string());
+        } else {
+            diagnostics.warning(core::code::config,
+                                "template_instantiations: '" + shown + "' gives " + std::to_string(args.size()) +
+                                    " arguments and parameter " + std::to_string(i + 1) + " of the template has no default",
+                                where);
+            return false;
+        }
+        if (!params[i].name.empty()) with[params[i].name] = ir::normalize_spelling(value);
+    }
+    return true;
+}
+
+// One entry of the configuration for a template with `params`: the arguments bound to the parameters, and the
+// arguments as they are written in the name of an instance ("int, 8"; `joined` comes in empty). False, after a warning, if it
+// does not fit.
+bool resolve_entry(const std::vector<TemplateParam>& params, const std::string& list, const std::string& qualified,
+                   const ir::SourceLoc& where, core::Diagnostics& diagnostics, std::map<std::string, std::string>& with,
+                   std::string& joined) {
+    const std::vector<std::string> args = split_template_arguments(list);
+    const std::string shown = qualified + "<" + list + ">";
+    if (args.size() > params.size()) {
+        diagnostics.warning(core::code::config,
+                            "template_instantiations: '" + shown + "' gives " + std::to_string(args.size()) +
+                                " arguments and the template has " + std::to_string(params.size()),
+                            where);
+        return false;
+    }
+    if (!bind_arguments(params, args, shown, where, diagnostics, with)) return false;
+    for (std::size_t i = 0; i < args.size(); ++i) joined += (i == 0 ? "" : ", ") + ir::normalize_spelling(args[i]);
+    return true;
+}
+
 class Instantiator {
 public:
     Instantiator(const std::map<std::string, std::string>& with, std::string own_name, std::string instance)
@@ -217,38 +259,9 @@ ir::Model instantiate_templates(const ir::Model& model, const core::Config& conf
 
         bool any = false;
         for (const std::string& list : wanted->second) {
-            const std::vector<std::string> args = split_template_arguments(list);
-            const std::string shown = qualified + "<" + list + ">";
-            if (args.size() > params.size()) {
-                diagnostics.warning(core::code::config,
-                                    "template_instantiations: '" + shown + "' gives " + std::to_string(args.size()) +
-                                        " arguments and the template has " + std::to_string(params.size()),
-                                    c.where);
-                continue;
-            }
-
-            // Each parameter's argument: the one given, else its default with the earlier parameters in it.
             std::map<std::string, std::string> with;
-            bool complete = true;
-            for (std::size_t i = 0; i < params.size() && complete; ++i) {
-                std::string value;
-                if (i < args.size()) {
-                    value = args[i];
-                } else if (params[i].has_default) {
-                    value = substitute(params[i].default_value, with, std::string(), std::string());
-                } else {
-                    diagnostics.warning(core::code::config,
-                                        "template_instantiations: '" + shown + "' gives " + std::to_string(args.size()) +
-                                            " arguments and parameter " + std::to_string(i + 1) + " of the template has no default",
-                                        c.where);
-                    complete = false;
-                }
-                if (complete && !params[i].name.empty()) with[params[i].name] = ir::normalize_spelling(value);
-            }
-            if (!complete) continue;
-
             std::string joined;
-            for (std::size_t i = 0; i < args.size(); ++i) joined += (i == 0 ? "" : ", ") + ir::normalize_spelling(args[i]);
+            if (!resolve_entry(params, list, qualified, c.where, diagnostics, with, joined)) continue;
             const std::string instance = c.name + "<" + joined + ">";
 
             const Instantiator inst(with, c.name, instance);
@@ -260,6 +273,48 @@ ir::Model instantiate_templates(const ir::Model& model, const core::Config& conf
             any = true;
         }
         if (!any) out.classes.push_back(c);   // nothing could be made: the planner says the template is skipped
+    }
+
+    // The function templates the same way: where one stood, one function per entry (an overload set of templates
+    // that share a name is each of them, and an entry that does not fit one of them is a warning for that one).
+    out.functions.clear();
+    for (const ir::Function& f : model.functions) {
+        const std::string qualified = ir::qualified_name(f.ns, f.name);
+        const auto wanted = config.template_instantiations.find(qualified);
+        if (!f.template_params || wanted == config.template_instantiations.end()) {
+            out.functions.push_back(f);
+            continue;
+        }
+
+        std::vector<TemplateParam> params;
+        if (!parse_template_params(*f.template_params, params)) {
+            diagnostics.warning(core::code::config,
+                                "template_instantiations: '" + qualified + "' has a parameter pack, which a test cannot instantiate; "
+                                "the function is not tested",
+                                f.where);
+            out.functions.push_back(f);
+            continue;
+        }
+
+        bool any = false;
+        for (const std::string& list : wanted->second) {
+            std::map<std::string, std::string> with;
+            std::string joined;
+            if (!resolve_entry(params, list, qualified, f.where, diagnostics, with, joined)) continue;
+
+            const Instantiator inst(with, std::string(), std::string());
+            ir::Function made = f;
+            made.template_params.reset();
+            made.template_args = joined;
+            made.ret = inst.type(f.ret);
+            for (ir::Param& p : made.params) {
+                p.type = inst.type(p.type);
+                if (p.default_value) p.default_value = inst.text(*p.default_value);
+            }
+            out.functions.push_back(std::move(made));
+            any = true;
+        }
+        if (!any) out.functions.push_back(f);   // nothing could be made: the planner says the template is skipped
     }
     return out;
 }

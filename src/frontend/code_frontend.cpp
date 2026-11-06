@@ -271,11 +271,14 @@ private:
                 }
                 class_definition(child, params);
             } else if (type == "declaration" || type == "function_definition") {
-                const Declarator d = syntax::parse_declarator(child.child_by_field("declarator"));
-                if (!d.function.is_null() && !d.is_function_pointer) {
-                    diagnostics_.warning(core::code::unsupported,
-                                         "function template '" + d.name + "' is not supported and is skipped",
-                                         syntax::location(d.name_node, file_));
+                if (params.empty()) {
+                    // `template <> int f<int>(int)`: an explicit specialisation, which is not a template to instantiate.
+                    const Declarator d = syntax::parse_declarator(child.child_by_field("declarator"));
+                    if (!d.function.is_null() && !d.is_function_pointer) {
+                        unsupported("the specialisation '" + d.name + "' is not supported and is skipped", d.name_node);
+                    }
+                } else {
+                    free_functions(child, params);
                 }
             }
         }
@@ -309,7 +312,8 @@ private:
 
     // ---- free functions -----------------------------------------------------------------
 
-    void free_functions(const Node& node) {
+    // `template_params`: the text between the `<>` of the `template <...>` that the declaration is under, if any.
+    void free_functions(const Node& node, const std::optional<std::string>& template_params = std::nullopt) {
         const Specifiers spec = syntax::read_specifiers(node);
         for (const Node& declarator : syntax::children_by_field(node, "declarator")) {
             const Declarator d = syntax::parse_declarator(declarator);
@@ -333,6 +337,7 @@ private:
             f.header = header_;
             f.where = syntax::location(d.name_node, file_);
             f.guards = inner_guards();
+            f.template_params = template_params;
             model_.functions.push_back(std::move(f));
         }
     }

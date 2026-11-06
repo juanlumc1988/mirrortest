@@ -2130,3 +2130,63 @@ TEST(TestPlannerFunctions, AMockIsNamedFromTheNamespaceOfTheFunctionThatTakesIt)
     ASSERT_EQ(p.plans[at].suites[1].cases.size(), 1u);
     EXPECT_EQ(show(p.plans[at].suites[1].cases[0].body.at(3)), "testing::NiceMock<acme::MockSensor> s;");
 }
+
+// ---- function templates (template_instantiations, design 9.7) -----------------------------------------------------------
+
+TEST(TestPlannerFunctionTemplates, AnInstanceIsACaseNamedFromTheFunctionAndItsArgumentsThatCallsThemExplicitly) {
+    const Planned p = plan_instances("namespace acme {\ntemplate <typename T, int N = 4> T scaled(T value) noexcept;\n}\n"
+                                     "template <typename T> void reset(T& target);\n",
+                                     {{"acme::scaled", {"int", "long, 8"}}, {"reset", {"std::string"}}});
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(p.plans[0].file, "foo_functions_test.cpp");
+    ASSERT_EQ(p.plans[0].suites.size(), 2u);
+    EXPECT_EQ(case_names(p), (Lines{"scaled_int", "scaled_long_8"}));
+    EXPECT_EQ(body(p, "scaled_int"),
+              (Lines{"placeholder: TODO(mt): write the test for acme::scaled<int>(int)", "blank", "// Arrange", "int value{};", "// Act",
+                     "const int result = acme::scaled<int>(value);", "(void)result;", "// Assert",
+                     "static_assert(noexcept(acme::scaled<int>(value)), \"acme::scaled<int>(int) is declared noexcept\")",
+                     "// TODO(mt): compare result with the expected value"}));
+    EXPECT_EQ(body(p, "scaled_long_8").at(5), "const long result = acme::scaled<long, 8>(value);");
+    ASSERT_EQ(p.plans[0].suites[1].cases.size(), 1u);
+    EXPECT_EQ(p.plans[0].suites[1].cases[0].name, "reset_std_string");
+    EXPECT_EQ(show(p.plans[0].suites[1].cases[0].body.at(5)), "::reset<std::string>(target);");
+    EXPECT_TRUE(p.diagnostics.empty());
+}
+
+TEST(TestPlannerFunctionTemplates, ATemplateThatWasNotInstantiatedIsSaidOnceWithTheLineToAddAndGetsNoCase) {
+    const Planned p = plan_instances("namespace acme { template <typename T> T twice(T v); template <typename T> T twice(T v) { return v; }\n"
+                                     "template <typename T, typename U> U cast(T v); int plain(int); }\n",
+                                     {});
+    EXPECT_EQ(case_names(p), Lines{"plain"});
+    std::vector<std::string> said;
+    for (const core::Diagnostic& d : p.diagnostics.all()) said.push_back(d.code + ": " + d.message);
+    EXPECT_EQ(said, (Lines{"mt-unsupported: the function template 'acme::twice' is skipped: list the instantiations to test in "
+                           "template_instantiations (\"acme::twice\": [\"int\"])",
+                           "mt-unsupported: the function template 'acme::cast' is skipped: list the instantiations to test in "
+                           "template_instantiations (\"acme::cast\": [\"int\"])"}))
+        << "once for each template, though twice is declared twice";
+}
+
+TEST(TestPlannerFunctionTemplates, InstancesOfOverloadedTemplatesAreToldApartByTheirParameters) {
+    const Planned p = plan_instances("template <typename T> void put(T v);\ntemplate <typename T> void put(T a, T b);\n", {{"put", {"int"}}});
+    EXPECT_EQ(case_names(p), (Lines{"put_int_int", "put_int_int_int"}));
+}
+
+TEST(TestPlannerFunctionTemplates, TheSameTemplateWithTheSameArgumentsDeclaredTwiceIsOneCase) {
+    const Planned p = plan_instances("template <typename T> T f(T v);\ntemplate <typename T> T f(T v) { return v; }\n", {{"f", {"int", "int"}}});
+    EXPECT_EQ(case_names(p), Lines{"f_int"});
+}
+
+TEST(TestPlannerFunctionTemplates, AnInstanceThatDoesNotHaveToBeCalledWithTheArgumentsAsDeducedIsStillCalledWithThemNamed) {
+    const Planned p = plan_instances("template <typename T> int size_of(int ignored);\n", {{"size_of", {"double"}}});
+    EXPECT_EQ(body(p, "size_of_double").at(5), "const int result = ::size_of<double>(ignored);")
+        << "nothing in the arguments would deduce T";
+}
+
+TEST(TestPlannerFunctionTemplates, QtTestHasTheSameCasesAsSlots) {
+    const Planned p = plan_instances("template <typename T> T larger(T a, T b);\n", {{"larger", {"int", "double"}}}, {}, ir::Framework::QTest);
+    ASSERT_EQ(p.plans.size(), 1u);
+    EXPECT_EQ(p.plans[0].file, "tst_foo_functions.cpp");
+    EXPECT_EQ(case_names(p), (Lines{"larger_int", "larger_double"}));
+    EXPECT_EQ(body(p, "larger_double").at(6), "const double result = ::larger<double>(a, b);");
+}

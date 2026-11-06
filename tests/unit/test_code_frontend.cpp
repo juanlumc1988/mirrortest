@@ -619,14 +619,27 @@ TEST(CodeFrontendClasses, ClassTemplatesCarryTheirParameters) {
     EXPECT_EQ(the_class(r, "Buf").template_params, std::optional<std::string>("typename T, int N = 4"));
 }
 
-TEST(CodeFrontendClasses, FunctionTemplatesAreSkippedWithAWarning) {
-    const Read r = read("template <typename T> T twice(T v);\nint plain(int);");
-    ASSERT_EQ(r.model.functions.size(), 1u);
-    EXPECT_EQ(r.model.functions[0].name, "plain");
-    ASSERT_EQ(r.diagnostics.all().size(), 1u);
-    EXPECT_EQ(r.diagnostics.all()[0].code, core::code::unsupported);
-    EXPECT_EQ(r.diagnostics.all()[0].severity, core::Severity::Warning);
-    EXPECT_NE(r.diagnostics.all()[0].message.find("twice"), std::string::npos);
+TEST(CodeFrontendClasses, FunctionTemplatesAreReadWithTheirTemplateParameters) {
+    const Read r = read("template <typename T> T twice(T v);\nint plain(int);\n"
+                        "namespace n { template <class A, int N = 3> const A& pick(A a, int i = N) noexcept; }\n");
+    ASSERT_EQ(r.model.functions.size(), 3u);
+    EXPECT_EQ(r.model.functions[0].name, "twice");
+    EXPECT_EQ(r.model.functions[0].template_params, std::optional<std::string>("typename T"));
+    EXPECT_EQ(r.model.functions[0].ret.spelling, "T");
+    EXPECT_TRUE(r.model.functions[0].template_args.empty()) << "an instance has them, the template does not";
+    EXPECT_EQ(r.model.functions[1].name, "plain");
+    EXPECT_FALSE(r.model.functions[1].template_params.has_value());
+    EXPECT_EQ(r.model.functions[2].ns, std::vector<std::string>{"n"});
+    EXPECT_EQ(r.model.functions[2].template_params, std::optional<std::string>("class A, int N = 3"));
+    EXPECT_TRUE(r.model.functions[2].is_noexcept);
+    EXPECT_TRUE(r.diagnostics.all().empty()) << "reading a function template says nothing; the planner says it is not tested";
+}
+
+TEST(CodeFrontendClasses, AMemberDefinedOutsideItsClassTemplateIsNotAFunction) {
+    const Read r = read("template <typename T> class Box { public: int get() const; };\n"
+                        "template <typename T> int Box<T>::get() const { return 0; }\n");
+    EXPECT_TRUE(r.model.functions.empty());
+    EXPECT_EQ(r.model.classes.size(), 1u);
 }
 
 TEST(CodeFrontendClasses, NestedTypesAreRecordedByName) {
@@ -1197,10 +1210,10 @@ TEST(CodeFrontendUnsupported, QualifiedInheritedConstructors) {
     EXPECT_EQ(with_code(r, "mt-unsupported").size(), 1u);
 }
 
-TEST(CodeFrontendUnsupported, FunctionTemplatesStillWarn) {
-    const Read r = read("template <typename T> T twice(T x);\nint plain(int);\n");
+TEST(CodeFrontendUnsupported, AnExplicitSpecialisationOfAFunctionTemplateStillWarns) {
+    const Read r = read("template <typename T> T twice(T x);\ntemplate <> int twice<int>(int x);\nint plain(int);\n");
     EXPECT_EQ(with_code(r, "mt-unsupported").size(), 1u);
-    EXPECT_EQ(r.model.functions.size(), 1u);
+    EXPECT_EQ(r.model.functions.size(), 2u) << "the template and plain, not the specialisation";
 }
 
 // ---- the conditions a member is under (plan 9.6) -----------------------------------------------------------------------

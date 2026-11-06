@@ -1,0 +1,4 @@
+in/tools.h:19:25: warning: the function template 'acme::unlisted' is skipped: list the instantiations to test in template_instantiations ("acme::unlisted": ["int"]) [mt-unsupported]
+in/tools.h:21:31: warning: template_instantiations: 'acme::count_all' has a parameter pack, which a test cannot instantiate; the function is not tested [mt-config]
+in/tools.h:21:31: warning: the function template 'acme::count_all' is skipped: list the instantiations to test in template_instantiations ("acme::count_all": ["int"]) [mt-unsupported]
+created out/tools_functions_test.cpp

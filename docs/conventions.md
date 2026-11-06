@@ -534,8 +534,8 @@ The free functions of a header are tested in one more file, named after the head
 never takes the file of a class called `Util`. A suite for each namespace that has functions, a test for each function, named
 as the tests of methods are; the call is qualified (`acme::clamp(lo, hi, x)`, `::beep()` in the global namespace), a
 `noexcept` function gets its `static_assert`, an operator is called as a function (`acme::operator==(a, b)`), and a function
-declared twice is one. `static`, `inline` and `extern "C"` functions are functions like the others; function templates are
-reported and left out. The naming patterns apply with `{stem}` = `util_functions` and `{Class}` = `UtilFunctions`.
+declared twice is one. `static`, `inline` and `extern "C"` functions are functions like the others; function templates are tested through `template_instantiations`
+(Templates, below). The naming patterns apply with `{stem}` = `util_functions` and `{Class}` = `UtilFunctions`.
 
 Every test starts with `FAIL() << "TODO(mt): write the test for ..."` (with
 `--placeholder skip`, `GTEST_SKIP()`), so a skeleton is red until somebody writes
@@ -657,6 +657,19 @@ the header (a template has no `.cpp`), and a template you do not list is skipped
 with a warning that shows the line to add. Mocks (`gtest.mocks`) are not made of
 instantiations.
 
+A **function template** is listed the same way, by its qualified name:
+
+```json
+{ "template_instantiations": { "acme::clamp_to": ["int", "double"], "acme::scaled": ["long, 8"] } }
+```
+
+Each entry is a test in the file of the header's functions, named after the function and its arguments (`clamp_to_int`,
+`scaled_long_8`), and the call names the arguments, `acme::clamp_to<int>(lo, hi, value)`, instead of leaving them to
+deduction, so that the instantiation that is tested is the one you listed. A template parameter you leave out takes its
+default. A name shared by several function templates (an overload set) instantiates each of them that the entry fits, and a
+template it does not fit gets a warning. A template you do not list, and a template with a parameter pack, are skipped
+with a warning (the first with the line to add). `gen-impl` does not generate function templates.
+
 ### Mocks of interfaces
 
 With `{"gtest": {"mocks": true}}` in the configuration, every **interface** of the
@@ -710,7 +723,7 @@ be a function Qt Test calls by itself, so its test is a slot with `_call` after
 the name (`init_call`).
 
 Not tested, and why: signals; deleted, protected and private members; inherited members (see Inheritance and refused copies); member
-templates, and class templates you do not list in `template_instantiations`, and function templates. A member declared under `#if` has its test under the same `#if`
+templates, and class and function templates you do not list in `template_instantiations`. A member declared under `#if` has its test under the same `#if`
 (`#if defined(USE_DMA)` … `#endif`; in the `#else` of it `#if !(defined(USE_DMA))`), so the tests build in every configuration
 and a configuration has the tests of the members it declares; a class under `#if` has all its tests under it, and the
 `#ifndef X_H` / `#define X_H` that guards a header against being included twice is no condition. The conditions
@@ -821,5 +834,5 @@ Honest list of what it does not do (yet):
 - A constructor defined *outside* its class does not stop the member it
   initialises from also asking for a default constructor.
 - With `--frontend libclang`, a header that does not compile is read with warnings, and whatever libclang
-  cannot resolve is as unknown to it as to anybody; class template specialisations, function templates
+  cannot resolve is as unknown to it as to anybody; class template specialisations
   and inherited constructors are skipped with the same warnings as with tree-sitter.
