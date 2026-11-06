@@ -459,6 +459,7 @@ if(MT_BUILD_TESTS)
                         -DMT_CASE_DIR=${case_dir}
                         -DMT_WORK=${CMAKE_CURRENT_BINARY_DIR}/stubs-${kind}/${case}
                         -DMT_CXX=${compiler}
+                        -DMT_CXX_ID=${CMAKE_CXX_COMPILER_ID}
                         "$<$<BOOL:${case_qt}>:-DMT_QT_INCLUDE=$<TARGET_PROPERTY:${MT_QT}::Test,INTERFACE_INCLUDE_DIRECTORIES>$<SEMICOLON>$<TARGET_PROPERTY:${MT_QT}::Core,INTERFACE_INCLUDE_DIRECTORIES>>"
                         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/roundtrip/syntax_case.cmake")
                 set_tests_properties(stubs.${kind}.${case} PROPERTIES TIMEOUT 120)
