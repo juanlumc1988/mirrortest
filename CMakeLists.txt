@@ -30,10 +30,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 elseif(MSVC)
     set(MT_WARNINGS /W4 /permissive-)
-    # The headers of the dependencies are SYSTEM includes (/external:I); their warnings (inja's unreachable code) are not ours.
+    # The headers of the dependencies are SYSTEM includes (/external:I); their warnings are not ours. C4702 (unreachable code)
+    # is reported by the code generator for the templates of inja, which /external:W0 does not cover: it is off.
     if(MSVC_VERSION GREATER_EQUAL 1929)
         list(APPEND MT_WARNINGS /external:W0)
     endif()
+    list(APPEND MT_WARNINGS /wd4702)
     if(MT_WERROR)
         list(APPEND MT_WARNINGS /WX)
     endif()
