@@ -1924,6 +1924,52 @@ It only affects the exception macros (R6). A one-argument `QSKIP("…")` and
 
 ---
 
+### 9.7 Function templates (decided, plan 10.1)
+
+*Not implemented yet.* Today a function template gets an `mt-unsupported` warning and no test (§9.1). The same mechanism that
+tests a class template, the configuration naming its instantiations, extends to functions.
+
+- **Configuration.** `template_instantiations` accepts the qualified name of a function template as it does that of a
+  class template, with the same entries (the text between the `<>`):
+  `"template_instantiations": { "acme::Box": ["int"], "acme::clamp_to": ["int", "double, 3"] }`. A name that
+  several function templates share (an overload set) means all of them that accept the arguments given; see
+  *Overloads*. No new key and no new
+  syntax: a file that has the entry today is read the same way.
+- **Expansion.** Before planning, a listed function template is replaced, where it stood, by one `Function` per entry, as
+  `backend/template_expand` does for classes: each template parameter in the parameter types and the return type is
+  replaced by its argument (a type parameter by the type as written, a non-type parameter by the value), and a parameter
+  left out takes its default. The function keeps the arguments in a new field (`Function::template_args`, the
+  normalised text between the `<>`), which the planner uses to write the call.
+- **The case.** The same as for a function (§9.1): the arguments, the call, the result, `noexcept` asserted. The call
+  names the arguments explicitly, `acme::clamp_to<int>(lo, hi, x)`, and does not rely on deduction: the instantiation the
+  configuration names is the one that is tested, whatever the types of the locals are. The name of the test is the
+  function's, a `_`, and the arguments normalised as for a class (`clamp_to_int`, `clamp_to_double_3`).
+- **What is left out, with a warning that says why.**
+  - A template parameter pack (`template <typename... Ts>`): the number of arguments to pass is not known.
+  - A return type or a parameter type that depends on a parameter in a way that cannot be substituted as text
+    (`typename T::value_type`, `std::enable_if_t<...>`): the case is written with the call commented out and a
+    `TODO(mt)`, as for an argument that cannot be built.
+  - A constrained template (`requires`): the constraint is ignored (as it is for classes), so a listed argument that
+    does not satisfy it makes the test not compile, which is what the user asked for.
+- **A template that is not listed** keeps its warning, but now names the line to add, as the warning for a class template
+  does: `function template 'acme::clamp_to' is not tested; add "acme::clamp_to": ["<arguments>"] to template_instantiations`.
+- **Overloads.** An overload set of function templates is told apart by its template parameters as ordinary overloads are
+  by their parameter types (§9.1): `"acme::put": ["int"]` instantiates every `put` template that has one template
+  parameter, and each gets its own case (named, as overloads are, by its function parameter types). An entry that does
+  not fit the parameters of a template (too many arguments) is a warning for that template, not an error. A syntax
+  to pick one overload of a set is not part of 10.1; it is added when a real header needs it.
+- **Gen-impl is not touched.** A test that calls `f<int>(x)` declares `f` as a function the tool generates
+  (§7, §8), with the template arguments it reads from the call; it does not generate function templates in 10.1.
+- **Qt Test.** The same cases, as slots, with names that avoid the special slots as every function does.
+
+Decisions (owner, 2026-11-06): the call always names its template arguments; a non-type argument is written as given;
+overloaded templates are told apart by the number of template parameters, with no syntax to pick one yet; `gen-impl` does
+not generate function templates in 10.1.
+
+Alternatives not taken: instantiating with a default type (`int`) when nothing is listed, which would invent an argument
+and a test that may not mean anything; and reading the instantiations from the existing tests, which `gen-tests` does not
+have (it starts from a header and no test).
+
 ## 10. Writing files
 
 Implemented in `core/output.h` (`OutputPlan`: the plan, as data) and
@@ -2510,3 +2556,52 @@ compiler, git.
 Inferring business logic; resolving overloads by semantics; running the real
 preprocessor; metaprogramming; generating the user project's `CMakeLists.txt`;
 formatting with clang-format (the output already follows a fixed style).
+
+## 20. Releases and other platforms (decided, plan 10.2 to 10.5)
+
+*Not implemented yet.* The decisions in 20.3 are the owner's (2026-11-06).
+
+### 20.1 Platforms
+
+- **Targets:** Linux x86-64 (as built today), macOS (Apple Clang, arm64 and x86-64 in one universal binary) and Windows
+  (MSVC, x86-64). Each is a CI job that builds and runs the whole test suite, like the existing ones; the release builds
+  are made by the same configuration with `-DCMAKE_BUILD_TYPE=Release`.
+- **What is known to be portable:** no POSIX header is included by the sources; paths go through `std::filesystem`; the
+  CMake file already has MSVC branches (warnings, the string-literal limit of the embedded templates, the Qt round trips).
+- **What is not known** and is found by running it: the C11 grammars of tree-sitter under MSVC; line endings in
+  the golden files checked out with `core.autocrlf` (the embedded templates already guard against it); the compile checks
+  of the generated stubs, which call the compiler with GCC/Clang flags; the shell scripts in `tools/`, which stay
+  development tools for Linux and macOS. Those tests that need what the platform lacks skip themselves, as they do
+  without Qt or libclang, and each skip is listed in the job so that none hides.
+- **The first run of each new job does not gate anything:** it is added as an additional check that may fail
+  (`continue-on-error`), the failures are fixed one by one, and it joins `ci passed` when it is green.
+
+### 20.2 What a release is
+
+- **Trigger:** pushing a tag `vMAJOR.MINOR.PATCH` that equals the `project(VERSION)` of `CMakeLists.txt` (the workflow
+  refuses a tag that does not). Nothing is published by a push to `main` or by a pull request.
+- **Artifacts:** one archive for each platform, made by CPack from the install tree of plan 9.8
+  (`mirrortest-X.Y.Z-linux-x86_64.tar.gz`, `-macos-universal.tar.gz`, `-windows-x86_64.zip`) and a `SHA256SUMS` file.
+  The binary holds the tree-sitter frontend (the default); `--frontend libclang` needs the libclang of the machine and a
+  build with `-DMT_WITH_LIBCLANG=ON`, which the release does not do.
+- **Linux portability:** built on the oldest supported runner (`ubuntu-22.04`, glibc 2.35) with the C++ runtime linked
+  statically, so that it runs on later Ubuntu and Debian releases. Windows links the MSVC runtime statically (`/MT`).
+- **Permissions:** the build jobs have `contents: read`; only the last job, which creates the release, has
+  `contents: write`, and it receives the artifacts, not the source tree to build. The release is created with
+  generated notes and marked as pre-release while the version is `0.x`.
+- **Integrity:** the `SHA256SUMS` file, and a build provenance attestation (`actions/attest-build-provenance`) so that
+  a download can be verified against the workflow that made it.
+- **Tags are protected** by a ruleset of their own (no deletion, no update of `v*` tags), because a release that can be
+  moved is not a release.
+
+### 20.3 Decisions
+
+1. **Signing:** none in the first release. macOS binaries downloaded with a browser are quarantined and refused by
+   Gatekeeper until they are signed and notarised (a paid Apple Developer account), and Windows SmartScreen warns on an
+   unsigned executable; the README says how to get past both (`xattr -d com.apple.quarantine`, "More info > Run anyway")
+   and how to verify the download against `SHA256SUMS` and the attestation. A signing step is added when there is a
+   certificate.
+2. **Windows:** MSVC only. **macOS:** one universal binary (arm64 and x86-64).
+3. **First version:** `0.1.0`, as `CMakeLists.txt` has it; `0.x` releases are marked as pre-releases.
+4. **Actions** of the release workflow are pinned by commit SHA (with the tag in a comment), and Dependabot proposes the
+   updates for them and for the actions of `ci.yml`.
