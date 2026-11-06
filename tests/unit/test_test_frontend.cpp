@@ -1085,6 +1085,12 @@ TEST(TestFrontendContainerMatchers, TheReasonAnInnerContainerSaysNothingIsTheOne
     }
 }
 
+TEST(TestFrontendContainerMatchers, OfSeveralReasonsTheFirstIsTheOneGiven) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(ElementsAre(1, 2.5), ElementsAre(1, 2u)));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(method(r).use.matcher_detail, "its arguments are of different types: int and double");
+}
+
 TEST(TestFrontendAssert, AMatcherAfterAHintDoesNotChangeIt) {
     const Read r = body("Foo foo;\nEXPECT_EQ(foo.a(), 3u);\nEXPECT_THAT(foo.a(), Eq(2.5));\n");
     ASSERT_EQ(r.facts.method_calls.size(), 2u);
