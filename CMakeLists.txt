@@ -47,6 +47,10 @@ function(mt_configure tgt)
         CXX_STANDARD_REQUIRED ON
         CXX_EXTENSIONS OFF)
     target_compile_options(${tgt} PRIVATE ${MT_WARNINGS})
+    if(MSVC)
+        # std::getenv is "unsafe" to the CRT (C4996); nothing here writes through what it returns.
+        target_compile_definitions(${tgt} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
 endfunction()
 
 # ---- core library: IR, parsing, inference, emission -----------------------
