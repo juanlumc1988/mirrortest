@@ -153,7 +153,8 @@ jobs:
           retention-days: 14
 
   # Only for a tag. It does not build: it receives the packages, sums them, attests them and creates the release as a draft
-  # that is published when everything is attached, so that a failure leaves no half release.
+  # that is published when everything is attached, so that a failure leaves no half release; or, if the release exists already
+  # (made on the web), attaches the packages to it.
   publish:
     name: publish
     needs: [check, build]
@@ -187,10 +188,16 @@ jobs:
         with:
           subject-path: dist/mirrortest-*
 
-      - name: Create the release
+      # A release the owner already made on the web (with the title and the notes written by hand) only gets the packages; where
+      # there is none, it is created here as a draft and published when everything is attached.
+      - name: Attach the packages to the release
         run: |
           set -euo pipefail
-          flags=(--draft --generate-notes --title "mirrortest $VERSION")
-          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" "${flags[@]}"
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            flags=(--draft --generate-notes --title "mirrortest $VERSION")
+            [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          fi

@@ -37,6 +37,9 @@ A release is a tag, and nothing else: `.github/workflows/release.yml` does the r
    version; on Linux and macOS `tools/check_install.sh`; on macOS both architectures are there; on Linux it needs no
    libstdc++), writes `SHA256SUMS`, attests the packages (build provenance), and creates the release as a draft that it
    publishes when all is attached. A `0.x` version is a pre-release. The notes are generated from the pull requests.
+   The release can also be made on the web first (Releases, Draft a new release, a new tag `vX.Y.Z` on `main`, the title and
+   the notes written by hand): publishing it creates the tag, and the workflow then only attaches the packages and
+   `SHA256SUMS` to it. (Not with "Enable release immutability" on: it forbids adding files to a published release.)
 4. The workflow is tried, without publishing, by a pull request that changes it and by a manual run (Actions, Release, Run
    workflow): they build and check the packages and keep them as artifacts of the run for 14 days.
 
