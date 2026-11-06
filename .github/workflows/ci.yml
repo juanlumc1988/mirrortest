@@ -26,7 +26,7 @@ jobs:
         compiler: [gcc, clang]
         build_type: [Debug, RelWithDebInfo]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build
@@ -52,7 +52,7 @@ jobs:
     name: without yaml-cpp
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build
@@ -94,7 +94,7 @@ jobs:
           - { llvm: 21, os: ubuntu-26.04 }
           - { llvm: 22, os: ubuntu-26.04 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools and libclang ${{ matrix.llvm }}
         run: sudo apt-get update && sudo apt-get install -y ninja-build libclang-${{ matrix.llvm }}-dev
@@ -125,7 +125,7 @@ jobs:
       matrix:
         compiler: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools
         run: |
@@ -154,7 +154,7 @@ jobs:
     name: install and package
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build
@@ -182,7 +182,7 @@ jobs:
     name: asan + ubsan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build
@@ -216,7 +216,7 @@ jobs:
           - qt: 5
             packages: qtbase5-dev
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools and Qt ${{ matrix.qt }}
         run: sudo apt-get update && sudo apt-get install -y ninja-build ${{ matrix.packages }}
@@ -241,7 +241,7 @@ jobs:
     name: cross stubs (32-bit syntax check)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools and a 32-bit cross compiler
         run: sudo apt-get update && sudo apt-get install -y ninja-build g++-arm-linux-gnueabihf
@@ -269,7 +269,7 @@ jobs:
     name: macos
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build tools
         run: brew install ninja
@@ -293,7 +293,7 @@ jobs:
     name: windows
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The tests that compile generated code call `cl` themselves, outside Visual Studio's build: they need the compiler's
       # environment (INCLUDE, LIB, PATH) as a developer prompt has it.
