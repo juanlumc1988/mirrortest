@@ -154,7 +154,8 @@ bool bind_arguments(const std::vector<TemplateParam>& params, const std::vector<
 }
 
 // One entry of the configuration for a template with `params`: the arguments bound to the parameters, and the
-// arguments as they are written in the name of an instance ("int, 8"). False, after a warning, if it does not fit.
+// arguments as they are written in the name of an instance ("int, 8"; `joined` comes in empty). False, after a warning, if it
+// does not fit.
 bool resolve_entry(const std::vector<TemplateParam>& params, const std::string& list, const std::string& qualified,
                    const ir::SourceLoc& where, core::Diagnostics& diagnostics, std::map<std::string, std::string>& with,
                    std::string& joined) {
@@ -168,7 +169,6 @@ bool resolve_entry(const std::vector<TemplateParam>& params, const std::string& 
         return false;
     }
     if (!bind_arguments(params, args, shown, where, diagnostics, with)) return false;
-    joined.clear();
     for (std::size_t i = 0; i < args.size(); ++i) joined += (i == 0 ? "" : ", ") + ir::normalize_spelling(args[i]);
     return true;
 }

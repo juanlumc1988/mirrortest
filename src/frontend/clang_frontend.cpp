@@ -745,7 +745,11 @@ private:
                 enum_definition(c);
                 break;
             case CXCursor_FunctionDecl:
-                free_function(c);
+                if (clang_getSpecializedCursorTemplate(c).kind != CXCursor_InvalidFile) {
+                    unsupported("the specialisation '" + specialisation_name(c) + "' is not supported and is skipped", c);
+                } else {
+                    free_function(c);
+                }
                 break;
             case CXCursor_FunctionTemplate: {
                 // `template <class T> int Box<T>::get() {}` defines a member: it is read with its class.

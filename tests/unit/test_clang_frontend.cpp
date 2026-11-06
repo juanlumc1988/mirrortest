@@ -454,6 +454,8 @@ TEST(ClangFrontendParity, TheUnsupportedConstructsAreReportedAsTreeSitterReports
 template <> class Pair2<char> {};
 template <typename T> class Pair2<T*> {};
 template <typename T> class Pair2<Pair2<T>> {};
+template <typename T> T twice(T v);
+template <> int twice<int>(int v);
 class Base { public: Base(int); void helper(); };
 class Derived : public Base { public: using Base::Base; using Base::helper; };
 class Outer { public: struct Inner; class Deep; };
@@ -465,7 +467,7 @@ template <typename T> struct Holder<T>::Node { T item; };
     const Read a = tree_sitter(text);
     const Read b = clang(text);
     EXPECT_EQ(messages(b, "mt-unsupported"), messages(a, "mt-unsupported"));
-    EXPECT_EQ(messages(a, "mt-unsupported").size(), 7u) << "and tree-sitter did say something about each (not about the using of a method)";
+    EXPECT_EQ(messages(a, "mt-unsupported").size(), 8u) << "and tree-sitter did say something about each (not about the using of a method)";
     const std::vector<std::string> said = messages(a, "mt-unsupported");
     EXPECT_NE(std::find(said.begin(), said.end(), "the class 'Outer::Inner' is defined outside the class that declares it, which is not supported; it is skipped"), said.end());
     EXPECT_NE(std::find(said.begin(), said.end(), "the class 'Holder<T>::Node' is defined outside the class that declares it, which is not supported; it is skipped"), said.end());
