@@ -1,4 +1,4 @@
 gen-tests
-${IN}/math.h
+${IN}/arith.h
 --out
 ${OUT}

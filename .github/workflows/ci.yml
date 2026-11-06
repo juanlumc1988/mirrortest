@@ -264,13 +264,36 @@ jobs:
       - name: Compile the generated stubs for a 32-bit target
         run: ctest --test-dir build -R '^stubs\.cross\.' --output-on-failure
 
+  # macOS (plan 10.2): Apple Clang and the Apple libc++, on the arm64 runner, warnings as errors, the whole test suite.
+  macos:
+    name: macos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install ninja
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DMT_WERROR=ON
+          sysctl -n machdep.cpu.brand_string; sw_vers; clang++ --version | head -n 1
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 4
+
   # The one check that branch protection requires: it passes only if every job above passed, so the rule does not have to
   # list them, and a renamed job or a new entry in a matrix needs no change to it. `always()` makes it run (and fail)
   # when a job failed or was cancelled, instead of being skipped, which a required check would count as passed.
   ci-ok:
     name: ci passed
     if: always()
-    needs: [host, no-yaml, libclang, newest, install, sanitizers, qt, cross]
+    needs: [host, no-yaml, libclang, newest, install, sanitizers, qt, cross, macos]
     runs-on: ubuntu-latest
     steps:
       - name: Every job succeeded

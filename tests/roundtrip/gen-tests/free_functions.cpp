@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Part of mirrortest -- bidirectional C++ test/code generator.
 //
-// An implementation of math.h: what the tests of its free functions are linked with.
+// An implementation of arith.h: what the tests of its free functions are linked with.
 
-#include "math.h"
+#include "arith.h"
 
 namespace calc {
 
