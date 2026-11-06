@@ -40,7 +40,9 @@ A release is a tag, and nothing else: `.github/workflows/release.yml` does the r
 4. The workflow is tried, without publishing, by a pull request that changes it and by a manual run (Actions, Release, Run
    workflow): they build and check the packages and keep them as artifacts of the run for 14 days.
 
-A tag is never moved or deleted (a ruleset for `v*` tags forbids it, plan 10.5): a release that was wrong is followed by
+A tag is never moved or deleted (the ruleset `.github/rulesets/release-tags.json` forbids it; so does `main.json` for the branch, with
+`ci passed` as its one required check; both are applied in the repository's settings, Rules, Rulesets, Import, and the publish job's
+environment `release` is where required reviewers can be set, Settings, Environments): a release that was wrong is followed by
 the next patch version. The actions of the workflow are pinned by commit, with the tag in a comment; Dependabot proposes
 the updates as pull requests.
 

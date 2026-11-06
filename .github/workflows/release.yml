@@ -159,6 +159,9 @@ jobs:
     needs: [check, build]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
+    # An environment, so that the repository can put a gate in front of the publication (required reviewers) without
+    # touching this file; without one set up it is only a name.
+    environment: release
     permissions:
       contents: write
       id-token: write
