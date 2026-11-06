@@ -25,6 +25,4 @@ TEST(GaugeTest, Strings) {
     EXPECT_THAT(gauge.name(), StrEq("gauge"));
     EXPECT_THAT(gauge.label(), HasSubstr("ga"));
     EXPECT_THAT(gauge.unit(), AllOf(StartsWith("m"), EndsWith("s")));
-    // @mt: returns std::vector<int>
-    EXPECT_THAT(gauge.history(), ElementsAre(1, 2));
 }

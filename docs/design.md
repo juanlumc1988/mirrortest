@@ -735,7 +735,31 @@ as code, and what is compared with a call takes the type of `v`:
 | `IsNull()`, `NotNull()` | `void*`: a pointer, which one is not said (the note says so) |
 | `DoubleEq`, `DoubleNear` · `FloatEq`, `FloatNear` | `double` · `float` |
 | `AllOf(m…)`, `AnyOf(m…)`, `Not(m)` | each `m` is read against the same `v`; the first that says a type wins |
-| anything else (`ElementsAre`, `Contains`, `SizeIs`, `IsEmpty`, a matcher of the test's own, `Eq<int>(…)`) | none: the arguments are not read, and the `mt-unknown-return` error names the matcher |
+| `ElementsAre(e…)`, `UnorderedElementsAre(e…)`, `Contains(e)`, `Each(e)` | `std::vector<E>`, `E` being the type the elements say (below) |
+| `WhenSorted(m)`; `m.Times(n)` | as `m` |
+| anything else (`SizeIs`, `IsEmpty`, a matcher of the test's own, `Eq<int>(…)`) | none: the arguments are not read, and the `mt-unknown-return` error names the matcher |
+
+**Matchers over containers.** The container is a `std::vector` of the type of its elements, and the note says that is a guess
+(a `std::set` or a `std::list` matches the same matchers): the matcher says what the elements are, not what holds them, and
+`// @mt: returns TYPE` replaces the guess. An element says a type like this, and the first four rows are the same as above:
+
+| Element | Type |
+|---|---|
+| a literal, a variable, any expression of a known type | its type, without the top-level `const` and the reference (`const std::string&` gives `std::string`; the `const` of what a pointer points to stays); a string literal gives `std::string` |
+| `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge` `(x)` | the type of `x` |
+| `StrEq`…, `HasSubstr`, `StartsWith`, `EndsWith`, `ContainsRegex`, `MatchesRegex` | `std::string` |
+| `DoubleEq`, `DoubleNear` · `FloatEq`, `FloatNear` · `IsTrue`, `IsFalse` | `double` · `float` · `bool` |
+| `AllOf`, `AnyOf`, `Not` | the first of its matchers that says a type |
+| `Pair(k, v)` | `std::pair<K, V>`, if both say a type |
+| `ElementsAre(…)` and the like, nested | a `std::vector` of theirs |
+| `_` | nothing, and it does not get in the way of the others |
+| a call of a plain name that is none of those (`IsOdd()`) | nothing: it can be a matcher of the test's own, and reading it would ask for a function called `IsOdd`. A call on an object (`foo.size()`) is read like any other code |
+
+The arguments of one `ElementsAre` that say a type must say the same one: `ElementsAre(1, 2.5)` says nothing, and the error
+says why (`its arguments are of different types: int and double`; `none of its arguments says a type` when none does). Neither
+does an element that is an enumerator (`ElementsAre(Color::Red)`): whether `Color` is an enum is only known after
+classification. `SizeIs` and `IsEmpty` never give a type, but they do not get in the way of a matcher that does
+(`AllOf(SizeIs(2), Contains(3))`).
 
 A matcher with another number of arguments than the table says is not read either. Like any context, a matcher
 yields to the one that came first: `EXPECT_EQ(f(), 3u)` before `EXPECT_THAT(f(), Eq(2.5))` leaves `unsigned int`.

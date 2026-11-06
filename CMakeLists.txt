@@ -251,7 +251,7 @@ if(MT_BUILD_TESTS)
     # the cases are fast and need no network; GoogleTest is the main build's.
     if(NOT MSVC)
         foreach(case basic_class fixture_members namespaces multi_class_includes no_exceptions no_stl no_stl_library_types
-                     stub_hook stub_hook_abort mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums exceptions matchers)
+                     stub_hook stub_hook_abort mock_interface mock_legacy_macros mock_known_interface fake_interface operators enums exceptions matchers matchers_containers)
             set(mode throw)
             if(case STREQUAL "no_exceptions" OR case STREQUAL "no_stl" OR case STREQUAL "no_stl_library_types" OR case STREQUAL "stub_hook_abort")
                 set(mode abort)

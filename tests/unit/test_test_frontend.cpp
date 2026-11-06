@@ -766,12 +766,13 @@ TEST(TestFrontendAssert, DeathAssertionsAnalyseTheStatement) {
     EXPECT_EQ(method(r, 1).use.kind, UseKind::Discarded);
 }
 
-TEST(TestFrontendAssert, MatchersOverContainersGiveNoHintButTheValueIsStillSeen) {
-    const Read r = body("Foo foo;\nEXPECT_THAT(foo.values(), ::testing::ElementsAre(1, 2));\n");
+TEST(TestFrontendAssert, MatchersThatSayNothingOfTheTypeGiveNoHintButTheValueIsStillSeen) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.values(), ::testing::SizeIs(2));\n");
     ASSERT_EQ(r.facts.method_calls.size(), 1u);
     EXPECT_EQ(method(r).use.kind, UseKind::Unknown);
     EXPECT_FALSE(method(r).use.hint.has_value());
-    EXPECT_EQ(method(r).use.matcher, "ElementsAre") << "so that the note can name it";
+    EXPECT_EQ(method(r).use.matcher, "SizeIs") << "so that the note can name it";
+    EXPECT_EQ(method(r).use.matcher_detail, "");
 }
 
 TEST(TestFrontendAssert, ComparisonMatchersHintTheTypeOfTheirArgumentAsTheAssertionsDo) {
@@ -822,10 +823,10 @@ TEST(TestFrontendAssert, TheArgumentsOfAFloatingPointMatcherAreCodeToo) {
 }
 
 TEST(TestFrontendAssert, OfSeveralMatchersThatSayNothingTheFirstIsTheOneNamed) {
-    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(1));\nEXPECT_THAT(foo.a(), Contains(2));\n");
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), SizeIs(1));\nEXPECT_THAT(foo.a(), IsEmpty());\n");
     ASSERT_EQ(r.facts.method_calls.size(), 2u);
-    EXPECT_EQ(method(r, 0).use.matcher, "ElementsAre");
-    EXPECT_EQ(method(r, 1).use.matcher, "Contains");
+    EXPECT_EQ(method(r, 0).use.matcher, "SizeIs");
+    EXPECT_EQ(method(r, 1).use.matcher, "IsEmpty");
 }
 
 TEST(TestFrontendAssert, ABareMatcherThatIsNotACallIsNotRead) {
@@ -886,6 +887,208 @@ TEST(TestFrontendAssert, AllOfAnyOfAndNotHandTheirMatchersTheSameValue) {
     EXPECT_EQ(hint(method(r, 1).use), "const char*");
     EXPECT_EQ(hint(method(r, 2).use), "void*") << "the first matcher that says something wins";
     EXPECT_EQ(hint(method(r, 3).use), "std::string");
+}
+
+// ---- matchers over containers ------------------------------------------------------------------------------------
+
+TEST(TestFrontendContainerMatchers, ElementsAreGivesAVectorOfTheTypeOfItsArguments) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), ElementsAre(1, 2, 3));\n"
+                        "EXPECT_THAT(foo.b(), ::testing::UnorderedElementsAre(1u));\n"
+                        "EXPECT_THAT(foo.c(), testing::ElementsAre(\"x\", \"y\"));\n"
+                        "EXPECT_THAT(foo.d(), ElementsAre(2.5));\n"
+                        "EXPECT_THAT(foo.e(), ElementsAre(true));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 5u);
+    EXPECT_EQ(hint(method(r, 0).use), "std::vector<int>");
+    EXPECT_EQ(hint(method(r, 1).use), "std::vector<unsigned int>");
+    EXPECT_EQ(hint(method(r, 2).use), "std::vector<std::string>") << "a string literal is a std::string, as in EXPECT_EQ";
+    EXPECT_EQ(hint(method(r, 3).use), "std::vector<double>");
+    EXPECT_EQ(hint(method(r, 4).use), "std::vector<bool>");
+    for (std::size_t i = 0; i < 5; ++i) {
+        EXPECT_EQ(method(r, i).use.kind, UseKind::Compared) << i;
+        EXPECT_EQ(method(r, i).use.matcher, "") << i;
+    }
+}
+
+TEST(TestFrontendContainerMatchers, TheNoteSaysThatTheContainerIsAGuess) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(1));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_NE(method(r).use.hint->reason.find("ElementsAre matcher"), std::string::npos);
+    EXPECT_NE(method(r).use.hint->reason.find("which one is not said"), std::string::npos);
+}
+
+TEST(TestFrontendContainerMatchers, ContainsAndEachTakeTheTypeOfTheirOneArgument) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), Contains(7L));\n"
+                        "EXPECT_THAT(foo.b(), Each(\"s\"));\n"
+                        "EXPECT_THAT(foo.c(), Contains(3).Times(2));\n"
+                        "EXPECT_THAT(foo.d(), Contains(1, 2));\n"
+                        "EXPECT_THAT(foo.e(), Each());\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 5u);
+    EXPECT_EQ(hint(method(r, 0).use), "std::vector<long>");
+    EXPECT_EQ(hint(method(r, 1).use), "std::vector<std::string>");
+    EXPECT_EQ(hint(method(r, 2).use), "std::vector<int>") << "Times(2) changes how many, not what";
+    EXPECT_FALSE(method(r, 3).use.hint.has_value()) << "two arguments are not Contains";
+    EXPECT_FALSE(method(r, 4).use.hint.has_value());
+}
+
+TEST(TestFrontendContainerMatchers, AMatcherAsAnElementSaysTheTypeItComparesWith) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), Contains(Gt(3u)));\n"
+                        "EXPECT_THAT(foo.b(), Each(AllOf(Ge(0.5), Le(2.5))));\n"
+                        "EXPECT_THAT(foo.c(), ElementsAre(StartsWith(\"a\"), HasSubstr(\"b\")));\n"
+                        "EXPECT_THAT(foo.d(), ElementsAre(DoubleNear(1.5, 0.1), 2.5));\n"
+                        "EXPECT_THAT(foo.e(), Each(IsTrue()));\n"
+                        "EXPECT_THAT(foo.f(), ElementsAre(_, 3, ::testing::_));\n"
+                        "EXPECT_THAT(foo.g(), Each(Not(Eq(8L))));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 7u);
+    EXPECT_EQ(hint(method(r, 0).use), "std::vector<unsigned int>");
+    EXPECT_EQ(hint(method(r, 1).use), "std::vector<double>");
+    EXPECT_EQ(hint(method(r, 2).use), "std::vector<std::string>");
+    EXPECT_EQ(hint(method(r, 3).use), "std::vector<double>");
+    EXPECT_EQ(hint(method(r, 4).use), "std::vector<bool>");
+    EXPECT_EQ(hint(method(r, 5).use), "std::vector<int>") << "the wildcard says nothing and does not get in the way";
+    EXPECT_EQ(hint(method(r, 6).use), "std::vector<long>");
+}
+
+TEST(TestFrontendContainerMatchers, PairAndNestedContainersBuildTheirTypes) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), ElementsAre(Pair(\"k\", 1u), Pair(\"j\", 2u)));\n"
+                        "EXPECT_THAT(foo.b(), ElementsAre(ElementsAre(1, 2), ElementsAre(3)));\n"
+                        "EXPECT_THAT(foo.c(), Contains(Pair(_, 1)));\n"
+                        "EXPECT_THAT(foo.d(), Contains(Pair(1)));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 4u);
+    EXPECT_EQ(hint(method(r, 0).use), "std::vector<std::pair<std::string, unsigned int>>");
+    EXPECT_EQ(hint(method(r, 1).use), "std::vector<std::vector<int>>");
+    EXPECT_FALSE(method(r, 2).use.hint.has_value()) << "a Pair whose key says nothing says nothing";
+    EXPECT_FALSE(method(r, 3).use.hint.has_value()) << "Pair takes two arguments";
+}
+
+TEST(TestFrontendContainerMatchers, VariablesGiveTheirTypeWithoutConstOrReference) {
+    const Read r = body("Foo foo;\n"
+                        "const int a = 1;\n"
+                        "const std::string& s = name();\n"
+                        "const char* p = \"x\";\n"
+                        "EXPECT_THAT(foo.a(), ElementsAre(a));\n"
+                        "EXPECT_THAT(foo.b(), ElementsAre(s));\n"
+                        "EXPECT_THAT(foo.c(), ElementsAre(p));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 3u);
+    EXPECT_EQ(hint(method(r, 0).use), "std::vector<int>");
+    EXPECT_EQ(hint(method(r, 1).use), "std::vector<std::string>");
+    EXPECT_EQ(hint(method(r, 2).use), "std::vector<const char*>") << "the const of what a pointer points to stays";
+}
+
+TEST(TestFrontendContainerMatchers, ArgumentsOfDifferentTypesSayNothingAndTheDetailSaysWhy) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(1, 2.5));\n"
+                        "EXPECT_THAT(foo.b(), UnorderedElementsAre(1, 2, 3u));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_FALSE(method(r, 0).use.hint.has_value());
+    EXPECT_EQ(method(r, 0).use.matcher, "ElementsAre");
+    EXPECT_EQ(method(r, 0).use.matcher_detail, "its arguments are of different types: int and double");
+    EXPECT_EQ(method(r, 1).use.matcher_detail, "its arguments are of different types: int and unsigned int");
+}
+
+TEST(TestFrontendContainerMatchers, ACallOfAnUnknownNameIsAMatcherOfTheTestsOwnAndIsNotRead) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(IsOdd(), IsEven()));\n"
+                        "EXPECT_THAT(foo.b(), ElementsAre(IsOdd(), 3));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u) << "IsOdd is not a function to generate";
+    EXPECT_TRUE(r.facts.free_calls.empty());
+    EXPECT_FALSE(method(r, 0).use.hint.has_value());
+    EXPECT_EQ(method(r, 0).use.matcher, "ElementsAre");
+    EXPECT_EQ(method(r, 0).use.matcher_detail, "none of its arguments says a type");
+    EXPECT_EQ(hint(method(r, 1).use), "std::vector<int>") << "the argument that says a type is enough";
+}
+
+TEST(TestFrontendContainerMatchers, WhenSortedHandsItsMatcherTheSameValue) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), WhenSorted(ElementsAre(1, 2)));\n"
+                        "EXPECT_THAT(foo.b(), WhenSorted());\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(hint(method(r, 0).use), "std::vector<int>");
+    EXPECT_FALSE(method(r, 1).use.hint.has_value());
+}
+
+TEST(TestFrontendContainerMatchers, ACombinationTakesTheFirstThatSaysATypeAndSizeIsDoesNotGetInTheWay) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), AllOf(SizeIs(2), Contains(3)));\n"
+                        "EXPECT_THAT(foo.b(), AllOf(SizeIs(2), IsEmpty()));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    EXPECT_EQ(hint(method(r, 0).use), "std::vector<int>");
+    EXPECT_FALSE(method(r, 1).use.hint.has_value());
+    EXPECT_EQ(method(r, 1).use.matcher, "SizeIs");
+}
+
+TEST(TestFrontendContainerMatchers, TheWarningsOfTheLiteralTheTypeCameFromTravelWithIt) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(5000000000));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_FALSE(method(r).use.hint_warnings.empty());
+}
+
+TEST(TestFrontendContainerMatchers, TheElementsAreCodeToo) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(foo.b(), foo.c()));\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Foo::a", "Foo::b", "Foo::c"}));
+}
+
+TEST(TestFrontendContainerMatchers, ACallOnAnObjectIsNotTimes) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), helper.Make());\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(method(r).use.matcher, "helper.Make") << "only .Times(n) passes the matcher it is called on through";
+}
+
+TEST(TestFrontendContainerMatchers, OfSeveralMatchersThatSayNothingTheFirstIsTheOneNamed) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), AllOf(SizeIs(2), ElementsAre(1, 2.5)));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(method(r).use.matcher, "SizeIs");
+    EXPECT_EQ(method(r).use.matcher_detail, "");
+}
+
+TEST(TestFrontendContainerMatchers, TheArgumentsOfAnElementMatcherAreCodeToo) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), ElementsAre(StartsWith(foo.b())));\n"
+                        "EXPECT_THAT(foo.c(), Each(DoubleNear(foo.d(), 0.5)));\n");
+    EXPECT_EQ(methods_called(r), (std::vector<std::string>{"Foo::a", "Foo::b", "Foo::c", "Foo::d"}));
+}
+
+TEST(TestFrontendContainerMatchers, FloatingPointMatchersAreTheTypeOfTheirElements) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), Each(DoubleEq(1.5)));\n"
+                        "EXPECT_THAT(foo.b(), Each(FloatNear(1.5f, 0.1f)));\n"
+                        "EXPECT_THAT(foo.c(), Each(DoubleEq()));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 3u);
+    EXPECT_EQ(hint(method(r, 0).use), "std::vector<double>");
+    EXPECT_EQ(hint(method(r, 1).use), "std::vector<float>");
+    EXPECT_FALSE(method(r, 2).use.hint.has_value()) << "no argument, not a DoubleEq";
+}
+
+TEST(TestFrontendContainerMatchers, OfSeveralMatchersAsAnElementTheFirstThatSaysATypeWins) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), Each(AllOf(Gt(1u), Lt(2.5))));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(hint(method(r).use), "std::vector<unsigned int>");
+}
+
+TEST(TestFrontendContainerMatchers, ThePairCarriesTheWarningsOfBothLiterals) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), ElementsAre(Pair(5000000000, 1)));\n"
+                        "EXPECT_THAT(foo.b(), ElementsAre(Pair(1, 5000000000)));\n"
+                        "EXPECT_THAT(foo.c(), ElementsAre(Pair(1, 2)));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 3u);
+    EXPECT_FALSE(method(r, 0).use.hint_warnings.empty());
+    EXPECT_FALSE(method(r, 1).use.hint_warnings.empty());
+    EXPECT_TRUE(method(r, 2).use.hint_warnings.empty());
+}
+
+TEST(TestFrontendContainerMatchers, TheReasonAnInnerContainerSaysNothingIsTheOneTheOuterGives) {
+    const Read r = body("Foo foo;\n"
+                        "EXPECT_THAT(foo.a(), ElementsAre(ElementsAre(1, 2.5)));\n"
+                        "EXPECT_THAT(foo.b(), ElementsAre(ElementsAre(1, 2.5), _));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 2u);
+    for (std::size_t i = 0; i < 2; ++i) {
+        EXPECT_EQ(method(r, i).use.matcher_detail, "its arguments are of different types: int and double") << i;
+    }
+}
+
+TEST(TestFrontendContainerMatchers, OfSeveralReasonsTheFirstIsTheOneGiven) {
+    const Read r = body("Foo foo;\nEXPECT_THAT(foo.a(), ElementsAre(ElementsAre(1, 2.5), ElementsAre(1, 2u)));\n");
+    ASSERT_EQ(r.facts.method_calls.size(), 1u);
+    EXPECT_EQ(method(r).use.matcher_detail, "its arguments are of different types: int and double");
 }
 
 TEST(TestFrontendAssert, AMatcherAfterAHintDoesNotChangeIt) {

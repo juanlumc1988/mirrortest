@@ -614,13 +614,18 @@ private:
                                noun, first, out.notes);
         } else {
             std::string matcher;
+            std::string detail;
             for (const Call* call : calls) {
-                if (matcher.empty()) matcher = call->use->matcher;
+                if (matcher.empty() && !call->use->matcher.empty()) {
+                    matcher = call->use->matcher;
+                    detail = call->use->matcher_detail;
+                }
             }
             out.type = unknown(core::code::unknown_return,
                                what + " cannot be inferred: " +
                                    (matcher.empty() ? std::string("no test compares the result with a typed value")
-                                                    : "the matcher '" + matcher + "' does not say its type") +
+                                                    : "the matcher '" + matcher + "' does not say its type" +
+                                                          (detail.empty() ? std::string() : " (" + detail + ")")) +
                                    "; annotate it: '// @mt: returns TYPE'",
                                noun, first, out.notes);
         }

@@ -31,6 +31,22 @@ ir::Type inferred_type(std::string_view spelling, const std::string& reason) {
     return t;
 }
 
+// `testing::Eq`, `::testing::Eq` and `Eq` are one matcher.
+std::string matcher_name(std::string name) {
+    if (name.compare(0, 11, "::testing::") == 0) {
+        name.erase(0, 11);
+    } else if (name.compare(0, 9, "testing::") == 0) {
+        name.erase(0, 9);
+    }
+    return name;
+}
+
+// What a container holds when an element is `int& x` or `const std::string s`: the type without the top-level `const` and
+// the reference (the pointee's `const` stays: `const char*` is not `char*`).
+std::string element_spelling(const ir::Type& t) {
+    return ir::make_type(t.base, t.pointer_depth > 0 && t.is_const, ir::RefKind::None, t.pointer_depth).spelling;
+}
+
 std::optional<Receiver> receiver_of(const ValueInfo& v, bool arrow) {
     return v.type ? receiver_of_type(*v.type, arrow) : std::nullopt;
 }
@@ -953,13 +969,13 @@ private:
     // is not read, and its name goes with the value for the note that says why the type is not known.
     void matcher(const ValueInfo& value, const Node& m, const Node& at) {
         if (m.type() != "call_expression") return;
-        std::string name(m.child_by_field("function").text());
-        for (const std::string scope : {"::testing::", "testing::"}) {
-            if (name.compare(0, scope.size(), scope) == 0) {
-                name.erase(0, scope.size());
-                break;
-            }
+        const Node callee = m.child_by_field("function");
+        // `Contains(x).Times(2)` matches what `Contains(x)` does.
+        if (callee.type() == "field_expression" && callee.child_by_field("field").text() == "Times") {
+            matcher(value, callee.child_by_field("argument"), at);
+            return;
         }
+        const std::string name = matcher_name(std::string(callee.text()));
         const std::vector<Node> args = m.child_by_field("arguments").named_children();
         const std::string reason = name + " matcher";
 
@@ -984,13 +1000,123 @@ private:
             const char* type = name.compare(0, 6, "Double") == 0 ? "double" : "float";
             for (const Node& a : args) (void)expr(a);
             apply_use(value, use_of(Use::Compared, inferred_type(type, reason)));
-        } else if (name == "AllOf" || name == "AnyOf" || name == "Not") {
+        } else if (name == "AllOf" || name == "AnyOf" || name == "Not" || (name == "WhenSorted" && args.size() == 1)) {
             for (const Node& a : args) matcher(value, a, at);
+        } else if (is_container_matcher(name, args.size())) {
+            Element c = container_of(name, args);
+            if (c.type) {
+                c.type->reason = reason + " (a container of those elements, which one is not said)";
+                ResultUse use = use_of(Use::Compared, c.type);
+                use.hint_warnings = c.warnings;
+                apply_use(value, use);
+            } else if (ResultUse* slot = slot_of(value.from)) {
+                if (slot->kind == Use::Unknown && slot->matcher.empty()) {
+                    slot->matcher = name;
+                    slot->matcher_detail = c.detail;
+                }
+            }
         } else {
             if (ResultUse* slot = slot_of(value.from)) {
                 if (slot->kind == Use::Unknown && slot->matcher.empty()) slot->matcher = name;
             }
         }
+    }
+
+    // ---- matchers over containers ---------------------------------------------------------------------------
+
+    // What an element of a container matcher says: the type of the elements, and the warnings of the literal it was
+    // read from. `detail` says why there is none, when there is more to say than that the matcher does not give one.
+    struct Element {
+        std::optional<ir::Type>         type;
+        std::vector<LiteralWarning>     warnings;
+        std::string                     detail;
+    };
+
+    static bool is_container_matcher(const std::string& name, std::size_t arguments) {
+        if (name == "ElementsAre" || name == "UnorderedElementsAre") return arguments >= 1;
+        return (name == "Contains" || name == "Each") && arguments == 1;
+    }
+
+    // The type an argument of `ElementsAre`, `Contains` and the like stands for: a value is of its type, a matcher of the
+    // type it compares with (`Gt(3)` is an int; `Pair(k, v)` a std::pair of the two). The arguments are read, but a call of
+    // a name this does not know is not (a call on an object is): it can be a matcher of the test's own (`ElementsAre(IsOdd())`), and reading it
+    // would ask for a function called IsOdd to be generated.
+    Element element_of(const Node& n) {
+        Element e;
+        // `foo.size()` is a call to read like any other; it is `IsOdd()` that might be a matcher.
+        const std::string callee = n.type() == "call_expression" ? std::string(n.child_by_field("function").type()) : std::string();
+        if (callee == "identifier" || callee == "qualified_identifier" || callee == "template_function") {
+            const std::string name = matcher_name(std::string(n.child_by_field("function").text()));
+            const std::vector<Node> args = n.child_by_field("arguments").named_children();
+            static const std::set<std::string> kComparisons = {"Eq", "Ne", "Lt", "Le", "Gt", "Ge"};
+            static const std::set<std::string> kStrings = {"StrEq",      "StrNe",       "StrCaseEq", "StrCaseNe",
+                                                           "HasSubstr", "StartsWith", "EndsWith",  "ContainsRegex",
+                                                           "MatchesRegex"};
+            if (kComparisons.count(name) != 0 && args.size() == 1) return element_of(args[0]);
+            if (kStrings.count(name) != 0 && args.size() == 1) {
+                (void)expr(args[0]);
+                e.type = inferred_type("std::string", name + " matcher");
+            } else if ((name == "DoubleEq" || name == "DoubleNear" || name == "FloatEq" || name == "FloatNear") && !args.empty()) {
+                for (const Node& a : args) (void)expr(a);
+                e.type = inferred_type(name.compare(0, 6, "Double") == 0 ? "double" : "float", name + " matcher");
+            } else if ((name == "IsTrue" || name == "IsFalse") && args.empty()) {
+                e.type = inferred_type("bool", name + " matcher");
+            } else if (name == "AllOf" || name == "AnyOf" || name == "Not") {
+                for (const Node& a : args) {
+                    Element inner = element_of(a);
+                    if (!e.type && inner.type) e = std::move(inner);
+                }
+            } else if (is_container_matcher(name, args.size())) {
+                return container_of(name, args);
+            } else if (name == "Pair" && args.size() == 2) {
+                const Element first = element_of(args[0]);
+                const Element second = element_of(args[1]);
+                if (first.type && second.type) {
+                    e.type = inferred_type("std::pair<" + first.type->spelling + ", " + second.type->spelling + ">", "Pair matcher");
+                    e.warnings = first.warnings;
+                    e.warnings.insert(e.warnings.end(), second.warnings.begin(), second.warnings.end());
+                }
+            }
+            return e;
+        }
+        const std::string_view text = n.text();
+        if (text == "_" || text == "testing::_" || text == "::testing::_") return e;   // matches anything: says nothing
+        const ValueInfo v = expr(n);
+        if (v.is_string_literal) {
+            e.type = inferred_type("std::string", "string literal");
+        } else if (v.type) {
+            e.type = inferred_type(element_spelling(*v.type), "element of a matcher");
+        }
+        if (e.type) e.warnings = v.warnings;
+        return e;
+    }
+
+    // `ElementsAre(1, 2)`, `Contains(3)`: a std::vector of what the arguments say. Arguments that say different things
+    // (`ElementsAre(1, 2.5)`) say nothing.
+    Element container_of(const std::string& name, const std::vector<Node>& args) {
+        Element c;
+        std::vector<Element> elements;
+        for (const Node& a : args) elements.push_back(element_of(a));
+        const Element* first = nullptr;
+        for (const Element& e : elements) {
+            if (!e.type) {
+                if (!e.detail.empty() && c.detail.empty()) c.detail = e.detail;
+                continue;
+            }
+            if (first == nullptr) {
+                first = &e;
+            } else if (e.type->spelling != first->type->spelling) {
+                c.detail = "its arguments are of different types: " + first->type->spelling + " and " + e.type->spelling;
+                return c;
+            }
+        }
+        if (first == nullptr) {
+            if (c.detail.empty()) c.detail = "none of its arguments says a type";
+            return c;
+        }
+        c.type = inferred_type("std::vector<" + first->type->spelling + ">", name + " matcher");
+        c.warnings = first->warnings;
+        return c;
     }
 
     // EXPECT_THROW(stmt, E): `stmt` is a statement, possibly a {...} block.
