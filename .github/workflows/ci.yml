@@ -287,6 +287,26 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure -j 4
 
+  # Windows (plan 10.3): MSVC, x64, the newest Visual Studio of the runner. It does not gate anything yet: it is not among the jobs
+  # `ci passed` waits for, and `continue-on-error` keeps its failures from failing the run, until it is green; then it joins them.
+  # Warnings are not errors for now, so that the first run shows every failure and not only the first. The round trips (they
+  # compile the generated code with GCC/Clang command lines) are not registered under MSVC: they run on the other systems.
+  windows:
+    name: windows
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Debug -j
+
+      - name: Test
+        run: ctest --test-dir build -C Debug --output-on-failure -j 4
+
   # The one check that branch protection requires: it passes only if every job above passed, so the rule does not have to
   # list them, and a renamed job or a new entry in a matrix needs no change to it. `always()` makes it run (and fail)
   # when a job failed or was cancelled, instead of being skipped, which a required check would count as passed.
