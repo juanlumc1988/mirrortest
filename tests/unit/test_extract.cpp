@@ -485,6 +485,70 @@ TEST(ExtractParams, AwkwardTypes) {
     EXPECT_EQ(params[2].name, "p");
 }
 
+TEST(ExtractParams, UnnamedFunctionPointersAndFunctionTypesKeepTheirSpelling) {
+    const auto params = params_of("void f(int (*)(int), int(), int (&)[3], void (*cb)(int));");
+    ASSERT_EQ(params.size(), 4u);
+    EXPECT_EQ(params[0].type.spelling, "int(*)(int)");
+    EXPECT_EQ(params[0].name, "");
+    EXPECT_EQ(params[1].type.spelling, "int()");
+    EXPECT_EQ(params[2].type.spelling, "int(&)[3]");
+    EXPECT_EQ(params[3].type.spelling, "void(*)(int)");
+    EXPECT_EQ(params[3].name, "cb");
+}
+
+TEST(ExtractParams, AnUnnamedPointerOrReferenceWithADefaultKeepsItsDeclarator) {
+    const Parsed p("class A {\nvoid f(const char* = nullptr, Foo& = x, int** = 0, int n = 1, const int& = 2);\n};\n");
+    const auto params = read_parameters(find_first(p.member(0), "parameter_list"), "f.h");
+    ASSERT_EQ(params.size(), 5u);
+    EXPECT_EQ(params[0].type.spelling, "const char*");
+    EXPECT_EQ(params[0].type.pointer_depth, 1u);
+    EXPECT_EQ(params[0].default_value, std::optional<std::string>("nullptr"));
+    EXPECT_EQ(params[1].type.spelling, "Foo&");
+    EXPECT_EQ(params[2].type.spelling, "int**");
+    EXPECT_EQ(params[3].type.spelling, "int") << "a parameter the parser reads right is untouched";
+    EXPECT_EQ(params[3].name, "n");
+    EXPECT_EQ(params[4].type.spelling, "const int&");
+}
+
+TEST(ExtractParams, TheErrorOfAnUnnamedDeclaratorIsRecognisedAndNoOtherIs) {
+    const Parsed p("class A {\nvoid f(const char* = nullptr);\n};\nint x = ;\n");
+    unsigned recognised = 0;
+    unsigned others = 0;
+    walk(p.tree().root(), [&](const Node& n) {
+        if (n.is_error()) (is_unnamed_parameter_declarator(n) ? recognised : others)++;
+        return true;
+    });
+    EXPECT_EQ(recognised, 1u);
+    EXPECT_GE(others, 1u) << "the stray `= ;` stays an error";
+    EXPECT_FALSE(is_unnamed_parameter_declarator(Node()));
+}
+
+TEST(ExtractParams, ACommentInsideATypeIsNotPartOfIt) {
+    const auto params = params_of("void f(unsigned /* c */ int a, const /* k */ char* b, long // to the end\n long c);");
+    ASSERT_EQ(params.size(), 3u);
+    EXPECT_EQ(params[0].type.spelling, "unsigned int");
+    EXPECT_EQ(params[1].type.spelling, "const char*");
+    EXPECT_EQ(params[1].type.base, "char");
+    EXPECT_EQ(params[2].type.spelling, "long long");
+}
+
+TEST(ExtractType, ACommentInsideAFundamentalTypeIsBlankedNotRemoved) {
+    const Parsed p("class A {\nunsigned/*x*/int a();\nlong /* wide */ long b() const;\n};\n");
+    const Specifiers a = read_specifiers(p.member(0));
+    EXPECT_EQ(a.type_text, "unsigned int") << "the comment separates the words, as it does for the compiler";
+    const Specifiers b = read_specifiers(p.member(1));
+    EXPECT_EQ(b.type_text, "long long");
+    EXPECT_EQ(make_declared_type(b, parse_declarator(find_first(p.member(1), "function_declarator")), "f.h").base, "long long");
+}
+
+TEST(ExtractTraits, TrailingReturnTypeOfAFunctionPointerOrAnArray) {
+    const FunctionTraits t = traits_of("auto f() const -> int (*)(int);");
+    ASSERT_TRUE(t.has_trailing_return);
+    EXPECT_EQ(t.trailing_return.spelling, "int(*)(int)");
+    const FunctionTraits u = traits_of("auto g() const -> int (&)[3];");
+    EXPECT_EQ(u.trailing_return.spelling, "int(&)[3]");
+}
+
 TEST(ExtractParams, ACommentBetweenParametersIsIgnored) {
     const auto params = params_of("void f(int a /* first */, int b);");
     ASSERT_EQ(params.size(), 2u);

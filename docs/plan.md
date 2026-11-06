@@ -362,8 +362,9 @@ past twice its size, stop at what is solid and say so instead of widening it.
 - **`mt_not_implemented.h` under `--overwrite merge`.** A file the test side is meant to edit (it installs the handler
   there) is never overwritten: a changed one gets a `.new`. That is the safe behaviour, not a missing feature.
 - **The two limits of the syntax-tree reader** that libclang does not have (a comment inside a fundamental type,
-  an abstract declarator in a trailing return type). They are rare, `--frontend libclang` reads them right, and 9.1
-  will say if the corpus shows them often enough to change that.
+  an abstract declarator in a trailing return type). Closed in phase 11 (11.2), where they turned out to be worse than
+  rare: a `//` comment inside a type produced code that did not compile, and an unnamed function-pointer parameter lost
+  its type.
 - **Windows and macOS builds.** Nothing in the project needed them yet, and each is a CI job to keep green. Decided
   for phase 10 (10.2, 10.3), together with the releases, which are what makes them worth the upkeep.
 - **Matchers over containers** (9.4) and **function templates** (9.5): they need decisions about which instantiation
@@ -411,3 +412,11 @@ The owner asked for the three open items of the list above to be closed (2026-11
   `Pair(k, v)`, a nested `ElementsAre`); `WhenSorted` and `.Times(n)` pass the container through; arguments that disagree, or
   that are matchers of the test's own, say nothing and the error says why. Unit tests per rule, the golden case
   `matchers_containers` with a round trip against gmock, and `matchers_unknown` for what stays an error.
+- [x] **11.2** *(S, medium)* **The limits of the syntax-tree reader** (design §6.6). A comment inside a type is blanked out of its
+  text (`unsigned /* c */ int` is `unsigned int`; before, it was `unsigned/* c*/int`, and a `//` comment swallowed the rest of
+  the type). A declarator without a name where a type is written (`int (*)(int)`, `int()`, `int (&)[3]`, in a parameter or a
+  trailing return type) keeps its spelling; before, the type was cut to `int`. An unnamed parameter with a default value and a
+  pointer or reference (`const char* = nullptr`, `typename T::type* = nullptr`) keeps its `*`, which the grammar leaves in an
+  `ERROR` node, and no `mt-parse` warning is given for it. Conversion operators are still functions. Unit tests of
+  the extractor, a snippet that both readers must model the same (`test_clang_frontend.cpp`) and the golden case
+  `syntax_reader_limits`.

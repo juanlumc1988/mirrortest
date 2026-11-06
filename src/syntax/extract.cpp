@@ -43,9 +43,21 @@ Node inner_declarator(const Node& wrapper) {
     return {};
 }
 
+// The text of `node` with its comments blanked out, one space for each byte so that the offsets stay: a comment can sit
+// inside a type (`unsigned /* c */ int`, `unsigned // c` and the next line `short`), where it is not part of the spelling
+// and a `//` would swallow the rest of it.
+std::string blanked_text(const Node& node) {
+    std::string text(node.text());
+    const unsigned base = node.start_byte();
+    for (const Node& comment : find_all(node, "comment")) {   // all of them inside `node`
+        std::fill(text.begin() + (comment.start_byte() - base), text.begin() + (comment.end_byte() - base), ' ');
+    }
+    return text;
+}
+
 // The text of `node` with the byte ranges of `removed` taken out.
 std::string text_without(const Node& node, std::vector<Node> removed) {
-    std::string text(node.text());
+    std::string text = blanked_text(node);
     const unsigned base = node.start_byte();
     std::sort(removed.begin(), removed.end(),
               [](const Node& a, const Node& b) { return a.start_byte() > b.start_byte(); });
@@ -82,6 +94,19 @@ bool ends_with(std::string_view s, std::string_view tail) {
 }
 
 }  // namespace
+
+bool is_unnamed_parameter_declarator(const Node& error) {
+    if (error.is_null() || !error.is_error()) {
+        return false;
+    }
+    const Node parent = error.parent();
+    if (parent.is_null() || parent.type() != "optional_parameter_declaration" ||
+        !parent.child_by_field("declarator").is_null()) {
+        return false;
+    }
+    const std::string text = ir::normalize_spelling(error.text());
+    return !text.empty() && suffix_is_simple(text) && text.find_first_of("*&") != std::string::npos;
+}
 
 ir::SourceLoc location(const Node& node, std::string_view file) {
     ir::SourceLoc loc;
@@ -161,6 +186,11 @@ Declarator parse_declarator(const Node& declarator) {
         }
     }
 
+    const Node owner = declarator.parent();
+    const std::string_view owner_type = owner.is_null() ? std::string_view() : owner.type();
+    const bool in_type_position = owner_type == "parameter_declaration" || owner_type == "optional_parameter_declaration" ||
+                                  owner_type == "variadic_parameter_declaration" || owner_type == "type_descriptor";
+
     Node current = top;
     for (int depth = 0; depth < 64 && !current.is_null(); ++depth) {   // bound: pathological trees
         const std::string_view type = current.type();
@@ -171,8 +201,12 @@ Declarator parse_declarator(const Node& declarator) {
 
         Node next = inner_declarator(current);
         if (type == "function_declarator" || type == "abstract_function_declarator") {
-            if (!next.is_null() && next.type() == "parenthesized_declarator") {
-                out.is_function_pointer = true;      // int (*cb)(int): a variable
+            // `int (*cb)(int)` is a variable; so is anything unnamed where a type is written, a parameter or a trailing
+            // return type, `int (*)(int)` or `int()`: it has no name to be the name of a function. (A conversion
+            // operator, `operator bool()`, is an abstract declarator too, and a function.)
+            if ((type == "abstract_function_declarator" && in_type_position) ||
+                (!next.is_null() && next.type() == "parenthesized_declarator")) {
+                out.is_function_pointer = true;
             } else if (out.function.is_null()) {
                 out.function = current;
             }
@@ -205,7 +239,7 @@ Specifiers read_specifiers(const Node& declaration) {
         const Node child = declaration.child(i);
         const std::string_view type = child.type();
         if (!s.type.is_null() && child == s.type) {
-            append(child.text());
+            append(blanked_text(child));
         } else if (type == "type_qualifier") {
             const std::string_view q = child.text();
             if (q == "const") {
@@ -246,7 +280,7 @@ ir::Type make_declared_type(const Specifiers& specifiers, const Declarator& decl
     t.where = location(specifiers.type, file);
 
     if (suffix_is_simple(declarator.suffix)) {
-        t.base = ir::normalize_spelling(specifiers.type.text());
+        t.base = ir::normalize_spelling(blanked_text(specifiers.type));
         t.is_const = specifiers.is_const;
         t.pointer_depth = static_cast<unsigned>(
             std::count(declarator.suffix.begin(), declarator.suffix.end(), '*'));
@@ -305,7 +339,14 @@ std::vector<ir::Param> read_parameters(const Node& parameter_list, std::string_v
         if (type == "parameter_declaration" || type == "optional_parameter_declaration" ||
             type == "variadic_parameter_declaration") {
             const Specifiers specifiers = read_specifiers(p);
-            const Declarator declarator = parse_declarator(p.child_by_field("declarator"));
+            Declarator declarator = parse_declarator(p.child_by_field("declarator"));
+            if (declarator.suffix.empty()) {
+                for (const Node& child : p.named_children()) {
+                    if (is_unnamed_parameter_declarator(child)) {
+                        declarator.suffix = ir::normalize_spelling(child.text());
+                    }
+                }
+            }
             ir::Param param;
             param.type = make_declared_type(specifiers, declarator, file);
             param.name = declarator.name;

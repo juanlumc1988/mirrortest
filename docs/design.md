@@ -414,7 +414,6 @@ plan 9.1; `libclang` reads all of these right):
   is cut at the first comma and the rest of the text becomes pieces that look like declarations. A piece whose
   "name" is not a name (`std::declval<A>`, nothing at all) is dropped from the model instead of becoming a
   member that would get a test;
-- a parameter `typename T::type* = nullptr`: the `*` is in the `ERROR` node and the type loses it;
 - a field that is a pointer to member (`const T C::* field_;`), and a free function whose default argument is
   braced (`void f(Fn<void()> a = {});` at namespace scope), which are not read;
 - a free function whose parameter is a reference or a pointer to an array (`void f(int (&a)[3]);` at namespace
@@ -430,6 +429,18 @@ plan 9.1; `libclang` reads all of these right):
   names the likely cause.
 
 Everything above is reported as `mt-parse` at the place where the parser gave up.
+
+Three more things the grammar gets wrong are put right by the reader itself (plan 11.2), so that it and libclang make the
+same model:
+
+- a comment inside a type (`unsigned /* c */ int`, or `unsigned // c` and `short` on the next line): the node of the
+  type holds the comment, and its text is read with every comment blanked out, one space per byte;
+- a declarator without a name where a type is written, a function pointer or a function type: `void f(int (*)(int))`,
+  `void f(int())` and a trailing return type `-> int (*)(int)` (the parser's `abstract_*` nodes were not told apart from
+  the named ones, and the type was reduced to `int`);
+- an unnamed parameter with a default value and a pointer or reference declarator, `const char* = nullptr`: the `*` is an
+  `ERROR` node inside the parameter, and the reader takes it for the declarator, without an `mt-parse` warning. This is what
+  made `typename T::type* = nullptr` lose its `*`.
 
 ### 6.7 The libclang frontend (plan 8.5)
 
