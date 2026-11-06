@@ -4,7 +4,6 @@
 
 // <mt:begin includes>
 #include <string>
-#include <vector>
 // <mt:end includes>
 
 class Gauge {
@@ -40,7 +39,6 @@ public:
     // TODO(mt): return type inferred from string literal in StartsWith matcher (in/gauge_test.cpp:27)
     // TODO(mt): consider making this const
     std::string unit();
-    std::vector<int> history();
     // <mt:end Gauge>
 };
 

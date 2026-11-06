@@ -116,6 +116,10 @@ struct ResultUse {
     // The result was given to a matcher that says nothing of its type (`EXPECT_THAT(f(), ElementsAre(1, 2))`): its name,
     // for the note that says why the type is not known.
     std::string matcher;
+
+    // Why a matcher that could say the type did not (`ElementsAre(1, 2.5)`: its elements are of different types), when
+    // there is more to say than its name.
+    std::string matcher_detail;
 };
 
 // One argument of a call or construction.

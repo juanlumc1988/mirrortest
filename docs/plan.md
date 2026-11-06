@@ -369,7 +369,7 @@ past twice its size, stop at what is solid and say so instead of widening it.
 - **Matchers over containers** (9.4) and **function templates** (9.5): they need decisions about which instantiation
   to test, which the design leaves to the configuration (`template_instantiations`, §9.1); a function template still gets
   an `mt-unsupported` warning and no test. Function templates are in phase 10 (10.1, design §9.7); matchers
-  over containers stay out.
+  over containers are in phase 11 (11.1).
 
 ## Phase 10 — Function templates, other platforms and releases (decided, not started)
 
@@ -401,3 +401,13 @@ the previous one. Size as in phase 9.
 - [x] **10.5** *(S, medium)* **Protect the tags and the branch** with rulesets, repository settings that the owner applies:
   `.github/rulesets/release-tags.json` (`v*`: no deletion, no update) and `.github/rulesets/main.json` (a pull request, and the one
   check `ci passed`); and the publish job has an environment, `release`, where required reviewers can be set.
+
+## Phase 11 — What phase 9 left out (in progress)
+
+The owner asked for the three open items of the list above to be closed (2026-11-06).
+
+- [x] **11.1** *(M, medium)* **Matchers over containers in `gen-impl`** (design §7.6). `ElementsAre`, `UnorderedElementsAre`,
+  `Contains` and `Each` give the value a `std::vector` of the type their elements say (a literal, a variable, `Gt(0.5)`,
+  `Pair(k, v)`, a nested `ElementsAre`); `WhenSorted` and `.Times(n)` pass the container through; arguments that disagree, or
+  that are matchers of the test's own, say nothing and the error says why. Unit tests per rule, the golden case
+  `matchers_containers` with a round trip against gmock, and `matchers_unknown` for what stays an error.

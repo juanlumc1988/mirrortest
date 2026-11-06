@@ -45,8 +45,4 @@ std::string Gauge::label() {
 std::string Gauge::unit() {
     throw std::logic_error("mirrortest: not implemented: Gauge::unit()");
 }
-
-std::vector<int> Gauge::history() {
-    throw std::logic_error("mirrortest: not implemented: Gauge::history()");
-}
 // <mt:end Gauge>
