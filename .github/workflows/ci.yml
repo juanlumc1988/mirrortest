@@ -266,7 +266,7 @@ jobs:
 
   # macOS (plan 10.2): Apple Clang and the Apple libc++, on the arm64 runner. It does not gate anything yet: it is not among the
   # jobs `ci passed` waits for, and `continue-on-error` keeps its failures from failing the run, until it is green; then it
-  # joins them. Warnings are not errors here for now, so that the first run shows every failure and not only the first.
+  # joins them.
   macos:
     name: macos
     runs-on: macos-latest
@@ -280,7 +280,8 @@ jobs:
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
-                -DCMAKE_BUILD_TYPE=Debug
+                -DCMAKE_BUILD_TYPE=Debug \
+                -DMT_WERROR=ON
           sysctl -n machdep.cpu.brand_string; sw_vers; clang++ --version | head -n 1
 
       - name: Build
