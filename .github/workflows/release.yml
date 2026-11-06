@@ -3,7 +3,7 @@
 #
 # A release (docs/design.md, section 20; docs/development.md, "Making a release"):
 #
-#   git tag v0.1.0 && git push origin v0.1.0
+#   git tag v1.0.0 && git push origin v1.0.0
 #
 # builds the program for Linux, macOS and Windows, packs each with CPack, checks the packages, and publishes them with a
 # SHA256SUMS file and a build provenance attestation as a GitHub release. The tag must be v + the version of

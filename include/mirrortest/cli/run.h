@@ -34,7 +34,7 @@
 
 namespace mt::cli {
 
-// "0.1.0".
+// "1.0.0".
 std::string version();
 
 // What a run runs in. Relative paths are resolved against `cwd`; they are
