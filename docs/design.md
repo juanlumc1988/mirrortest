@@ -1924,9 +1924,9 @@ It only affects the exception macros (R6). A one-argument `QSKIP("…")` and
 
 ---
 
-### 9.7 Function templates (proposal, plan 10.1)
+### 9.7 Function templates (decided, plan 10.1)
 
-*Not implemented.* Today a function template gets an `mt-unsupported` warning and no test (§9.1). The same mechanism that
+*Not implemented yet.* Today a function template gets an `mt-unsupported` warning and no test (§9.1). The same mechanism that
 tests a class template, the configuration naming its instantiations, extends to functions.
 
 - **Configuration.** `template_instantiations` accepts the qualified name of a function template as it does that of a
@@ -1954,17 +1954,17 @@ tests a class template, the configuration naming its instantiations, extends to 
 - **A template that is not listed** keeps its warning, but now names the line to add, as the warning for a class template
   does: `function template 'acme::clamp_to' is not tested; add "acme::clamp_to": ["<arguments>"] to template_instantiations`.
 - **Overloads.** An overload set of function templates is told apart by its template parameters as ordinary overloads are
-  by their parameter types (§9.1): `"acme::put": ["int"]` instantiates every `put` template that has one type
-  parameter. If that is ambiguous for the user, the entry can carry the parameter list in front, `"acme::put": ["<T> int"]`
-  — *open question 3 below*.
+  by their parameter types (§9.1): `"acme::put": ["int"]` instantiates every `put` template that has one template
+  parameter, and each gets its own case (named, as overloads are, by its function parameter types). An entry that does
+  not fit the parameters of a template (too many arguments) is a warning for that template, not an error. A syntax
+  to pick one overload of a set is not part of 10.1; it is added when a real header needs it.
 - **Gen-impl is not touched.** A test that calls `f<int>(x)` declares `f` as a function the tool generates
-  (§7, §8), with the template arguments it reads from the call; whether it should generate a template is a separate decision
-  (*open question 4*).
+  (§7, §8), with the template arguments it reads from the call; it does not generate function templates in 10.1.
 - **Qt Test.** The same cases, as slots, with names that avoid the special slots as every function does.
 
-Open questions (the owner decides): (1) call with explicit arguments always, or only where deduction would pick another
-type; proposed: always. (2) A non-type argument that is not a literal (`sizeof(int)`): as written. (3) The syntax to tell
-overloaded templates apart. (4) Whether `gen-impl` generates function templates from `f<int>(x)`; proposed: not in 10.1.
+Decisions (owner, 2026-11-06): the call always names its template arguments; a non-type argument is written as given;
+overloaded templates are told apart by the number of template parameters, with no syntax to pick one yet; `gen-impl` does
+not generate function templates in 10.1.
 
 Alternatives not taken: instantiating with a default type (`int`) when nothing is listed, which would invent an argument
 and a test that may not mean anything; and reading the instantiations from the existing tests, which `gen-tests` does not
@@ -2557,9 +2557,9 @@ Inferring business logic; resolving overloads by semantics; running the real
 preprocessor; metaprogramming; generating the user project's `CMakeLists.txt`;
 formatting with clang-format (the output already follows a fixed style).
 
-## 20. Releases and other platforms (proposal, plan 10.2 to 10.5)
+## 20. Releases and other platforms (decided, plan 10.2 to 10.5)
 
-*Not implemented.* What follows is what the plan proposes; the decisions marked as open are the owner's.
+*Not implemented yet.* The decisions in 20.3 are the owner's (2026-11-06).
 
 ### 20.1 Platforms
 
@@ -2594,14 +2594,14 @@ formatting with clang-format (the output already follows a fixed style).
 - **Tags are protected** by a ruleset of their own (no deletion, no update of `v*` tags), because a release that can be
   moved is not a release.
 
-### 20.3 Open questions
+### 20.3 Decisions
 
-1. Signing. macOS binaries downloaded with a browser are quarantined and refused by Gatekeeper until they are signed
-   and notarised, which needs a paid Apple Developer account; Windows SmartScreen warns on an unsigned executable.
-   Proposed: not in the first release, documented in the README (`xattr -d com.apple.quarantine`, "More info > Run
-   anyway"), and a signing step added when there is a certificate.
-2. Windows with MinGW in addition to MSVC. Proposed: MSVC only.
-3. macOS universal binary, or arm64 only. Proposed: universal.
-4. The first version to publish: `0.1.0` as it is, or a bump first.
-5. Whether the pinned actions (`actions/checkout@v4`, ...) become commit SHAs for the release workflow, which has write
-   permission. Proposed: yes, with Dependabot to update them.
+1. **Signing:** none in the first release. macOS binaries downloaded with a browser are quarantined and refused by
+   Gatekeeper until they are signed and notarised (a paid Apple Developer account), and Windows SmartScreen warns on an
+   unsigned executable; the README says how to get past both (`xattr -d com.apple.quarantine`, "More info > Run anyway")
+   and how to verify the download against `SHA256SUMS` and the attestation. A signing step is added when there is a
+   certificate.
+2. **Windows:** MSVC only. **macOS:** one universal binary (arm64 and x86-64).
+3. **First version:** `0.1.0`, as `CMakeLists.txt` has it; `0.x` releases are marked as pre-releases.
+4. **Actions** of the release workflow are pinned by commit SHA (with the tag in a comment), and Dependabot proposes the
+   updates for them and for the actions of `ci.yml`.
