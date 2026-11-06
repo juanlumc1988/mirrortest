@@ -202,6 +202,11 @@ struct Function {
     SourceLoc                where;
     std::vector<std::string> notes;
     std::vector<std::string> guards;   // the `#if` conditions the function is under, as for Method::guards
+    // A function template: the text between the `<>` of its `template <...>`. Set for a template that has not been
+    // instantiated (the configuration does not name it), reset on each instance made from it.
+    std::optional<std::string> template_params;
+    // An instance: the normalised text of the arguments it was made with ("int, 8"); empty for any other function.
+    std::string              template_args;
 };
 
 struct Enum {

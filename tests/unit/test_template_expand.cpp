@@ -409,3 +409,101 @@ TEST(TemplateExpand, TheOtherPartsOfTheModelAreKept) {
     EXPECT_EQ(e.model.functions.size(), 1u);
     EXPECT_EQ(e.model.includes.size(), 1u);
 }
+
+// ---- function templates (design 9.7) ---------------------------------------------------------------------------
+
+namespace {
+
+std::vector<std::string> function_texts(const Expanded& e) {
+    std::vector<std::string> out;
+    for (const ir::Function& f : e.model.functions) {
+        std::string text = f.ret.spelling + " " + ir::qualified_name(f.ns, f.name) + (f.template_args.empty() ? "" : "<" + f.template_args + ">") + "(";
+        for (std::size_t i = 0; i < f.params.size(); ++i) {
+            text += (i == 0 ? "" : ", ") + f.params[i].type.spelling;
+            if (f.params[i].default_value) text += " = " + *f.params[i].default_value;
+        }
+        out.push_back(text + ")" + (f.template_params ? " [template]" : ""));
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST(TemplateExpandFunctions, AFunctionTemplateBecomesOneFunctionForEachEntryWhereItStood) {
+    const Expanded e = expand(
+        "namespace acme {\nint before(int);\ntemplate <typename T> T clamp_to(T lo, const T& hi, T* out);\nint after(int);\n}\n",
+        {{"acme::clamp_to", {"int", "std::string"}}});
+    EXPECT_EQ(function_texts(e), (Lines{"int acme::before(int)", "int acme::clamp_to<int>(int, const int&, int*)",
+                                        "std::string acme::clamp_to<std::string>(std::string, const std::string&, std::string*)",
+                                        "int acme::after(int)"}));
+    EXPECT_TRUE(warnings(e).empty());
+    EXPECT_EQ(e.model.functions[1].name, "clamp_to") << "the name is the function's: the arguments are in template_args";
+}
+
+TEST(TemplateExpandFunctions, DefaultsFillTheArgumentsNotGivenAndAreSubstitutedInDefaultArguments) {
+    const Expanded e = expand("template <typename T, int N = 4> T scaled(T value, int times = N) noexcept;\n",
+                              {{"scaled", {"long", "int, 8"}}});
+    EXPECT_EQ(function_texts(e), (Lines{"long scaled<long>(long, int = 4)", "int scaled<int, 8>(int, int = 8)"}));
+    EXPECT_TRUE(e.model.functions[0].is_noexcept);
+    EXPECT_TRUE(e.model.functions[1].is_noexcept);
+}
+
+TEST(TemplateExpandFunctions, TheArgumentsAreNormalisedAndOnlyTheNamedTemplateIsTouched) {
+    const Expanded e = expand("template <typename K, typename V> V lookup(const K& key, V fallback);\n"
+                              "template <typename T> T other(T v);\nint plain(int v);\n",
+                              {{"lookup", {"std::map<int,  int> , int"}}, {"plain", {"int"}}});
+    EXPECT_EQ(function_texts(e), (Lines{"int lookup<std::map<int, int>, int>(const std::map<int, int>&, int)", "T other(T) [template]",
+                                        "int plain(int)"}));
+}
+
+TEST(TemplateExpandFunctions, ATemplateThatIsNotNamedOrCannotBeMadeStaysATemplate) {
+    const Expanded none = expand("template <typename T> T f(T v);\n", {});
+    EXPECT_EQ(function_texts(none), Lines{"T f(T) [template]"});
+    EXPECT_TRUE(warnings(none).empty());
+
+    const Expanded many = expand("template <typename T> T f(T v);\n", {{"f", {"int, 3"}}});
+    EXPECT_EQ(function_texts(many), Lines{"T f(T) [template]"});
+    ASSERT_EQ(warnings(many).size(), 1u);
+    EXPECT_EQ(warnings(many)[0], "template_instantiations: 'f<int, 3>' gives 2 arguments and the template has 1");
+
+    const Expanded few = expand("template <typename T, typename U> T f(T a, U b);\n", {{"f", {"int"}}});
+    EXPECT_EQ(function_texts(few), Lines{"T f(T, U) [template]"});
+    ASSERT_EQ(warnings(few).size(), 1u);
+    EXPECT_NE(warnings(few)[0].find("parameter 2 of the template has no default"), std::string::npos);
+}
+
+TEST(TemplateExpandFunctions, AParameterPackIsAWarningAndTheTemplateStays) {
+    const Expanded e = expand("template <typename... Ts> int count_all(Ts... values);\n", {{"count_all", {"int"}}});
+    EXPECT_EQ(function_texts(e), Lines{"int count_all(Ts...) [template]"});
+    ASSERT_EQ(warnings(e).size(), 1u);
+    EXPECT_EQ(warnings(e)[0], "template_instantiations: 'count_all' has a parameter pack, which a test cannot instantiate; the function is not tested");
+}
+
+TEST(TemplateExpandFunctions, AnOverloadSetIsInstantiatedTemplateByTemplateAndAMisfitIsAWarningForThatOne) {
+    const Expanded e = expand("template <typename T> void put(T v);\ntemplate <typename T, typename U> void put(T a, U b);\n"
+                              "template <typename T, typename U = int> void put(T a, T b, U c);\n",
+                              {{"put", {"char"}}});
+    EXPECT_EQ(function_texts(e), (Lines{"void put<char>(char)", "void put(T, U) [template]", "void put<char>(char, char, int)"}));
+    ASSERT_EQ(warnings(e).size(), 1u);
+}
+
+TEST(TemplateExpandFunctions, ASubstitutedTypeKeepsWhereItCameFromAndWhy) {
+    core::Diagnostics d;
+    ir::Model model = frontend::read_header({"t.h", "template <typename T> T f(T v);\n"}, "t.h", {}, d);
+    model.functions[0].ret.origin = ir::Origin::Inferred;
+    model.functions[0].ret.reason = "because I said so";
+    core::Config config;
+    config.template_instantiations = {{"f", {"int"}}};
+    const ir::Model out = backend::instantiate_templates(model, config, d);
+    ASSERT_EQ(out.functions.size(), 1u);
+    EXPECT_EQ(out.functions[0].ret.spelling, "int");
+    EXPECT_EQ(out.functions[0].ret.origin, ir::Origin::Inferred);
+    EXPECT_EQ(out.functions[0].ret.reason, "because I said so");
+    EXPECT_EQ(out.functions[0].ret.where.line, model.functions[0].ret.where.line);
+    EXPECT_EQ(out.functions[0].where.line, model.functions[0].where.line);
+}
+
+TEST(TemplateExpandFunctions, ATypeThatDependsOnAParameterIsSubstitutedAsText) {
+    const Expanded e = expand("template <typename C> typename C::value_type first(const C& c);\n", {{"first", {"std::vector<int>"}}});
+    EXPECT_EQ(function_texts(e), Lines{"typename std::vector<int>::value_type first<std::vector<int>>(const std::vector<int>&)"});
+}

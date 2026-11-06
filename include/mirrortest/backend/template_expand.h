@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Part of mirrortest -- bidirectional C++ test/code generator.
 //
-// Class templates, instantiated (docs/design.md, section 9.1).
+// Class and function templates, instantiated (docs/design.md, sections 9.1 and 9.7).
 //
 // A test cannot call `Box<T>::get()`; it calls `Box<int>::get()`. Which T the
 // tests are for is the configuration's to say (`template_instantiations`), so

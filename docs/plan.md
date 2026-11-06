@@ -376,9 +376,9 @@ past twice its size, stop at what is solid and say so instead of widening it.
 The owner's decisions (2026-11-06) are written in design §9.7 and §20.3; a task starts from a `main` that has
 the previous one. Size as in phase 9.
 
-- [ ] **10.1** *(M, medium)* **Function templates in `gen-tests`** (design §9.7). `template_instantiations` accepts
+- [x] **10.1** *(M, medium)* **Function templates in `gen-tests`** (design §9.7). `template_instantiations` accepts
   the name of a function template; the frontend keeps the template in the model (`Function::template_params`),
-  `backend/template_expand` instantiates it, the planner writes `f<int>(...)`; packs and dependent types are left out
+  `backend/template_expand` instantiates it, the planner writes `f<int>(...)`; packs are left out
   with a warning that says why; an unlisted template says which line to add. Unit tests per rule, a golden case, a
   round trip for both frameworks. The design is decided (§9.7).
 - [ ] **10.2** *(M, medium)* **macOS** (design §20.1). A CI job on `macos-latest` that builds and runs every test, first

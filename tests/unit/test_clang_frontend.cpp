@@ -411,6 +411,19 @@ public:
     unsigned long /* wide */ x_ /* field */;
 };
 void /* free */ g(/* nothing */);)"},
+    {"function_templates",
+     R"(namespace n {
+template <typename T> T identity(T v);
+template <class A, int N = 4> const A& pick(A a, int i = N) noexcept;
+template <typename A, typename B> auto sum(A a, B b) -> decltype(a + b);
+template <typename... Ts> void all(Ts... ts);
+inline int plain(int v);
+}
+template <typename T> T twice(T v) { return v + v; }
+class Box { public: int get() const; };
+template <typename T> struct Wrap { T v; int get() const; };
+template <typename T> int Wrap<T>::get() const { return 0; }
+)"},
     {"inline_definitions",
      R"(class Impl {
 public:
@@ -441,7 +454,6 @@ TEST(ClangFrontendParity, TheUnsupportedConstructsAreReportedAsTreeSitterReports
 template <> class Pair2<char> {};
 template <typename T> class Pair2<T*> {};
 template <typename T> class Pair2<Pair2<T>> {};
-template <typename T> T identity(T v);
 class Base { public: Base(int); void helper(); };
 class Derived : public Base { public: using Base::Base; using Base::helper; };
 class Outer { public: struct Inner; class Deep; };
@@ -453,7 +465,7 @@ template <typename T> struct Holder<T>::Node { T item; };
     const Read a = tree_sitter(text);
     const Read b = clang(text);
     EXPECT_EQ(messages(b, "mt-unsupported"), messages(a, "mt-unsupported"));
-    EXPECT_EQ(messages(a, "mt-unsupported").size(), 8u) << "and tree-sitter did say something about each (not about the using of a method)";
+    EXPECT_EQ(messages(a, "mt-unsupported").size(), 7u) << "and tree-sitter did say something about each (not about the using of a method)";
     const std::vector<std::string> said = messages(a, "mt-unsupported");
     EXPECT_NE(std::find(said.begin(), said.end(), "the class 'Outer::Inner' is defined outside the class that declares it, which is not supported; it is skipped"), said.end());
     EXPECT_NE(std::find(said.begin(), said.end(), "the class 'Holder<T>::Node' is defined outside the class that declares it, which is not supported; it is skipped"), said.end());
@@ -1069,7 +1081,9 @@ TEST(ClangFrontend, TheStandardIsTheOneItIsGiven) {
     EXPECT_FALSE(messages(clang(text, {"-std=c++17"}), "mt-parse").empty());
     const Read newer = clang(text, {"-std=c++20"});
     EXPECT_TRUE(messages(newer, "mt-parse").empty());
-    EXPECT_EQ(messages(newer, "mt-unsupported").size(), 1u) << "a function template, which is not tested";
+    EXPECT_TRUE(messages(newer, "mt-unsupported").empty());
+    ASSERT_EQ(newer.model.functions.size(), 1u);
+    EXPECT_TRUE(newer.model.functions[0].template_params.has_value()) << "a function template, which the planner says is not tested";
 }
 
 TEST(ClangFrontend, QtMacrosAreBlankedLikeInTheOtherReaderSoQtHeadersAreNotNeededForTheMarkers) {

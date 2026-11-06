@@ -308,7 +308,8 @@ why it reads **declarations**, not headers: any translation unit will do.
   `function_declarator` (not a function pointer) → `Function` (includes
   `static`, `inline`, operators and trailing return). These are **not**
   functions: variables, function pointers, `int Foo::bar() {}` (defines a
-  member), function templates (`mt-unsupported` warning and they are skipped).
+  member). A function template is read, with the text of its `template <...>` in `Function::template_params`
+  (plan 10.1; §9.7); a member template stays `Method::is_template`.
 - A class read twice (`#if` branches, or two declarations) is **one** class: the
   members are merged and a signature already present (name + parameter types +
   `const` + ref-qualifier) is not repeated; neither are bases, fields or
@@ -354,7 +355,7 @@ The planner uses it (§9.2).
 ### 6.4 Not supported (an explicit diagnostic, never silence)
 
 Each of these is an `mt-unsupported` warning with a position, and none is
-silent: function templates (skipped), explicit and partial specialisations
+silent: explicit and partial specialisations of classes and functions
 (`template <> class Box<int>`; skipped, only the primary template is read),
 constructor inheritance (`using Base::Base;`), `concept` definitions (skipped),
 `requires` clauses (ignored: the class or method is read as if unconstrained) and a
@@ -480,7 +481,7 @@ What it is for: a header is code that compiles, and a compiler knows what a synt
   (`#include "header.h"`): a compiler ignores `#pragma once` in the main file, so a header that is included back
   from the end of the file it includes at the beginning (CLI11's `Foo.hpp` and `impl/Foo_inl.hpp`) would be read
   twice, and each of its declarations would be a redefinition. What is read is what the header declares and what the
-  macros it uses declare in it, wherever those macros are defined. Function bodies are skipped. Specialisations, function templates, member templates and inherited constructors
+  macros it uses declare in it, wherever those macros are defined. Function bodies are skipped. Specialisations, member templates and inherited constructors
   are reported as `mt-unsupported` in the words of the other reader.
 - **Versions** (plan 9.2). libclang 14 to 22, the ones Ubuntu 24.04 (14 to 20) and 26.04 (17 to 22) offer, are built against and tested by CI, one
   job each; `cmake/MtLibclang.cmake` looks for 14 to 22 and takes the newest it finds unless it is told which
@@ -1506,7 +1507,8 @@ compile or link: every function is `inline` and the handler is a function-local 
   `gtest.fixture` has nothing to own; tables of arguments (`gtest.parameterised`, `qtest.data_driven`) and mocks as
   arguments (`gtest.mocks`) work as for a method. A function declared twice (a prototype and the definition, or in the
   two branches of an `#if`) is one, under no condition if the declarations differ in theirs (§6.5). A function template
-  is not in the model and keeps its `mt-unsupported` warning; a `static` or `inline` function, and the ones of an
+  is tested through the instantiations the configuration lists (§9.7) and keeps an `mt-unsupported` warning, with the line
+  to add, when it is not; a `static` or `inline` function, and the ones of an
   `extern "C"` block, are functions like the rest. A Qt Test file with the functions of more than one namespace has
   more than one test class and the warning that goes with that.
 - **A derived class gets an `Inherits` case** (plan 7.2), the first of its suite:
@@ -1924,9 +1926,9 @@ It only affects the exception macros (R6). A one-argument `QSKIP("…")` and
 
 ---
 
-### 9.7 Function templates (decided, plan 10.1)
+### 9.7 Function templates (plan 10.1)
 
-*Not implemented yet.* Today a function template gets an `mt-unsupported` warning and no test (§9.1). The same mechanism that
+A function template used to get an `mt-unsupported` warning and no test. The mechanism that
 tests a class template, the configuration naming its instantiations, extends to functions.
 
 - **Configuration.** `template_instantiations` accepts the qualified name of a function template as it does that of a
@@ -1946,9 +1948,9 @@ tests a class template, the configuration naming its instantiations, extends to 
   function's, a `_`, and the arguments normalised as for a class (`clamp_to_int`, `clamp_to_double_3`).
 - **What is left out, with a warning that says why.**
   - A template parameter pack (`template <typename... Ts>`): the number of arguments to pass is not known.
-  - A return type or a parameter type that depends on a parameter in a way that cannot be substituted as text
-    (`typename T::value_type`, `std::enable_if_t<...>`): the case is written with the call commented out and a
-    `TODO(mt)`, as for an argument that cannot be built.
+  - A type that depends on a parameter (`typename T::value_type`, `std::enable_if_t<...>`) is substituted as text, as it
+    is for a class (`typename std::vector<int>::value_type`); the compiler resolves it, and if the result is a type the
+    tool cannot build, the case is written with the call commented out and a `TODO(mt)`, as for any argument that cannot be built.
   - A constrained template (`requires`): the constraint is ignored (as it is for classes), so a listed argument that
     does not satisfy it makes the test not compile, which is what the user asked for.
 - **A template that is not listed** keeps its warning, but now names the line to add, as the warning for a class template

@@ -655,10 +655,24 @@ private:
     // declarations are under different conditions it is under neither (design 6.5).
     std::vector<ir::Function> testable_functions() const {
         std::vector<ir::Function> out;
+        std::set<std::string> told;
         for (const ir::Function& f : model_.functions) {
             if (f.name.empty()) continue;
+            if (f.template_params) {
+                // One the configuration did not name (or could not instantiate): said once, with the line to add.
+                const std::string qualified = ir::qualified_name(f.ns, f.name);
+                if (told.insert(qualified).second) {
+                    diag_.warning(core::code::unsupported,
+                                         "the function template '" + qualified + "' is skipped: list the instantiations to test in "
+                                         "template_instantiations (\"" + qualified + "\": [\"int\"])",
+                                         f.where);
+                }
+                continue;
+            }
             const auto same = std::find_if(out.begin(), out.end(), [&](const ir::Function& o) {
-                if (o.name != f.name || o.ns != f.ns || o.params.size() != f.params.size()) return false;
+                if (o.name != f.name || o.ns != f.ns || o.template_args != f.template_args || o.params.size() != f.params.size()) {
+                    return false;
+                }
                 for (std::size_t i = 0; i < f.params.size(); ++i) {
                     if (o.params[i].type.spelling != f.params[i].type.spelling) return false;
                 }
@@ -699,6 +713,7 @@ private:
         for (const ir::Function& f : functions) {
             core::TestNameInput in;
             in.base = core::test_base_name(f.name);
+            if (!f.template_args.empty()) in.base += "_" + identifier(f.template_args);   // clamp_to_int, clamp_to_double_3
             for (const ir::Param& p : f.params) in.param_types.push_back(p.type.spelling);
             inputs.push_back(std::move(in));
         }
@@ -770,7 +785,8 @@ private:
         if (!args.left_out.empty()) body.push_back(comment("TODO(mt): " + args.left_out));
 
         body.push_back(comment("Act"));
-        const std::string callee = f.ns.empty() ? "::" + f.name : ir::qualified_name(f.ns, f.name);
+        const std::string args_text = f.template_args.empty() ? std::string() : "<" + f.template_args + ">";   // named, not deduced
+        const std::string callee = (f.ns.empty() ? "::" + f.name : ir::qualified_name(f.ns, f.name)) + args_text;
         const std::string call = callee + "(" + join(args.expressions, ", ") + ")";
         const ir::Type ret = qualified(f.ret, context);
         const bool returns_value = !ret.empty() && !ret.is_void();

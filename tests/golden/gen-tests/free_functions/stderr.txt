@@ -1,2 +1,2 @@
-in/math.h:16:25: warning: function template 'identity' is not supported and is skipped [mt-unsupported]
+in/math.h:16:25: warning: the function template 'calc::identity' is skipped: list the instantiations to test in template_instantiations ("calc::identity": ["int"]) [mt-unsupported]
 created out/math_functions_test.cpp

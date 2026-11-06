@@ -747,9 +747,16 @@ private:
             case CXCursor_FunctionDecl:
                 free_function(c);
                 break;
-            case CXCursor_FunctionTemplate:
-                unsupported("function template '" + to_string(clang_getCursorSpelling(c)) + "' is not supported and is skipped", c);
+            case CXCursor_FunctionTemplate: {
+                // `template <class T> int Box<T>::get() {}` defines a member: it is read with its class.
+                const CXCursorKind parent = clang_getCursorKind(clang_getCursorSemanticParent(c));
+                if (parent == CXCursor_ClassDecl || parent == CXCursor_StructDecl || parent == CXCursor_ClassTemplate ||
+                    parent == CXCursor_ClassTemplatePartialSpecialization) {
+                    break;
+                }
+                free_function(c, template_parameters(c));
                 break;
+            }
             default:
                 break;
         }
@@ -819,7 +826,7 @@ private:
 
     // ---- free functions ----------------------------------------------------------------------------
 
-    void free_function(CXCursor c) {
+    void free_function(CXCursor c, const std::optional<std::string>& template_params = std::nullopt) {
         const std::vector<Tok> t = function_tokens(c);
         ir::Function f;
         f.name = ir::normalize_operator_name(to_string(clang_getCursorSpelling(c)));
@@ -830,6 +837,7 @@ private:
         f.is_noexcept = shape.is_noexcept;
         f.header = header_;
         f.where = location(c);
+        f.template_params = template_params;
         model_.functions.push_back(std::move(f));
     }
 

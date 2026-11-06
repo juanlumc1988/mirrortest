@@ -1,0 +1,1 @@
+{"template_instantiations": {"acme::clamp_to": ["int", "double"], "acme::scaled": ["int", "long, 8"], "acme::lookup": ["std::string, int"], "acme::reset": ["int"], "acme::count_all": ["int"]}}

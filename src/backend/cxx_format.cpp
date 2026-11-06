@@ -157,7 +157,8 @@ std::string method_signature(const ir::Class& cls, const ir::Method& m) {
 }
 
 std::string function_signature(const ir::Function& f) {
-    return ir::qualified_name(f.ns, f.name) + "(" + types_text(f.params) + ")";
+    const std::string args = f.template_args.empty() ? std::string() : "<" + f.template_args + ">";
+    return ir::qualified_name(f.ns, f.name) + args + "(" + types_text(f.params) + ")";
 }
 
 std::string todo_comment(const std::string& note) { return "// TODO(mt): " + note; }
